@@ -4,7 +4,7 @@
 
 A Claude Code skill + script toolkit that turns long gameplay/stream recordings (3-15+ hours) into vertical short clips (9:16), fully local and free: no watermarks, no time limits, no paid "virality score" service. Distributed as an open-source Claude Code skill so anyone running Claude Code can install it and use it on their own recordings.
 
-Source content is typically gameplay with commentary, no facecam overlay, with jokes/highlights that can appear regardless of which game is being played at the time.
+Source content is typically gameplay with commentary, no facecam overlay, with jokes/highlights that can appear regardless of which game is being played at the time. The tool is general-purpose, though: an optional facecam/avatar-overlay mode (see config below) covers streamers/VTubers whose content does have a camera or avatar in frame.
 
 ## Architecture
 
@@ -12,9 +12,9 @@ Pipeline for one video:
 
 1. **Transcribe** — `faster-whisper` runs once per video ever. Output (text + word/segment timestamps) is cached to `transcripts/<video_stem>.json`. Re-running on the same file skips transcription and reuses the cache.
 
-2. **Find candidates (pass 1)** — the transcript is split into ~30-45 min chunks (configurable). One Claude Code subagent per chunk reads that chunk's text + timestamps and semantically identifies strong moments (jokes, reactions, stories) — not audio-energy heuristics, actual content understanding. Chunk results merge into a single `CANDIDATES.md` (timecode + short reason each).
+2. **Find candidates (pass 1)** — the transcript is split into chunks (`analysis.chunk_minutes`, default 35). By default (`analysis.use_subagents: true`) one Claude Code subagent per chunk reads that chunk's text + timestamps in parallel and semantically identifies strong moments (jokes, reactions, stories) — not audio-energy heuristics, actual content understanding. With `use_subagents: false`, the same analysis runs as a single sequential pass over the whole transcript instead. Chunk results merge into a single `CANDIDATES.md` (timecode + short reason each).
 
-3. **User approval** — `CANDIDATES.md` is presented for review; the user picks which candidates to render.
+3. **User approval** — if `analysis.require_approval` is true (default), `CANDIDATES.md` is presented for review and the user picks which candidates to render; if false, the pipeline proceeds straight to the refine pass for all candidates.
 
 4. **Refine (pass 2)** — for approved candidates only: a closer read of that moment's transcript window determines exact trim points (cut on natural speech pauses, not mid-word/mid-phrase) and a per-clip crop style (zoom/crop for visually dynamic moments, padded frame with reserved caption space for dialogue/jokes where the visual matters less). Written to `PLAN.json`.
 
@@ -45,9 +45,14 @@ shorts-maker/
 - `input_dir` / video path(s)
 - `output_dir`
 - `whisper`: model size (tiny…large-v3), device (auto/cuda/cpu), language (auto or fixed, e.g. `ru`)
-- `chunk_minutes` (default 35) — pass-1 chunk size for parallel subagent analysis
+- `analysis.chunk_minutes` (default 35, recommended range 20-45) — pass-1 chunk size. Smaller chunks give more precise candidates but mean more subagent calls (more time/cost); larger chunks are cheaper but risk missing a short moment inside a big block.
+- `analysis.use_subagents` (default true) — parallel subagent analysis per chunk for pass 1. Set false to fall back to a single sequential read-through of the whole transcript instead: simpler and cheaper, but slower and coarser on very long (multi-hour) recordings.
+- `analysis.require_approval` (default true) — whether to stop and show `CANDIDATES.md` for the user to pick from before rendering. Set false to skip straight from candidates to render (fully automatic) once you trust the pipeline's picks.
 - `clip_length`: min/max seconds (default 30-60s)
 - `crop`: mode (auto/zoom/pad/original-16:9)
+- `facecam.enabled` (default false) — whether the recording has a camera/avatar overlay to account for when cropping.
+- `facecam.mode`: `manual_region` (cheap — fixed pixel/percent coordinates you set once, for a static overlay position) or `auto_detect` (visual face/avatar detection per video or scene — costs meaningfully more compute and tokens; intended for VTubers with multiple models/scenes or a moving camera). Only relevant when `facecam.enabled` is true.
+- `facecam.region`: `[x, y, w, h]` as % of frame, used only in `manual_region` mode.
 - `subtitles`: enabled (bool, default false), font, size, color, outline, position
 
 No paths, languages, or content assumptions are hardcoded — everything content- or environment-specific lives in `config.yaml` so the tool works for other users' setups.
