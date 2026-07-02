@@ -88,3 +88,17 @@ No end-to-end automated test suite (too much of the pipeline is LLM-driven seman
 - Unit tests for the deterministic parts of `render.py` (crop math, timing clamps).
 - A short sample video fixture for a full-pipeline smoke test before running against real multi-hour recordings.
 - Manual verification: run once on a real recording, review `CANDIDATES.md` quality and confirm rendered clips play back correctly with correct crop/subtitle sync.
+
+## Addendum: clip naming + per-platform metadata (2026-07-04)
+
+Added after the initial implementation shipped. Two related gaps: rendered clips had opaque filenames (`<video_stem>_clip01.mp4`), and there was no generated posting copy (title/description/tags/hooks) for actually publishing a clip.
+
+**Clip naming:** the refine pass (pass 2) already decides a 2-3 word descriptive title per clip as part of its per-clip judgment. That title is converted to a filesystem-safe slug and combined with the clip's sequential index for uniqueness (pure word-slugs collide easily — e.g. two different clips both being "epic fail"): `0001-boss-rage-quit.mp4`. Cyrillic titles are transliterated to Latin so filenames stay portable across upload tools/URLs. Slugging is deterministic and unit-tested (`scripts/naming.py`), not left to the LLM to hand-format.
+
+**Per-platform metadata:** `config.metadata` (new section) controls whether metadata is generated at all (`enabled`, default `true` — cheap, reuses the same transcript window pass 2 already reads) and which platforms to generate blocks for (`platforms`, a list; default `["youtube", "tiktok", "instagram"]`, since the user typically posts the same clip to more than one place and wants everything in one place rather than one platform at a time). Each platform has a different natural shape:
+- `youtube`: `title`, `description`, `tags` (plain list, not hashtags).
+- `tiktok` / `instagram`: a single `caption` string, hook as its first line, hashtags inline in the text.
+
+The LLM (pass 2) produces this per-clip as a small JSON object keyed by platform name; a deterministic script (`scripts/metadata.py`) renders it into one human-readable text file per clip (one file, all requested platforms as separate `=== PLATFORM ===` sections) for easy copy-paste when posting — not a separate file per platform, since the user posts the same clip to several platforms from one sitting. The metadata file shares the clip's slug (e.g. `0001-boss-rage-quit.txt` next to `0001-boss-rage-quit.mp4`) so the pairing is obvious at a glance.
+
+`METADATA_PLATFORMS` (the set of valid platform keys) lives in `scripts/config.py` alongside the other enum sets (`CROP_MODES`, `FACECAM_MODES`, `WHISPER_DEVICES`) as the single source of truth; `scripts/metadata.py` imports it rather than redefining it.

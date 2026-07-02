@@ -2035,3 +2035,499 @@ The automated test suite covers the deterministic building blocks (config, chunk
 git add tests/test_integration.py docs/MANUAL_TESTING.md
 git commit -m "test: add end-to-end integration test and manual verification guide"
 ```
+
+---
+
+## Addendum: clip naming + per-platform metadata (2026-07-04)
+
+Adds `config.metadata`, a slug-based clip naming module, and a per-platform metadata (title/description/tags/hooks) renderer. See the design spec's "Addendum: clip naming + per-platform metadata" section for the full rationale.
+
+**Additional Global Constraint:** `METADATA_PLATFORMS` (the set of valid platform keys: `youtube`, `tiktok`, `instagram`) is defined once in `scripts/config.py` alongside the existing enum sets (`CROP_MODES`, `FACECAM_MODES`, `WHISPER_DEVICES`) — `scripts/metadata.py` imports it, never redefines it.
+
+### Task 12: `metadata` config section
+
+**Files:**
+- Modify: `scripts/config.py`
+- Modify: `tests/test_config.py`
+
+**Interfaces:**
+- Consumes: `ConfigError`, `_build`, `Config`, `_validate` from the existing `scripts/config.py` (Task 1).
+- Produces: `METADATA_PLATFORMS: set[str]`; dataclass `MetadataConfig(enabled: bool = True, platforms: list[str] = ["youtube", "tiktok", "instagram"], language: str = "auto")`; `Config.metadata: MetadataConfig`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `tests/test_config.py`:
+```python
+def test_load_config_metadata_defaults(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.metadata.enabled is True
+    assert config.metadata.platforms == ["youtube", "tiktok", "instagram"]
+    assert config.metadata.language == "auto"
+
+
+def test_load_config_metadata_empty_platforms_when_enabled_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        metadata:
+          enabled: true
+          platforms: []
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="metadata.platforms"):
+        load_config(path)
+
+
+def test_load_config_metadata_unknown_platform_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        metadata:
+          platforms: [youtube, twitter]
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="metadata.platforms"):
+        load_config(path)
+
+
+def test_load_config_metadata_disabled_allows_empty_platforms(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        metadata:
+          enabled: false
+          platforms: []
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.metadata.enabled is False
+    assert config.metadata.platforms == []
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `pytest tests/test_config.py -v`
+Expected: FAIL — `Config` has no attribute `metadata` (or similar `AttributeError`/`TypeError`).
+
+- [ ] **Step 3: Implement**
+
+In `scripts/config.py`, add near the other enum-set constants (after `WHISPER_DEVICES`):
+```python
+METADATA_PLATFORMS = {"youtube", "tiktok", "instagram"}
+```
+
+Add a new dataclass after `SubtitlesConfig`:
+```python
+@dataclasses.dataclass
+class MetadataConfig:
+    enabled: bool = True
+    platforms: list[str] = dataclasses.field(
+        default_factory=lambda: ["youtube", "tiktok", "instagram"]
+    )
+    language: str = "auto"
+```
+
+Add a field to `Config` (after `subtitles`):
+```python
+    metadata: MetadataConfig = dataclasses.field(default_factory=MetadataConfig)
+```
+
+In `load_config`, add to the `Config(...)` construction (after the `subtitles=` line):
+```python
+        metadata=_build(MetadataConfig, data.get("metadata", {}), "metadata"),
+```
+
+In `_validate`, add at the end:
+```python
+    if config.metadata.enabled:
+        if not config.metadata.platforms:
+            raise ConfigError("metadata.platforms must be non-empty when metadata.enabled is true")
+        unknown = set(config.metadata.platforms) - METADATA_PLATFORMS
+        if unknown:
+            raise ConfigError(
+                f"metadata.platforms contains unknown values {sorted(unknown)}; "
+                f"must be a subset of {sorted(METADATA_PLATFORMS)}"
+            )
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `pytest tests/test_config.py -v`
+Expected: PASS — all tests including the 4 new ones.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/config.py tests/test_config.py
+git commit -m "feat: add metadata config section (platforms, enable toggle)"
+```
+
+---
+
+### Task 13: `scripts/naming.py` — slug-based clip filenames
+
+**Files:**
+- Create: `scripts/naming.py`
+- Test: `tests/test_naming.py`
+
+**Interfaces:**
+- Produces: `slugify(text: str) -> str`; `build_clip_filename(index: int, title: str, extension: str = "mp4") -> str`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `tests/test_naming.py`:
+```python
+from scripts.naming import build_clip_filename, slugify
+
+
+def test_slugify_ascii_title():
+    assert slugify("Boss Rage Quit") == "boss-rage-quit"
+
+
+def test_slugify_cyrillic_title():
+    assert slugify("Босс психует") == "boss-psikhuet"
+
+
+def test_slugify_strips_punctuation():
+    assert slugify("Wait... WHAT?!") == "wait-what"
+
+
+def test_slugify_collapses_multiple_separators():
+    assert slugify("too   many   spaces") == "too-many-spaces"
+
+
+def test_build_clip_filename_pads_index_and_appends_extension():
+    assert build_clip_filename(1, "Boss Rage Quit") == "0001-boss-rage-quit.mp4"
+
+
+def test_build_clip_filename_custom_extension():
+    assert build_clip_filename(12, "Funny moment", extension="txt") == "0012-funny-moment.txt"
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `pytest tests/test_naming.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'scripts.naming'`.
+
+- [ ] **Step 3: Implement**
+
+Create `scripts/naming.py`:
+```python
+from __future__ import annotations
+
+import argparse
+import re
+
+_CYRILLIC_TO_LATIN = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch",
+    "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+
+
+def _transliterate(text: str) -> str:
+    result = []
+    for char in text:
+        lower = char.lower()
+        if lower in _CYRILLIC_TO_LATIN:
+            replacement = _CYRILLIC_TO_LATIN[lower]
+            result.append(replacement.upper() if char.isupper() and replacement else replacement)
+        else:
+            result.append(char)
+    return "".join(result)
+
+
+def slugify(text: str) -> str:
+    transliterated = _transliterate(text).lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", transliterated)
+    return slug.strip("-")
+
+
+def build_clip_filename(index: int, title: str, extension: str = "mp4") -> str:
+    return f"{index:04d}-{slugify(title)}.{extension}"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Build a filesystem-safe clip filename from an index and a descriptive title"
+    )
+    parser.add_argument("index", type=int, help="1-based clip index")
+    parser.add_argument("title", help="Short descriptive title, e.g. 'Boss Rage Quit'")
+    parser.add_argument("--extension", default="mp4", help="File extension without the dot (default: mp4)")
+    args = parser.parse_args()
+
+    print(build_clip_filename(args.index, args.title, args.extension))
+
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `pytest tests/test_naming.py -v`
+Expected: PASS — all 6 tests.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/naming.py tests/test_naming.py
+git commit -m "feat: add slug-based clip filename generator"
+```
+
+---
+
+### Task 14: `scripts/metadata.py` — per-platform metadata rendering
+
+**Files:**
+- Create: `scripts/metadata.py`
+- Test: `tests/test_metadata.py`
+
+**Interfaces:**
+- Consumes: `METADATA_PLATFORMS` from `scripts/config.py` (Task 12).
+- Produces: `render_metadata_text(platforms_data: dict) -> str`; `write_metadata_file(platforms_data: dict, path: str) -> None`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `tests/test_metadata.py`:
+```python
+import pytest
+
+from scripts.metadata import render_metadata_text, write_metadata_file
+
+
+def test_render_metadata_text_youtube_block():
+    text = render_metadata_text({
+        "youtube": {"title": "Boss Rage Quit", "description": "He lost it.", "tags": ["gaming", "funny"]},
+    })
+
+    assert "=== YOUTUBE ===" in text
+    assert "Title: Boss Rage Quit" in text
+    assert "Description:\nHe lost it." in text
+    assert "Tags: gaming, funny" in text
+
+
+def test_render_metadata_text_caption_platform_block():
+    text = render_metadata_text({
+        "tiktok": {"caption": "He rage quit! #gaming #funny"},
+    })
+
+    assert "=== TIKTOK ===" in text
+    assert "He rage quit! #gaming #funny" in text
+
+
+def test_render_metadata_text_multiple_platforms_sorted():
+    text = render_metadata_text({
+        "youtube": {"title": "T", "description": "D", "tags": []},
+        "tiktok": {"caption": "tiktok caption"},
+    })
+
+    assert text.index("=== TIKTOK ===") < text.index("=== YOUTUBE ===")
+
+
+def test_render_metadata_text_unknown_platform_raises():
+    with pytest.raises(ValueError, match="unknown"):
+        render_metadata_text({"twitter": {"caption": "x"}})
+
+
+def test_write_metadata_file_writes_rendered_text(tmp_path):
+    path = tmp_path / "0001-boss-rage-quit.txt"
+    write_metadata_file({"instagram": {"caption": "caption text"}}, str(path))
+
+    content = path.read_text(encoding="utf-8")
+    assert "=== INSTAGRAM ===" in content
+    assert "caption text" in content
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `pytest tests/test_metadata.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'scripts.metadata'`.
+
+- [ ] **Step 3: Implement**
+
+Create `scripts/metadata.py`:
+```python
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+from scripts.config import METADATA_PLATFORMS
+
+
+def render_metadata_text(platforms_data: dict) -> str:
+    unknown = set(platforms_data) - METADATA_PLATFORMS
+    if unknown:
+        raise ValueError(f"unknown platform(s) in metadata: {sorted(unknown)}")
+
+    sections = []
+    for platform in sorted(platforms_data):
+        fields = platforms_data[platform]
+        header = f"=== {platform.upper()} ==="
+        if platform == "youtube":
+            body = (
+                f"Title: {fields['title']}\n\n"
+                f"Description:\n{fields['description']}\n\n"
+                f"Tags: {', '.join(fields['tags'])}"
+            )
+        else:
+            body = fields["caption"]
+        sections.append(f"{header}\n{body}")
+
+    return "\n\n".join(sections) + "\n"
+
+
+def write_metadata_file(platforms_data: dict, path: str) -> None:
+    Path(path).write_text(render_metadata_text(platforms_data), encoding="utf-8")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Render per-platform clip metadata (title/description/tags/caption) into one text file"
+    )
+    parser.add_argument("platforms_data_json", help="Path to a JSON file with the per-platform metadata fields")
+    parser.add_argument("output_path", help="Path to write the rendered metadata text file to")
+    args = parser.parse_args()
+
+    platforms_data = json.loads(Path(args.platforms_data_json).read_text(encoding="utf-8"))
+    write_metadata_file(platforms_data, args.output_path)
+    print(f"metadata written to {args.output_path}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `pytest tests/test_metadata.py -v`
+Expected: PASS — all 5 tests.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/metadata.py tests/test_metadata.py
+git commit -m "feat: add per-platform metadata renderer"
+```
+
+---
+
+### Task 15: Wire naming + metadata into the pipeline docs
+
+**Files:**
+- Modify: `SKILL.md`
+- Modify: `config.example.yaml`
+- Modify: `README.md`
+- Test: `tests/test_config_example.py` (extend)
+
+**Interfaces:**
+- Consumes: `scripts/naming.py`'s CLI (`python scripts/naming.py <index> "<title>" [--extension mp4]`, Task 13) and `scripts/metadata.py`'s CLI (`python scripts/metadata.py <platforms_data.json> <output.txt>`, Task 14) as documented commands, not Python imports — `SKILL.md` only ever shells out to `scripts/*.py`, it never imports them.
+
+- [ ] **Step 1: Add the `metadata` section to `config.example.yaml`**
+
+Add after the `crop:` section (before `facecam:`):
+```yaml
+metadata:
+  # Generate title/description/tags/caption text for posting, reusing the
+  # same transcript window pass 2 already reads for trim/crop decisions.
+  enabled: true
+  # Which platforms to generate a block for, in one combined text file per
+  # clip — handy when you post the same clip to more than one place.
+  platforms: [youtube, tiktok, instagram]   # youtube | tiktok | instagram
+  language: auto        # auto = same language as the transcript
+```
+
+- [ ] **Step 2: Update `SKILL.md` step 5 (refine pass)**
+
+Replace this paragraph in step 5:
+```
+Write the merged results to `work/<video_stem>/PLAN.json`: a JSON list of objects:
+```json
+{
+  "start": 123.4,
+  "end": 156.2,
+  "crop_style": "zoom",
+  "subtitles_path": "work/<video_stem>/subtitles/clip_0001.srt",
+  "output_filename": "<video_stem>_clip01.mp4"
+}
+```
+(`subtitles_path` is omitted entirely when subtitles are disabled.)
+```
+
+with:
+```
+- **Title and filename** — decide a short (2-3 word) title describing the clip's content (e.g. "Boss Rage Quit"), then run:
+  ```bash
+  python scripts/naming.py <1-based clip index> "<title>"
+  ```
+  to get the filesystem-safe filename (e.g. `0001-boss-rage-quit.mp4`) to use as `output_filename` below. Index clips sequentially in the order they appear in `PLAN.json`, starting at 1.
+- **Per-platform metadata** — if `config.metadata.enabled` is `true`, for each platform in `config.metadata.platforms` produce:
+  - `youtube`: `{"title": ..., "description": ..., "tags": [...]}` (tags as a plain list, not hashtags).
+  - `tiktok` / `instagram`: `{"caption": "..."}` — a hook as the caption's first line, hashtags inline in the text.
+
+  Write the combined per-platform object (keyed by platform name) to a JSON file, then render it:
+  ```bash
+  python scripts/metadata.py work/<video_stem>/metadata_data/<clip_filename_stem>.json work/<video_stem>/metadata/<clip_filename_stem>.txt
+  ```
+  where `<clip_filename_stem>` is the `output_filename` from the step above without its extension (e.g. `0001-boss-rage-quit`). Record the rendered path as `metadata_path` in the plan entry below. Skip this entirely when `config.metadata.enabled` is `false`.
+
+Write the merged results to `work/<video_stem>/PLAN.json`: a JSON list of objects:
+```json
+{
+  "start": 123.4,
+  "end": 156.2,
+  "crop_style": "zoom",
+  "subtitles_path": "work/<video_stem>/subtitles/0001-boss-rage-quit.srt",
+  "output_filename": "0001-boss-rage-quit.mp4",
+  "metadata_path": "work/<video_stem>/metadata/0001-boss-rage-quit.txt"
+}
+```
+(`subtitles_path` and `metadata_path` are each omitted entirely when the corresponding feature is disabled.)
+```
+
+- [ ] **Step 3: Add a README mention**
+
+In `README.md`, in the section describing pipeline output, add a line noting that when `metadata.enabled` is `true`, each rendered clip gets a same-named `.txt` file with ready-to-post title/description/tags/captions for every configured platform.
+
+- [ ] **Step 4: Extend `tests/test_config_example.py`**
+
+Add an assertion to the existing test that loads `config.example.yaml`:
+```python
+    assert config.metadata.enabled is True
+    assert config.metadata.platforms == ["youtube", "tiktok", "instagram"]
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `pytest tests/test_config_example.py -v`
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add SKILL.md config.example.yaml README.md tests/test_config_example.py
+git commit -m "docs: wire clip naming and per-platform metadata into the skill pipeline"
+```
