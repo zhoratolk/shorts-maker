@@ -1,0 +1,47 @@
+# Copy this file to config.yaml and fill in your paths.
+
+input_dir: "F:/Запись"
+output_dir: "F:/Готовое/Шортс"
+
+whisper:
+  model: medium        # tiny | base | small | medium | large-v3
+  device: auto          # auto | cuda | cpu
+  language: auto        # auto, or a fixed language code like "ru"
+
+analysis:
+  # Chunk size for pass-1 candidate search. Recommended range: 20-45 minutes.
+  # Smaller = more precise candidates but more subagent calls (slower/pricier).
+  # Larger = cheaper but risks missing a short moment inside a big block.
+  chunk_minutes: 35
+  # Parallel subagents per chunk (recommended). false = one sequential pass
+  # over the whole transcript instead - simpler and cheaper, but slower and
+  # coarser on very long (multi-hour) recordings.
+  use_subagents: true
+  # Stop and show CANDIDATES.md for you to pick from before rendering.
+  # false = fully automatic, rendering every candidate found.
+  require_approval: true
+
+clip:
+  min_seconds: 30
+  max_seconds: 60
+
+crop:
+  mode: auto             # auto | zoom | pad | original-16:9
+
+facecam:
+  # Set true if the recording has a webcam or VTuber avatar overlay.
+  enabled: false
+  # manual_region: cheap, fixed coordinates for a static overlay.
+  # auto_detect: visual detection per video/scene - costs meaningfully more
+  # compute and tokens; useful for VTubers with multiple models/scenes or a
+  # moving camera.
+  mode: manual_region
+  region: null           # [x, y, w, h] as % of frame, only used in manual_region mode
+
+subtitles:
+  enabled: false
+  font: Arial
+  size: 48
+  color: white
+  outline: black
+  position: bottom       # bottom | top | center
