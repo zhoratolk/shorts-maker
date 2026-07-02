@@ -60,9 +60,12 @@ python scripts/candidates.py work/<video_stem>/candidates work/<video_stem>/CAND
 For each approved candidate, re-read that moment's transcript window (from the chunk file(s) covering its time range) and decide:
 
 - **Exact trim points** — adjust `start`/`end` to fall on natural speech pauses, not mid-word/mid-phrase, and keep the final duration within `config.clip.min_seconds`–`config.clip.max_seconds`.
-- **Crop style** — one of `zoom` (visually dynamic moment, crop in tight) or `pad` (dialogue/joke-driven moment where the visual matters less, leave room for captions). Never write `auto` here — it must be a concrete resolved value.
-- If `config.facecam.enabled` is `true`, factor the camera/avatar overlay into the crop decision (e.g. prefer `pad` so the full frame including the overlay stays visible, or `zoom` centered on the overlay region if `config.facecam.mode` is `manual_region` and a `region` is set).
-- If `config.subtitles.enabled` is `true`, generate an `.srt` file for the clip's exact window under `work/<video_stem>/subtitles/` from the transcript segments, and reference it in the plan entry.
+- **Crop style** — determined by `config.crop.mode`:
+  - If `config.crop.mode` is a concrete value (`zoom`, `pad`, or `original-16:9`), use that same value for every clip in this run — do not vary it per clip.
+  - If `config.crop.mode` is `auto`, choose per clip among all three documented options: `zoom` (visually dynamic moment, crop in tight), `pad` (dialogue/joke-driven moment where the visual matters less, reserve room for captions), or `original-16:9` (a moment where the full frame matters and cropping would cut off something relevant — keep the whole 16:9 frame, letterboxed).
+  - Never write `auto` into `PLAN.json` — it must always be a concrete resolved value.
+- If `config.facecam.enabled` is `true`, let the facecam overlay inform (not override) the crop_style choice above — e.g. prefer `pad` or `original-16:9` so the overlay stays in frame, rather than a `zoom` that might crop it out. `facecam.mode` and `facecam.region` describe where the overlay sits, for this judgment call only — `render.py` does not crop to those pixel coordinates; it only ever applies the resolved crop_style (a center crop for `zoom`, or a full-frame letterbox for `pad`/`original-16:9`).
+- If `config.subtitles.enabled` is `true`, generate an `.srt` file for the clip's exact window under `work/<video_stem>/subtitles/` from the transcript segments, and reference it in the plan entry. Transcript segments carry **absolute** timestamps from the full source video, but `render.py` seeks with `-ss` before `-i`, so each rendered clip's internal timeline starts at 0, not at the clip's `start` offset. Before writing the `.srt`, subtract this clip's `start` time from every segment's start/end so the subtitle timestamps are clip-relative (starting at/near 0) — otherwise the subtitles will be timed for a point far past the end of the rendered clip and never appear.
 
 Write the merged results to `work/<video_stem>/PLAN.json`: a JSON list of objects:
 ```json

@@ -30,6 +30,19 @@ copy config.example.yaml config.yaml
 
 Edit `config.yaml` — see the comments in `config.example.yaml` for what each field does (recommended chunk size ranges, facecam mode cost tradeoffs, etc).
 
+## Making `/make-shorts` available in Claude Code
+
+Claude Code discovers skills from `.claude/skills/<name>/SKILL.md` in the project it's running in — it will not pick up the bare `SKILL.md` at this repo's root on its own. Since that file's instructions invoke `scripts/*.py` and read/write `transcripts/`/`work/` using paths relative to this repo, the skill only works correctly when Claude Code's working directory is this repo. Set it up once:
+
+```bash
+mkdir .claude\skills\make-shorts
+copy SKILL.md .claude\skills\make-shorts\SKILL.md
+```
+
+(On macOS/Linux: `mkdir -p .claude/skills/make-shorts && cp SKILL.md .claude/skills/make-shorts/SKILL.md`, or symlink it if you'd rather it stay in sync automatically.)
+
+Then always launch Claude Code from this repo's directory (`cd shorts-maker` and run `claude`) — that's what makes `/make-shorts` appear and lets its relative script paths resolve.
+
 ## Usage
 
 In Claude Code, from this project directory:
