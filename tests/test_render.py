@@ -1,6 +1,15 @@
+import json
+
 import pytest
 
-from scripts.render import RenderError, clamp_clip_bounds, compute_crop_filter
+from scripts.render import (
+    RenderError,
+    build_ffmpeg_command,
+    clamp_clip_bounds,
+    compute_crop_filter,
+    probe_video,
+    render_clip,
+)
 
 
 def test_clamp_clip_bounds_passthrough_when_within_range():
@@ -43,3 +52,95 @@ def test_compute_crop_filter_original_16_9():
 def test_compute_crop_filter_rejects_unresolved_auto():
     with pytest.raises(RenderError, match="resolved value"):
         compute_crop_filter("auto", src_width=1920, src_height=1080)
+
+
+def test_build_ffmpeg_command_without_subtitles():
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0, crop_filter="crop=608:1080:656:0,scale=1080:1920"
+    )
+
+    assert command == [
+        "ffmpeg", "-y",
+        "-ss", "10.0",
+        "-i", "in.mp4",
+        "-t", "30.0",
+        "-vf", "crop=608:1080:656:0,scale=1080:1920",
+        "-c:v", "libx264",
+        "-c:a", "aac",
+        "out.mp4",
+    ]
+
+
+def test_build_ffmpeg_command_with_subtitles():
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0,
+        crop_filter="scale=1080:608,pad=1080:1920:0:394:black",
+        subtitles_path="work/x/subs.srt",
+    )
+
+    assert command[9] == "scale=1080:608,pad=1080:1920:0:394:black,subtitles='work/x/subs.srt'"
+
+
+def test_probe_video_parses_ffprobe_json():
+    fake_stdout = json.dumps(
+        {
+            "format": {"duration": "125.5"},
+            "streams": [{"width": 1920, "height": 1080, "codec_type": "video"}],
+        }
+    )
+
+    class FakeResult:
+        returncode = 0
+        stdout = fake_stdout
+        stderr = ""
+
+    def fake_runner(command, capture_output, text):
+        return FakeResult()
+
+    info = probe_video("in.mp4", runner=fake_runner)
+
+    assert info == {"duration": 125.5, "width": 1920, "height": 1080}
+
+
+def test_render_clip_builds_and_runs_command():
+    captured = {}
+
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_runner(command, capture_output, text):
+        captured["command"] = command
+        return FakeResult()
+
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom"}
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=fake_runner,
+    )
+
+    assert command == captured["command"]
+    assert command[-1] == "out.mp4"
+    assert "crop=608:1080:656:0,scale=1080:1920" in command
+
+
+def test_render_clip_raises_on_ffmpeg_failure():
+    class FakeResult:
+        returncode = 1
+        stdout = ""
+        stderr = "boom"
+
+    def fake_runner(command, capture_output, text):
+        return FakeResult()
+
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom"}
+
+    with pytest.raises(RenderError, match="boom"):
+        render_clip(
+            "in.mp4", "out.mp4", plan_entry,
+            video_duration=100.0, src_width=1920, src_height=1080,
+            runner=fake_runner,
+        )
