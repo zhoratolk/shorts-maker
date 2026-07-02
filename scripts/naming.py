@@ -30,20 +30,21 @@ def slugify(text: str) -> str:
     return slug.strip("-")
 
 
-def build_clip_filename(index: int, title: str, extension: str = "mp4") -> str:
-    return f"{index:04d}-{slugify(title)}.{extension}"
+def build_clip_filename(video_stem: str, index: int, title: str, extension: str = "mp4") -> str:
+    return f"{slugify(video_stem)}-{index:04d}-{slugify(title)}.{extension}"
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Build a filesystem-safe clip filename from an index and a descriptive title"
+        description="Build a filesystem-safe clip filename from a video stem, an index, and a descriptive title"
     )
+    parser.add_argument("video_stem", help="Source video filename stem, e.g. 'MyStream_2026'")
     parser.add_argument("index", type=int, help="1-based clip index")
     parser.add_argument("title", help="Short descriptive title, e.g. 'Boss Rage Quit'")
     parser.add_argument("--extension", default="mp4", help="File extension without the dot (default: mp4)")
     args = parser.parse_args()
 
-    print(build_clip_filename(args.index, args.title, args.extension))
+    print(build_clip_filename(args.video_stem, args.index, args.title, args.extension))
 
 
 if __name__ == "__main__":

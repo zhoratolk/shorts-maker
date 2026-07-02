@@ -69,18 +69,20 @@ For each approved candidate, re-read that moment's transcript window (from the c
 
 - **Title and filename** — decide a short (2-3 word) title describing the clip's content (e.g. "Boss Rage Quit"), then run:
   ```bash
-  python scripts/naming.py <1-based clip index> "<title>"
+  python scripts/naming.py "<video_stem>" <1-based clip index> "<title>"
   ```
-  to get the filesystem-safe filename (e.g. `0001-boss-rage-quit.mp4`) to use as `output_filename` below. Index clips sequentially in the order they appear in `PLAN.json`, starting at 1.
+  to get the filesystem-safe filename (e.g. `mystream-0001-boss-rage-quit.mp4`) to use as `output_filename` below. The video stem prefix keeps clips from different source videos from colliding in the shared `config.output_dir`. Index clips sequentially in the order they appear in `PLAN.json`, starting at 1.
 - **Per-platform metadata** — if `config.metadata.enabled` is `true`, for each platform in `config.metadata.platforms` produce:
   - `youtube`: `{"title": ..., "description": ..., "tags": [...]}` (tags as a plain list, not hashtags).
   - `tiktok` / `instagram`: `{"caption": "..."}` — a hook as the caption's first line, hashtags inline in the text.
+
+  Write the metadata text in `config.metadata.language` (or, when it's `auto`, the same language as the transcript itself) — the same handling as `whisper.language` above, just applied to the generated text instead of the transcription.
 
   Write the combined per-platform object (keyed by platform name) to a JSON file, then render it:
   ```bash
   python scripts/metadata.py work/<video_stem>/metadata_data/<clip_filename_stem>.json work/<video_stem>/metadata/<clip_filename_stem>.txt
   ```
-  where `<clip_filename_stem>` is the `output_filename` from the step above without its extension (e.g. `0001-boss-rage-quit`). Record the rendered path as `metadata_path` in the plan entry below. Skip this entirely when `config.metadata.enabled` is `false`.
+  where `<clip_filename_stem>` is the `output_filename` from the step above without its extension (e.g. `mystream-0001-boss-rage-quit`). Record the rendered path as `metadata_path` in the plan entry below. Skip this entirely when `config.metadata.enabled` is `false`.
 
 Write the merged results to `work/<video_stem>/PLAN.json`: a JSON list of objects:
 ```json
@@ -88,9 +90,9 @@ Write the merged results to `work/<video_stem>/PLAN.json`: a JSON list of object
   "start": 123.4,
   "end": 156.2,
   "crop_style": "zoom",
-  "subtitles_path": "work/<video_stem>/subtitles/0001-boss-rage-quit.srt",
-  "output_filename": "0001-boss-rage-quit.mp4",
-  "metadata_path": "work/<video_stem>/metadata/0001-boss-rage-quit.txt"
+  "subtitles_path": "work/<video_stem>/subtitles/mystream-0001-boss-rage-quit.srt",
+  "output_filename": "mystream-0001-boss-rage-quit.mp4",
+  "metadata_path": "work/<video_stem>/metadata/mystream-0001-boss-rage-quit.txt"
 }
 ```
 (`subtitles_path` and `metadata_path` are each omitted entirely when the corresponding feature is disabled.)
