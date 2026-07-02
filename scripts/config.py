@@ -14,6 +14,7 @@ class ConfigError(ValueError):
 CROP_MODES = {"auto", "zoom", "pad", "original-16:9"}
 FACECAM_MODES = {"manual_region", "auto_detect"}
 WHISPER_DEVICES = {"auto", "cuda", "cpu"}
+METADATA_PLATFORMS = {"youtube", "tiktok", "instagram"}
 
 
 @dataclasses.dataclass
@@ -59,6 +60,15 @@ class SubtitlesConfig:
 
 
 @dataclasses.dataclass
+class MetadataConfig:
+    enabled: bool = True
+    platforms: list[str] = dataclasses.field(
+        default_factory=lambda: ["youtube", "tiktok", "instagram"]
+    )
+    language: str = "auto"
+
+
+@dataclasses.dataclass
 class Config:
     input_dir: str
     output_dir: str
@@ -68,6 +78,7 @@ class Config:
     crop: CropConfig = dataclasses.field(default_factory=CropConfig)
     facecam: FacecamConfig = dataclasses.field(default_factory=FacecamConfig)
     subtitles: SubtitlesConfig = dataclasses.field(default_factory=SubtitlesConfig)
+    metadata: MetadataConfig = dataclasses.field(default_factory=MetadataConfig)
 
 
 def _build(section_cls, data: dict, section_name: str):
@@ -95,6 +106,7 @@ def load_config(path: str) -> Config:
         crop=_build(CropConfig, data.get("crop", {}), "crop"),
         facecam=_build(FacecamConfig, data.get("facecam", {}), "facecam"),
         subtitles=_build(SubtitlesConfig, data.get("subtitles", {}), "subtitles"),
+        metadata=_build(MetadataConfig, data.get("metadata", {}), "metadata"),
     )
     _validate(config)
     return config
@@ -123,3 +135,12 @@ def _validate(config: Config) -> None:
         )
     if config.facecam.region is not None and len(config.facecam.region) != 4:
         raise ConfigError("facecam.region must have exactly 4 values: [x, y, w, h]")
+    if config.metadata.enabled:
+        if not config.metadata.platforms:
+            raise ConfigError("metadata.platforms must be non-empty when metadata.enabled is true")
+        unknown = set(config.metadata.platforms) - METADATA_PLATFORMS
+        if unknown:
+            raise ConfigError(
+                f"metadata.platforms contains unknown values {sorted(unknown)}; "
+                f"must be a subset of {sorted(METADATA_PLATFORMS)}"
+            )

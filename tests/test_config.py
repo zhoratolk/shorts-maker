@@ -158,3 +158,68 @@ def test_load_config_unknown_field_in_section_raises(tmp_path):
 
     with pytest.raises(ConfigError, match="whisper"):
         load_config(path)
+
+
+def test_load_config_metadata_defaults(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.metadata.enabled is True
+    assert config.metadata.platforms == ["youtube", "tiktok", "instagram"]
+    assert config.metadata.language == "auto"
+
+
+def test_load_config_metadata_empty_platforms_when_enabled_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        metadata:
+          enabled: true
+          platforms: []
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="metadata.platforms"):
+        load_config(path)
+
+
+def test_load_config_metadata_unknown_platform_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        metadata:
+          platforms: [youtube, twitter]
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="metadata.platforms"):
+        load_config(path)
+
+
+def test_load_config_metadata_disabled_allows_empty_platforms(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        metadata:
+          enabled: false
+          platforms: []
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.metadata.enabled is False
+    assert config.metadata.platforms == []
