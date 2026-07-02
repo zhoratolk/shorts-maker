@@ -51,7 +51,7 @@ In Claude Code, from this project directory:
 /make-shorts F:\Recordings\my-stream.mp4
 ```
 
-Claude Code will transcribe (cached — only happens once per video ever), search the transcript for candidate moments, show you a list to approve, then render the approved clips into `config.output_dir`.
+Claude Code will transcribe (cached — only happens once per video ever), search the transcript for candidate moments, show you a list to approve, then render the approved clips into `config.output_dir`. When `metadata.enabled` is `true`, each rendered clip also gets a same-named `.txt` file with ready-to-post title/description/tags/captions for every configured platform.
 
 ## Running the tests
 

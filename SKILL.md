@@ -67,17 +67,33 @@ For each approved candidate, re-read that moment's transcript window (from the c
 - If `config.facecam.enabled` is `true`, let the facecam overlay inform (not override) the crop_style choice above — e.g. prefer `pad` or `original-16:9` so the overlay stays in frame, rather than a `zoom` that might crop it out. `facecam.mode` and `facecam.region` describe where the overlay sits, for this judgment call only — `render.py` does not crop to those pixel coordinates; it only ever applies the resolved crop_style (a center crop for `zoom`, or a full-frame letterbox for `pad`/`original-16:9`).
 - If `config.subtitles.enabled` is `true`, generate an `.srt` file for the clip's exact window under `work/<video_stem>/subtitles/` from the transcript segments, and reference it in the plan entry. Transcript segments carry **absolute** timestamps from the full source video, but `render.py` seeks with `-ss` before `-i`, so each rendered clip's internal timeline starts at 0, not at the clip's `start` offset. Before writing the `.srt`, subtract this clip's `start` time from every segment's start/end so the subtitle timestamps are clip-relative (starting at/near 0) — otherwise the subtitles will be timed for a point far past the end of the rendered clip and never appear.
 
+- **Title and filename** — decide a short (2-3 word) title describing the clip's content (e.g. "Boss Rage Quit"), then run:
+  ```bash
+  python scripts/naming.py <1-based clip index> "<title>"
+  ```
+  to get the filesystem-safe filename (e.g. `0001-boss-rage-quit.mp4`) to use as `output_filename` below. Index clips sequentially in the order they appear in `PLAN.json`, starting at 1.
+- **Per-platform metadata** — if `config.metadata.enabled` is `true`, for each platform in `config.metadata.platforms` produce:
+  - `youtube`: `{"title": ..., "description": ..., "tags": [...]}` (tags as a plain list, not hashtags).
+  - `tiktok` / `instagram`: `{"caption": "..."}` — a hook as the caption's first line, hashtags inline in the text.
+
+  Write the combined per-platform object (keyed by platform name) to a JSON file, then render it:
+  ```bash
+  python scripts/metadata.py work/<video_stem>/metadata_data/<clip_filename_stem>.json work/<video_stem>/metadata/<clip_filename_stem>.txt
+  ```
+  where `<clip_filename_stem>` is the `output_filename` from the step above without its extension (e.g. `0001-boss-rage-quit`). Record the rendered path as `metadata_path` in the plan entry below. Skip this entirely when `config.metadata.enabled` is `false`.
+
 Write the merged results to `work/<video_stem>/PLAN.json`: a JSON list of objects:
 ```json
 {
   "start": 123.4,
   "end": 156.2,
   "crop_style": "zoom",
-  "subtitles_path": "work/<video_stem>/subtitles/clip_0001.srt",
-  "output_filename": "<video_stem>_clip01.mp4"
+  "subtitles_path": "work/<video_stem>/subtitles/0001-boss-rage-quit.srt",
+  "output_filename": "0001-boss-rage-quit.mp4",
+  "metadata_path": "work/<video_stem>/metadata/0001-boss-rage-quit.txt"
 }
 ```
-(`subtitles_path` is omitted entirely when subtitles are disabled.)
+(`subtitles_path` and `metadata_path` are each omitted entirely when the corresponding feature is disabled.)
 
 ### 6. Render
 

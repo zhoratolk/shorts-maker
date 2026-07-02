@@ -14,3 +14,5 @@ def test_example_config_loads_without_error():
     assert config.analysis.require_approval is True
     assert config.facecam.enabled is False
     assert config.subtitles.enabled is False
+    assert config.metadata.enabled is True
+    assert config.metadata.platforms == ["youtube", "tiktok", "instagram"]
