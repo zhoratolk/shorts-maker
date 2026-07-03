@@ -29,6 +29,11 @@ class AnalysisConfig:
     chunk_minutes: int = 35
     use_subagents: bool = True
     require_approval: bool = True
+    hype_phrases: list[str] = dataclasses.field(
+        default_factory=lambda: [
+            "завоз", "ору", "кринж", "база", "это база", "мем вышел", "жиза", "воу-воу",
+        ]
+    )
 
 
 @dataclasses.dataclass
@@ -54,9 +59,10 @@ class FacecamConfig:
 class SubtitlesConfig:
     enabled: bool = False
     font: str = "Arial Black"
-    size: int = 72
+    size: int = 92
     color: str = "white"
     outline: str = "black"
+    highlight_color: str = "yellow"
     position: str = "bottom"
     words_per_cue: int = 4
 

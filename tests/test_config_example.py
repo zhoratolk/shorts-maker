@@ -17,3 +17,8 @@ def test_example_config_loads_without_error():
     assert config.metadata.enabled is True
     assert config.metadata.platforms == ["youtube", "tiktok", "instagram"]
     assert config.content.allow_mature is True
+    assert config.subtitles.size == 92
+    assert config.subtitles.highlight_color == "yellow"
+    assert config.analysis.hype_phrases == [
+        "завоз", "ору", "кринж", "база", "это база", "мем вышел", "жиза", "воу-воу",
+    ]

@@ -272,3 +272,38 @@ def test_load_config_metadata_disabled_allows_empty_platforms(tmp_path):
 
     assert config.metadata.enabled is False
     assert config.metadata.platforms == []
+
+
+def test_load_config_subtitles_defaults_size_and_highlight_color(tmp_path):
+    path = write_config(tmp_path, 'input_dir: "F:/in"\noutput_dir: "F:/out"\n')
+
+    config = load_config(path)
+
+    assert config.subtitles.size == 92
+    assert config.subtitles.highlight_color == "yellow"
+
+
+def test_load_config_analysis_default_hype_phrases(tmp_path):
+    path = write_config(tmp_path, 'input_dir: "F:/in"\noutput_dir: "F:/out"\n')
+
+    config = load_config(path)
+
+    assert config.analysis.hype_phrases == [
+        "завоз", "ору", "кринж", "база", "это база", "мем вышел", "жиза", "воу-воу",
+    ]
+
+
+def test_load_config_analysis_hype_phrases_overridable(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        analysis:
+          hype_phrases: ["кастом"]
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.analysis.hype_phrases == ["кастом"]
