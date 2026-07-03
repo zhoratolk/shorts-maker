@@ -20,7 +20,7 @@ NAMED_ASS_COLORS = {
 }
 
 SUBTITLE_ALIGNMENT = {"bottom": 2, "top": 8, "center": 5}
-SUBTITLE_MARGIN_V = {"bottom": 280, "top": 120, "center": 0}
+SUBTITLE_MARGIN_V = {"bottom": 380, "top": 120, "center": 0}
 
 
 class RenderError(ValueError):

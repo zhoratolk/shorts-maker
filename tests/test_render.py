@@ -101,7 +101,7 @@ def test_build_subtitle_force_style_bottom_position():
     assert style == (
         "FontName=Arial Black,FontSize=72,PrimaryColour=&H00FFFFFF,"
         "OutlineColour=&H00000000,BorderStyle=1,Outline=4,Shadow=2,Bold=1,"
-        "Alignment=2,MarginV=280"
+        "Alignment=2,MarginV=380"
     )
 
 
@@ -122,7 +122,7 @@ def test_build_ffmpeg_command_with_subtitle_style():
         "scale=1080:608,pad=1080:1920:0:394:black,subtitles='work/x/subs.srt':"
         "force_style='FontName=Arial Black,FontSize=72,PrimaryColour=&H00FFFFFF,"
         "OutlineColour=&H00000000,BorderStyle=1,Outline=4,Shadow=2,Bold=1,"
-        "Alignment=2,MarginV=280'"
+        "Alignment=2,MarginV=380'"
     )
 
 
