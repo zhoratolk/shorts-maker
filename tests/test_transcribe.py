@@ -91,6 +91,9 @@ def test_load_whisper_model_resolves_auto_device(monkeypatch):
             captured["device"] = device
             captured["compute_type"] = compute_type
 
+        def transcribe(self, audio, language):
+            return iter([]), None
+
     fake_module = types.ModuleType("faster_whisper")
     fake_module.WhisperModel = FakeWhisperModel
     monkeypatch.setitem(sys.modules, "faster_whisper", fake_module)
@@ -124,8 +127,9 @@ def test_load_whisper_model_falls_back_to_cpu_on_gpu_failure(monkeypatch, capsys
     class FakeWhisperModel:
         def __init__(self, model_size, device, compute_type):
             calls.append({"model_size": model_size, "device": device, "compute_type": compute_type})
-            if device == "cuda":
-                raise RuntimeError("CUDA out of memory")
+
+        def transcribe(self, audio, language):
+            raise RuntimeError("CUDA out of memory")
 
     fake_module = types.ModuleType("faster_whisper")
     fake_module.WhisperModel = FakeWhisperModel

@@ -5,9 +5,9 @@ Turn long gameplay/stream recordings into vertical (9:16) short clips — fully 
 ## Requirements
 
 - Windows with [winget](https://learn.microsoft.com/windows/package-manager/winget/) available
-- Python 3.11 or 3.12 (faster-whisper/ctranslate2 may not yet have prebuilt wheels for 3.13 on all platforms)
+- Python 3.11 or 3.12 recommended; 3.13 also works as long as `pip install` finds a prebuilt `ctranslate2` wheel for your Python version — if it tries to build from source, switch to 3.11/3.12
 - [Claude Code](https://claude.com/claude-code)
-- Optional: an NVIDIA GPU for faster transcription
+- Optional: an NVIDIA GPU for faster transcription — the driver alone (`nvidia-smi` working) is enough to be *detected*, but actually running on GPU needs the CUDA runtime too; see [Troubleshooting](#troubleshooting) if it silently falls back to CPU
 
 ## Setup
 
@@ -58,6 +58,22 @@ Claude Code will transcribe (cached — only happens once per video ever), searc
 ```bash
 pytest
 ```
+
+## Troubleshooting
+
+**`ModuleNotFoundError` / EOFError during `python scripts/setup.py`:** old clones may hit either issue — both are fixed as of this commit. If `setup.py` still asks `[y/N]` and hangs when run non-interactively (no terminal attached), it now defaults to "no" instead of crashing; install ffmpeg yourself with `winget install Gyan.FFmpeg` and re-run.
+
+**GPU is detected but transcription still runs on CPU:** `scripts/setup.py`/`transcribe.py` only check that `nvidia-smi` works (i.e. a driver is installed), not that the CUDA runtime libraries `faster-whisper`'s backend (ctranslate2) actually needs are present. If `cublas64_12.dll` (or a cuDNN DLL) can't be loaded, `transcribe.py` prints a `[warn] failed to load Whisper model on GPU (...); falling back to CPU` line and keeps going — slower, but it won't crash the run. To get real GPU speed instead of the CPU fallback, install the CUDA runtime as Python wheels (no system-wide CUDA Toolkit install needed):
+
+```bash
+pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
+```
+
+If `transcribe.py` still falls back to CPU after that, the DLLs installed under `.venv/Lib/site-packages/nvidia/*/bin` aren't being found — add that directory to `PATH` for the session you run `python scripts/transcribe.py` from.
+
+**Video has no real speech, or is mostly game-audio-only:** Whisper hallucinates short filler transcriptions (repeated `"Okay."`, `"Thank you."`, etc.) on near-silent or non-speech audio instead of leaving segments empty. That's a known Whisper behavior, not a bug in this project — pick a source video that actually has voice commentary.
+
+**Cyrillic (or other non-ASCII) text prints as `????`/mojibake in your terminal:** the transcript/config files themselves are correct UTF-8 (`ensure_ascii=False`) — this is only a terminal code page issue. Open the `.json`/`.txt` files in an editor, or on Windows run `chcp 65001` first, to see the text correctly.
 
 ## Project layout
 

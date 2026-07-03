@@ -46,21 +46,36 @@ def transcribe_video(
 def load_whisper_model(model_size: str, device: str):
     from faster_whisper import WhisperModel
 
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from scripts.setup import check_gpu
 
     resolved_device = check_gpu() if device == "auto" else device
     compute_type = "float16" if resolved_device == "cuda" else "int8"
 
+    def build_and_warm_up(device: str, compute_type: str):
+        model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        if device == "cuda":
+            # ctranslate2 loads its CUDA runtime libraries (cuBLAS/cuDNN) lazily on the
+            # first inference, not at construction — a missing DLL only surfaces here,
+            # so warm up with a throwaway silent buffer to catch it before real work starts.
+            import numpy as np
+
+            segments, _ = model.transcribe(np.zeros(16000, dtype="float32"), language=None)
+            next(segments, None)
+        return model
+
     try:
-        return WhisperModel(model_size, device=resolved_device, compute_type=compute_type)
+        return build_and_warm_up(resolved_device, compute_type)
     except Exception as error:
-        # ctranslate2/CUDA can fail with several different exception types on OOM;
-        # catch broadly here since this is a best-effort fallback, not error handling
-        # for a known failure mode.
+        # ctranslate2/CUDA can fail with several different exception types on OOM or
+        # missing runtime libraries; catch broadly here since this is a best-effort
+        # fallback, not error handling for a known failure mode.
         if resolved_device != "cuda":
             raise
         print(f"[warn] failed to load Whisper model on GPU ({error}); falling back to CPU")
-        return WhisperModel(model_size, device="cpu", compute_type="int8")
+        return build_and_warm_up("cpu", "int8")
 
 
 def main() -> None:

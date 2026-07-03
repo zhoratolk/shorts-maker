@@ -7,6 +7,14 @@ import sys
 PACKAGE_NAMES = {"yaml": "pyyaml", "faster_whisper": "faster-whisper"}
 
 
+def prompt_yes_no(question: str) -> bool:
+    try:
+        return input(question).strip().lower() == "y"
+    except EOFError:
+        # non-interactive environment (e.g. CI, piped stdin) - default to "no"
+        return False
+
+
 def check_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
 
@@ -44,8 +52,7 @@ def main() -> None:
     if check_ffmpeg():
         print("[ok] ffmpeg found")
     else:
-        answer = input("ffmpeg not found. Install via winget now? [y/N] ")
-        if answer.strip().lower() == "y":
+        if prompt_yes_no("ffmpeg not found. Install via winget now? [y/N] "):
             install_ffmpeg()
         else:
             print("[skip] ffmpeg not installed — rendering will fail until it is")
@@ -55,8 +62,7 @@ def main() -> None:
         print("[ok] python dependencies found")
     else:
         print(f"Missing python packages: {', '.join(missing_deps)}")
-        answer = input("Install them now? [y/N] ")
-        if answer.strip().lower() == "y":
+        if prompt_yes_no("Install them now? [y/N] "):
             install_python_deps(missing_deps)
         else:
             print("[skip] missing packages not installed — the pipeline will fail until they are")
