@@ -74,7 +74,7 @@ For each approved candidate, re-read that moment's transcript window (from the c
      ```bash
      python scripts/subtitles.py work/<video_stem>/subtitles/<clip_filename_stem>_words.json work/<video_stem>/subtitles/<clip_filename_stem>.srt --max-words <subtitles.words_per_cue>
      ```
-  Reference the resulting `.srt` path as `subtitles_path` in the plan entry below.
+  Reference the resulting `.srt` path as `subtitles_path` in the plan entry below. Note: the per-word karaoke highlight rendered by `render.py` is built from `<clip_filename_stem>_words.json`, not the `.srt` — if you need to correct a word after this point, edit the words JSON (and re-run `subtitles.py` to regenerate the `.srt` from it) rather than hand-editing the `.srt` alone, or the karaoke text and the displayed caption text will drift apart.
 
 - **Title and filename** — decide a short (2-3 word) title describing the clip's content (e.g. "Boss Rage Quit"), then run:
   ```bash

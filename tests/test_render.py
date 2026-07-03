@@ -320,6 +320,28 @@ def test_build_ass_content_escapes_newlines_as_hard_breaks():
     assert "line one\\Nline two" in ass
 
 
+def test_build_ass_content_karaoke_cue_emits_base_plus_per_word_overlay_events():
+    words = [
+        {"word": "hello", "start": 0.0, "end": 0.4},
+        {"word": "world", "start": 0.5, "end": 1.0},
+    ]
+    cues = [{"start": 0.0, "end": 1.0, "text": "hello world", "words": words}]
+
+    ass = build_ass_content(cues, "Arial Black", 92, "white", "black", "yellow", "bottom", 380, 1080, 1920)
+
+    assert "Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,hello world" in ass
+    assert "Dialogue: 1,0:00:00.00,0:00:00.40,Default,,0,0,0," in ass
+    assert "Dialogue: 1,0:00:00.50,0:00:01.00,Default,,0,0,0," in ass
+    # first overlay (word 0 active): "hello" opaque+highlighted, "world" transparent
+    first_overlay = [line for line in ass.splitlines() if line.startswith("Dialogue: 1,0:00:00.00,0:00:00.40")][0]
+    assert "\\alpha&H00&\\c&H0000FFFF&}hello" in first_overlay
+    assert "\\alpha&HFF&}world" in first_overlay
+    # second overlay (word 1 active): "world" opaque+highlighted, "hello" transparent
+    second_overlay = [line for line in ass.splitlines() if line.startswith("Dialogue: 1,0:00:00.50,0:00:01.00")][0]
+    assert "\\alpha&HFF&}hello" in second_overlay
+    assert "\\alpha&H00&\\c&H0000FFFF&}world" in second_overlay
+
+
 def test_render_clip_bakes_subtitles_into_ass_with_canvas_play_res(tmp_path):
     srt_path = tmp_path / "subs.srt"
     srt_path.write_text(
@@ -407,9 +429,49 @@ def test_render_clip_uses_karaoke_words_json_when_present(tmp_path):
     )
 
     ass_content = srt_path.with_suffix(".ass").read_text(encoding="utf-8")
-    assert "\\k" in ass_content
+    assert "Dialogue: 1," in ass_content  # per-word overlay events present
+    assert "\\c&H0000FFFF&" in ass_content  # highlight color applied somewhere
     assert "hello" in ass_content
     assert "world" in ass_content
+
+
+def test_render_clip_computes_frame_relative_margin_for_pad_crop_style(tmp_path):
+    srt_path = tmp_path / "subs.srt"
+    srt_path.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nhello world\n\n", encoding="utf-8"
+    )
+
+    captured = {}
+
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_runner(command, capture_output, text):
+        captured["command"] = command
+        return FakeResult()
+
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "pad",
+        "subtitles_path": str(srt_path),
+    }
+    subtitle_style = {
+        "font": "Arial Black", "size": 92, "color": "white", "outline_color": "black",
+        "highlight_color": "yellow", "position": "bottom", "words_per_cue": 4,
+    }
+
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        subtitle_style=subtitle_style,
+        runner=fake_runner,
+    )
+
+    ass_content = srt_path.with_suffix(".ass").read_text(encoding="utf-8")
+    # pad crop on a 1920x1080 source: bottom bar 656px, half=328 < 380 safe floor -> 380 wins,
+    # same numeric value as zoom's static margin, but reached via the geometry branch this time.
+    assert "10,10,380,1\n" in ass_content
 
 
 def test_render_clip_raises_on_ffmpeg_failure():
