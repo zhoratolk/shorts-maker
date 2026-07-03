@@ -37,6 +37,29 @@ def render_srt(cues: list[dict]) -> str:
     return "\n".join(lines) + ("\n" if lines else "")
 
 
+def parse_srt_timestamp(timestamp: str) -> float:
+    hours, minutes, rest = timestamp.split(":")
+    seconds, ms = rest.split(",")
+    return int(hours) * 3600 + int(minutes) * 60 + int(seconds) + int(ms) / 1000
+
+
+def parse_srt(text: str) -> list[dict]:
+    cues = []
+    for block in text.strip().split("\n\n"):
+        lines = block.splitlines()
+        if len(lines) < 3:
+            continue
+        start_str, end_str = lines[1].split(" --> ")
+        cues.append(
+            {
+                "start": parse_srt_timestamp(start_str),
+                "end": parse_srt_timestamp(end_str),
+                "text": "\n".join(lines[2:]),
+            }
+        )
+    return cues
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Group clip-relative word timestamps into short synced subtitle cues"

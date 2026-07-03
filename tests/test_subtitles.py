@@ -1,4 +1,4 @@
-from scripts.subtitles import format_srt_timestamp, group_words_into_cues, render_srt
+from scripts.subtitles import format_srt_timestamp, group_words_into_cues, parse_srt, render_srt
 
 
 def test_group_words_into_cues_splits_by_max_words():
@@ -59,3 +59,16 @@ def test_render_srt_formats_cues():
 
 def test_render_srt_empty_cues():
     assert render_srt([]) == ""
+
+
+def test_parse_srt_round_trips_render_srt():
+    cues = [
+        {"start": 0.0, "end": 0.6, "text": "one two"},
+        {"start": 0.6, "end": 1.2, "text": "three four"},
+    ]
+
+    assert parse_srt(render_srt(cues)) == cues
+
+
+def test_parse_srt_empty_text():
+    assert parse_srt("") == []
