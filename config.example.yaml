@@ -24,6 +24,9 @@ analysis:
 clip:
   min_seconds: 30
   max_seconds: 60
+  # Fade video+audio to black/silence over the last N seconds of each clip
+  # instead of cutting off abruptly right after the last word. 0 disables it.
+  fade_seconds: 0.5
 
 crop:
   mode: auto             # auto | zoom | pad | original-16:9

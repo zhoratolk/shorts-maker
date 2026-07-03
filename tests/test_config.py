@@ -30,6 +30,7 @@ def test_load_config_applies_defaults(tmp_path):
     assert config.analysis.require_approval is True
     assert config.clip.min_seconds == 30
     assert config.clip.max_seconds == 60
+    assert config.clip.fade_seconds == 0.5
     assert config.crop.mode == "auto"
     assert config.facecam.enabled is False
     assert config.facecam.mode == "manual_region"
@@ -109,6 +110,21 @@ def test_load_config_min_seconds_must_be_less_than_max(tmp_path):
     )
 
     with pytest.raises(ConfigError, match="min_seconds"):
+        load_config(path)
+
+
+def test_load_config_fade_seconds_must_be_non_negative(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        clip:
+          fade_seconds: -0.1
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="fade_seconds"):
         load_config(path)
 
 

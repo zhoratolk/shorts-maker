@@ -55,6 +55,7 @@ def build_ffmpeg_command(
     end: float,
     crop_filter: str,
     subtitles_path: str | None = None,
+    fade_seconds: float = 0.0,
 ) -> list[str]:
     duration = end - start
     video_filter = crop_filter
@@ -62,12 +63,22 @@ def build_ffmpeg_command(
         escaped_path = subtitles_path.replace("\\", "/").replace(":", "\\:")
         video_filter = f"{video_filter},subtitles='{escaped_path}'"
 
+    audio_args: list[str] = []
+    if fade_seconds > 0:
+        # -ss before -i makes ffmpeg's own output timeline start at 0, so the fade's
+        # start offset is relative to the trimmed clip, not the source video.
+        effective_fade = round(min(fade_seconds, duration / 2), 3)
+        fade_start = round(duration - effective_fade, 3)
+        video_filter = f"{video_filter},fade=t=out:st={fade_start}:d={effective_fade}"
+        audio_args = ["-af", f"afade=t=out:st={fade_start}:d={effective_fade}"]
+
     return [
         "ffmpeg", "-y",
         "-ss", str(start),
         "-i", input_path,
         "-t", str(duration),
         "-vf", video_filter,
+        *audio_args,
         "-c:v", "libx264",
         "-c:a", "aac",
         output_path,
@@ -99,12 +110,15 @@ def render_clip(
     video_duration: float,
     src_width: int,
     src_height: int,
+    fade_seconds: float = 0.0,
     runner=subprocess.run,
 ) -> list[str]:
     start, end = clamp_clip_bounds(plan_entry["start"], plan_entry["end"], video_duration)
     crop_filter = compute_crop_filter(plan_entry["crop_style"], src_width, src_height)
     subtitles_path = plan_entry.get("subtitles_path")
-    command = build_ffmpeg_command(input_path, output_path, start, end, crop_filter, subtitles_path)
+    command = build_ffmpeg_command(
+        input_path, output_path, start, end, crop_filter, subtitles_path, fade_seconds
+    )
 
     result = runner(command, capture_output=True, text=True)
     if result.returncode != 0:
@@ -117,6 +131,10 @@ def main() -> None:
     parser.add_argument("input_video", help="Path to the source recording")
     parser.add_argument("plan_json", help="Path to PLAN.json: a list of clip plan entries")
     parser.add_argument("output_dir", help="Directory to write rendered clips into")
+    parser.add_argument(
+        "--fade-seconds", type=float, default=0.0,
+        help="Fade video+audio to black/silence over this many seconds at the end of each clip",
+    )
     args = parser.parse_args()
 
     video_info = probe_video(args.input_video)
@@ -132,6 +150,7 @@ def main() -> None:
             video_duration=video_info["duration"],
             src_width=video_info["width"],
             src_height=video_info["height"],
+            fade_seconds=args.fade_seconds,
         )
         print(output_path)
 

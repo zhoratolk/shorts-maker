@@ -81,6 +81,38 @@ def test_build_ffmpeg_command_with_subtitles():
     assert command[9] == "scale=1080:608,pad=1080:1920:0:394:black,subtitles='work/x/subs.srt'"
 
 
+def test_build_ffmpeg_command_with_fade_out():
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        fade_seconds=0.5,
+    )
+
+    assert command[9] == "crop=608:1080:656:0,scale=1080:1920,fade=t=out:st=29.5:d=0.5"
+    assert command[10] == "-af"
+    assert command[11] == "afade=t=out:st=29.5:d=0.5"
+    assert command[-1] == "out.mp4"
+
+
+def test_build_ffmpeg_command_fade_out_clamped_to_half_clip_duration():
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=10.6,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        fade_seconds=0.5,
+    )
+
+    assert "fade=t=out:st=0.3:d=0.3" in command[9]
+
+
+def test_build_ffmpeg_command_without_fade_has_no_audio_filter():
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+    )
+
+    assert "-af" not in command
+
+
 def test_probe_video_parses_ffprobe_json():
     fake_stdout = json.dumps(
         {
@@ -125,6 +157,31 @@ def test_render_clip_builds_and_runs_command():
     assert command == captured["command"]
     assert command[-1] == "out.mp4"
     assert "crop=608:1080:656:0,scale=1080:1920" in command
+
+
+def test_render_clip_threads_fade_seconds_into_command():
+    captured = {}
+
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_runner(command, capture_output, text):
+        captured["command"] = command
+        return FakeResult()
+
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom"}
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        fade_seconds=0.5,
+        runner=fake_runner,
+    )
+
+    assert command == captured["command"]
+    assert "fade=t=out:st=29.5:d=0.5" in command[9]
 
 
 def test_render_clip_raises_on_ffmpeg_failure():

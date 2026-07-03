@@ -103,10 +103,10 @@ Write the merged results to `work/<video_stem>/PLAN.json`: a JSON list of object
 ### 6. Render
 
 ```bash
-python scripts/render.py "<video>" work/<video_stem>/PLAN.json "<config.output_dir>"
+python scripts/render.py "<video>" work/<video_stem>/PLAN.json "<config.output_dir>" --fade-seconds <config.clip.fade_seconds>
 ```
 
-This probes the source video once, then renders every entry in `PLAN.json` into `config.output_dir`, printing each output path.
+This probes the source video once, then renders every entry in `PLAN.json` into `config.output_dir`, printing each output path. Each clip fades video and audio to black/silence over the last `config.clip.fade_seconds` seconds (default 0.5s) instead of cutting off abruptly on the last word.
 
 ## Library-wide search
 

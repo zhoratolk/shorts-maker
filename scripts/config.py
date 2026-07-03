@@ -35,6 +35,7 @@ class AnalysisConfig:
 class ClipConfig:
     min_seconds: int = 30
     max_seconds: int = 60
+    fade_seconds: float = 0.5
 
 
 @dataclasses.dataclass
@@ -130,6 +131,8 @@ def _validate(config: Config) -> None:
         raise ConfigError("clip.min_seconds and clip.max_seconds must be > 0")
     if config.clip.min_seconds >= config.clip.max_seconds:
         raise ConfigError("clip.min_seconds must be less than clip.max_seconds")
+    if config.clip.fade_seconds < 0:
+        raise ConfigError("clip.fade_seconds must be >= 0")
     if config.crop.mode not in CROP_MODES:
         raise ConfigError(f"crop.mode must be one of {sorted(CROP_MODES)}, got {config.crop.mode!r}")
     if config.facecam.mode not in FACECAM_MODES:
