@@ -43,6 +43,7 @@ For each `chunk_NNNN.json` file, produce a `work/<video_stem>/candidates/candida
 
 - If `config.analysis.use_subagents` is `true` (default): dispatch one Agent (subagent_type: general-purpose) per chunk file, **in parallel in a single message**, each instructed to read its assigned chunk JSON and write its own `candidates_chunk_NNNN.json` file with that format. Do not have subagents talk to each other — they work independently on disjoint time windows.
 - If `config.analysis.use_subagents` is `false`: read every chunk file yourself, sequentially, and write the candidate files directly without dispatching agents.
+- If `config.content.allow_mature` is `false`, instruct the search (subagent prompt or your own pass) to skip any moment that is primarily profanity or sexual/adult humor rather than including it — only surface it as a candidate if it stands on its own without that material. If `true` (default), keep such moments as candidates normally; step 5 below flags them in the generated metadata instead of filtering them here.
 
 Once every chunk has a candidates file, merge them:
 
@@ -77,6 +78,8 @@ For each approved candidate, re-read that moment's transcript window (from the c
   - `tiktok` / `instagram`: `{"caption": "..."}` — a hook as the caption's first line, hashtags inline in the text.
 
   Write the metadata text in `config.metadata.language` (or, when it's `auto`, the same language as the transcript itself) — the same handling as `whisper.language` above, just applied to the generated text instead of the transcription.
+
+  If `config.content.allow_mature` is `true` and this clip contains profanity or sexual/adult themes, add a clear content warning so the human uploader remembers to mark it accordingly on each platform: prepend `⚠️ 18+` to the `youtube.title`, add a short note (e.g. "Содержит ненормативную лексику / контент 18+") to `youtube.description`, and include the same warning in the `tiktok`/`instagram` captions. Skip this entirely for clips that don't contain such material, even when the config allows it.
 
   Write the combined per-platform object (keyed by platform name) to a JSON file, then render it:
   ```bash

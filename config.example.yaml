@@ -28,6 +28,15 @@ clip:
 crop:
   mode: auto             # auto | zoom | pad | original-16:9
 
+content:
+  # Source material (novel readings, chat logs, etc.) can lean on profanity or
+  # sexual/adult themes. true (default) = keep those moments as candidates,
+  # but flag the generated metadata as 18+ so you remember to mark it
+  # age-restricted on each platform before publishing. false = pass-1 skips
+  # candidates that are primarily profanity/sexual humor rather than flagging
+  # them.
+  allow_mature: true
+
 metadata:
   # Generate title/description/tags/caption text for posting, reusing the
   # same transcript window pass 2 already reads for trim/crop decisions.

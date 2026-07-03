@@ -60,6 +60,11 @@ class SubtitlesConfig:
 
 
 @dataclasses.dataclass
+class ContentConfig:
+    allow_mature: bool = True
+
+
+@dataclasses.dataclass
 class MetadataConfig:
     enabled: bool = True
     platforms: list[str] = dataclasses.field(
@@ -78,6 +83,7 @@ class Config:
     crop: CropConfig = dataclasses.field(default_factory=CropConfig)
     facecam: FacecamConfig = dataclasses.field(default_factory=FacecamConfig)
     subtitles: SubtitlesConfig = dataclasses.field(default_factory=SubtitlesConfig)
+    content: ContentConfig = dataclasses.field(default_factory=ContentConfig)
     metadata: MetadataConfig = dataclasses.field(default_factory=MetadataConfig)
 
 
@@ -106,6 +112,7 @@ def load_config(path: str) -> Config:
         crop=_build(CropConfig, data.get("crop", {}), "crop"),
         facecam=_build(FacecamConfig, data.get("facecam", {}), "facecam"),
         subtitles=_build(SubtitlesConfig, data.get("subtitles", {}), "subtitles"),
+        content=_build(ContentConfig, data.get("content", {}), "content"),
         metadata=_build(MetadataConfig, data.get("metadata", {}), "metadata"),
     )
     _validate(config)

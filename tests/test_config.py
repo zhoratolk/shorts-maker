@@ -34,6 +34,7 @@ def test_load_config_applies_defaults(tmp_path):
     assert config.facecam.enabled is False
     assert config.facecam.mode == "manual_region"
     assert config.subtitles.enabled is False
+    assert config.content.allow_mature is True
 
 
 def test_load_config_missing_input_dir_raises(tmp_path):
@@ -205,6 +206,22 @@ def test_load_config_metadata_unknown_platform_raises(tmp_path):
 
     with pytest.raises(ConfigError, match="metadata.platforms"):
         load_config(path)
+
+
+def test_load_config_content_allow_mature_can_be_disabled(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        content:
+          allow_mature: false
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.content.allow_mature is False
 
 
 def test_load_config_metadata_disabled_allows_empty_platforms(tmp_path):

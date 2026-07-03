@@ -16,3 +16,4 @@ def test_example_config_loads_without_error():
     assert config.subtitles.enabled is False
     assert config.metadata.enabled is True
     assert config.metadata.platforms == ["youtube", "tiktok", "instagram"]
+    assert config.content.allow_mature is True
