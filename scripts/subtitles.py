@@ -19,6 +19,30 @@ def group_words_into_cues(words: list[dict], max_words: int = 4) -> list[dict]:
     return cues
 
 
+def build_karaoke_text(words: list[dict]) -> str:
+    first = words[0]
+    parts = [f"{{\\k{round((first['end'] - first['start']) * 100)}}}{first['word'].strip()}"]
+    for previous, word in zip(words, words[1:]):
+        gap_cs = max(round((word["start"] - previous["end"]) * 100), 0)
+        word_cs = round((word["end"] - word["start"]) * 100)
+        parts.append(f"{{\\k{gap_cs}}} {{\\k{word_cs}}}{word['word'].strip()}")
+    return "".join(parts)
+
+
+def group_words_into_karaoke_cues(words: list[dict], max_words: int = 4) -> list[dict]:
+    cues = []
+    for i in range(0, len(words), max_words):
+        group = words[i : i + max_words]
+        cues.append(
+            {
+                "start": group[0]["start"],
+                "end": group[-1]["end"],
+                "text": build_karaoke_text(group),
+            }
+        )
+    return cues
+
+
 def format_srt_timestamp(seconds: float) -> str:
     total_ms = round(seconds * 1000)
     hours, remainder_ms = divmod(total_ms, 3_600_000)
