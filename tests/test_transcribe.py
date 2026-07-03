@@ -3,6 +3,7 @@ import sys
 import types
 from pathlib import Path
 
+from scripts import transcribe as transcribe_module
 from scripts.transcribe import (
     is_cached,
     load_whisper_model,
@@ -159,3 +160,42 @@ def test_load_whisper_model_reraises_when_already_on_cpu(monkeypatch):
         raise AssertionError("expected RuntimeError to propagate")
     except RuntimeError as error:
         assert "out of memory" in str(error)
+
+
+def test_register_nvidia_dll_dirs_skips_on_non_windows(monkeypatch):
+    monkeypatch.setattr(transcribe_module.sys, "platform", "linux")
+    calls = []
+    monkeypatch.setattr(transcribe_module.os, "add_dll_directory", lambda p: calls.append(p), raising=False)
+
+    transcribe_module._register_nvidia_dll_dirs()
+
+    assert calls == []
+
+
+def test_register_nvidia_dll_dirs_skips_when_nvidia_not_installed(monkeypatch):
+    monkeypatch.setattr(transcribe_module.sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "nvidia", None)
+    calls = []
+    monkeypatch.setattr(transcribe_module.os, "add_dll_directory", lambda p: calls.append(p), raising=False)
+
+    transcribe_module._register_nvidia_dll_dirs()
+
+    assert calls == []
+
+
+def test_register_nvidia_dll_dirs_registers_each_bin_dir(monkeypatch, tmp_path):
+    (tmp_path / "cublas" / "bin").mkdir(parents=True)
+    (tmp_path / "cudnn" / "bin").mkdir(parents=True)
+
+    fake_nvidia = types.ModuleType("nvidia")
+    fake_nvidia.__path__ = [str(tmp_path)]
+    monkeypatch.setattr(transcribe_module.sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "nvidia", fake_nvidia)
+    calls = []
+    monkeypatch.setattr(transcribe_module.os, "add_dll_directory", lambda p: calls.append(p), raising=False)
+
+    transcribe_module._register_nvidia_dll_dirs()
+
+    assert sorted(calls) == sorted(
+        [str(tmp_path / "cublas" / "bin"), str(tmp_path / "cudnn" / "bin")]
+    )

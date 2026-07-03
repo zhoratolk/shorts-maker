@@ -69,7 +69,7 @@ pytest
 pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
 ```
 
-If `transcribe.py` still falls back to CPU after that, the DLLs installed under `.venv/Lib/site-packages/nvidia/*/bin` aren't being found — add that directory to `PATH` for the session you run `python scripts/transcribe.py` from.
+That's it — `transcribe.py` finds and registers those packages' DLL directories itself (Windows' DLL loader ignores `PATH` for this, so it uses `os.add_dll_directory` instead), no manual `PATH` editing needed.
 
 **Video has no real speech, or is mostly game-audio-only:** Whisper hallucinates short filler transcriptions (repeated `"Okay."`, `"Thank you."`, etc.) on near-silent or non-speech audio instead of leaving segments empty. That's a known Whisper behavior, not a bug in this project — pick a source video that actually has voice commentary.
 

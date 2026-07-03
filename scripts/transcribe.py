@@ -2,7 +2,24 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sys
 from pathlib import Path
+
+
+def _register_nvidia_dll_dirs() -> None:
+    # On Windows, ctranslate2 loads CUDA runtime DLLs (cuBLAS/cuDNN) via LoadLibraryEx,
+    # which ignores PATH under the default search flags. If the pip packages
+    # nvidia-cublas-cu12/nvidia-cudnn-cu12 are installed, register their bin/
+    # directories explicitly so GPU inference works without any manual setup.
+    if sys.platform != "win32":
+        return
+    try:
+        import nvidia
+    except ImportError:
+        return
+    for bin_dir in Path(nvidia.__path__[0]).glob("*/bin"):
+        os.add_dll_directory(str(bin_dir))
 
 
 def transcript_cache_path(video_path: str, transcripts_dir: str) -> str:
@@ -44,9 +61,9 @@ def transcribe_video(
 
 
 def load_whisper_model(model_size: str, device: str):
-    from faster_whisper import WhisperModel
+    _register_nvidia_dll_dirs()
 
-    import sys
+    from faster_whisper import WhisperModel
 
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from scripts.setup import check_gpu
