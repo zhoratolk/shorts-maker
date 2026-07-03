@@ -145,3 +145,50 @@ Claude Code matches a skill to a request based on the skill's frontmatter `descr
 - `tests/test_chunker.py`: new cases for the optional loudness argument — spikes correctly attributed to the overlapping chunk(s), chunk output unchanged when the argument is omitted (regression guard for backward compatibility).
 - `tests/test_setup.py`: new cases for config creation — interactive answers produce a `config.yaml` with substituted paths and preserved comments, missing-stdin (`EOFError`) falls back to a verbatim copy, and an already-existing `config.yaml` is left untouched.
 - No test changes needed for the natural-language trigger feature — it's a `SKILL.md` prompt/description change with nothing deterministic to unit test.
+
+## Addendum: subtitle styling, karaoke word-highlight, and hype-phrase sensitivity (2026-07-04)
+
+Three complaints from watching rendered output plus one gap in pass-1 candidate quality.
+
+### 1. Bigger, higher subtitles
+
+`config.yaml`'s `subtitles.size` default moves `72 -> 92`. `render.py`'s `SUBTITLE_MARGIN_V["bottom"]` constant moves `280 -> 380` (still comfortably inside the 280px platform-UI safe zone documented in README, just higher up).
+
+### 2. Centered video + subtitle position tied to the actual frame, not the canvas
+
+`compute_crop_filter`'s `pad` branch currently biases the video to the top of the canvas (`top_pad = total_pad * 0.3`) to intentionally reserve a bigger black bar at the bottom for captions. This reads as visually off-center and, worse, decouples caption position from where the video frame actually ends — the gap between the video's bottom edge and the caption text grows or shrinks unpredictably with source aspect ratio. Fix: center it (`top_pad = total_pad // 2`), matching what `original-16:9` already does.
+
+With the video centered, caption position for `pad`/`original-16:9` needs to be computed relative to the resulting bottom black bar instead of a fixed pixel offset from the canvas edge — otherwise a small bar (near-16:9 source) could place captions on top of the video, and a large bar (near-square source) could leave them floating in empty space. New `compute_subtitle_margin_v(position, crop_style, src_width, src_height) -> int`:
+
+- `position` is `"top"` or `"center"`: return `SUBTITLE_MARGIN_V[position]` unchanged — these aren't relative to a bottom bar.
+- `position == "bottom"` and `crop_style == "zoom"`: return `SUBTITLE_MARGIN_V["bottom"]` (380) — the video fills the whole canvas, nothing to center against.
+- `position == "bottom"` and `crop_style` is `pad`/`original-16:9`: compute the bottom bar height the same way `compute_crop_filter` does (`scaled_height`, then `TARGET_HEIGHT - top_pad - scaled_height`), and return `max(SUBTITLE_MARGIN_V["bottom"], bottom_bar_height // 2)` — captions sit centered in the black bar, but never closer to the frame edge than the safe-zone floor even when the bar is small.
+
+`render_clip` calls this to get `margin_v` and threads it into `build_ass_content` as an explicit override instead of the function deriving margin from `position` alone (signature gains a `margin_v` parameter).
+
+### 3. Karaoke-style word highlight, always on
+
+Every rendered clip's captions now highlight the word currently being spoken (yellow) against the rest of the cue (base subtitle color, e.g. white) — not just clips where captions sit over unobstructed video (zoom/facecam), since it doesn't hurt readability over a plain black bar either and keeps behavior uniform.
+
+Mechanism: ASS `\k<centiseconds>` tags. In an ASS style, `\k<N>` displays the following run of text in `SecondaryColour` for `N` centiseconds, then switches it to `PrimaryColour`. Setting `PrimaryColour` to the configured base subtitle color and `SecondaryColour` to the new `subtitles.highlight_color` (default `yellow`) means: while a word is being spoken it shows highlighted, and once it's done it reverts to normal — exactly a karaoke sweep, natively supported by `libass`/ffmpeg's `subtitles` filter, no custom rendering needed.
+
+This needs per-word timestamps at final-render time, which the `.srt` format can't carry (cue-level start/end + plain text only) — and deliberately shouldn't: `.srt` stays the human/Claude-readable proofreading surface from pipeline step 5.2, untouched, so embedding raw ASS tags into it would make that step harder to read and edit. Instead:
+
+- `scripts/subtitles.py` gains `group_words_into_karaoke_cues(words, max_words) -> list[dict]`, a sibling of the existing `group_words_into_cues` with the same grouping logic, but `"text"` is built as ASS karaoke markup instead of a plain join: each word gets `\k<word_duration_cs>` covering its own spoken duration, and the gap before the *next* word (silence) becomes its own `\k<gap_cs>` tag applied to the separating space — so the highlight only covers actual speech, never lingers into silence or jumps early into the next word.
+- `SKILL.md` step 5.3 already writes the clip-relative word list to `work/<video_stem>/subtitles/<clip_filename_stem>_words.json` before deriving the `.srt` from it — that file already exists on disk next to the `.srt` by the time `render.py` runs. `render_clip` derives its path by convention (`<subtitles_path stem>_words.json`, same directory) and, when present, uses `group_words_into_karaoke_cues` on it to build the `.ass` instead of the plain cues from `parse_srt`. If the file is missing (hand-authored `.srt`, or older `work/` output from before this change), it falls back to plain non-karaoke cues — never a hard error.
+- `build_ass_content` gains a `highlight_color` parameter, applied as the style block's `SecondaryColour` (previously hardcoded to `&H000000FF`).
+- New config field `subtitles.highlight_color` (default `yellow`), validated the same way `color`/`outline` already are (via `ass_color` at render time — no new config-time validation, consistent with the existing two color fields).
+- `render.py`'s CLI and `SKILL.md`'s step 6 render command both gain a `--sub-highlight-color` flag threaded alongside the existing `--sub-*` flags.
+
+### 4. Hype-phrase sensitivity in candidate finding
+
+Pass-1 (step 3) currently judges candidates on jokes/reactions/stories with no explicit steer toward streamer/chat hype language ("завоз", "ору", "это база", "мем вышел") that's a strong signal on its own even when the surrounding moment reads as unremarkable text.
+
+New `analysis.hype_phrases` config field (`list[str]`, default `["завоз", "ору", "кринж", "база", "это база", "мем вышел", "жиза", "воу-воу"]`, user-editable). `SKILL.md` step 3's candidate-finding instructions gain a rule: treat any phrase in `config.analysis.hype_phrases` — and other language in the same register (streamer/audience hype, meme call-outs, exaggerated reactions) — as a strong positive signal for a candidate, even when the surrounding content alone wouldn't stand out. This is prompt guidance only; pass-1 is entirely LLM judgment already, so no new deterministic code.
+
+### Testing
+
+- `tests/test_render.py`: `test_compute_crop_filter_pad` updates to the new centered `top_pad` (656, not 394, for the existing 1920x1080 fixture). New tests for `compute_subtitle_margin_v` covering all four branches (top/center passthrough, zoom static, pad/original-16:9 bar-centered, and the safe-zone floor kicking in on a near-16:9 source where the bar is smaller than the floor). `test_build_subtitle_force_style_bottom_position` and any other assertion hardcoded to `MarginV=280` move to `380`. New tests for the words.json-present vs. words.json-missing render paths.
+- `tests/test_subtitles.py`: new tests for `group_words_into_karaoke_cues` — per-word `\k` duration correctness, gap attribution between words, empty input, and that cue grouping boundaries match `group_words_into_cues` exactly (same `max_words` semantics, only the text format differs).
+- `tests/test_config.py` / `tests/test_config_example.py`: new field defaults (`subtitles.highlight_color`, `analysis.hype_phrases`) and that `config.example.yaml` stays in sync with the dataclass defaults.
+- No test changes needed for the `SKILL.md` prompt-instruction changes (hype-phrase steering) — same reasoning as the natural-language-trigger addendum above.
