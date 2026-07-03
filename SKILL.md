@@ -44,6 +44,7 @@ For each `chunk_NNNN.json` file, produce a `work/<video_stem>/candidates/candida
 - If `config.analysis.use_subagents` is `true` (default): dispatch one Agent (subagent_type: general-purpose) per chunk file, **in parallel in a single message**, each instructed to read its assigned chunk JSON and write its own `candidates_chunk_NNNN.json` file with that format. Do not have subagents talk to each other — they work independently on disjoint time windows.
 - If `config.analysis.use_subagents` is `false`: read every chunk file yourself, sequentially, and write the candidate files directly without dispatching agents.
 - If `config.content.allow_mature` is `false`, instruct the search (subagent prompt or your own pass) to skip any moment that is primarily profanity or sexual/adult humor rather than including it — only surface it as a candidate if it stands on its own without that material. If `true` (default), keep such moments as candidates normally; step 5 below flags them in the generated metadata instead of filtering them here.
+- Treat any phrase in `config.analysis.hype_phrases` — and other language in the same register (streamer/audience hype, meme call-outs, exaggerated reactions) — as a strong positive signal for a candidate moment, even when the surrounding content alone wouldn't stand out.
 
 Once every chunk has a candidates file, merge them:
 
@@ -73,7 +74,7 @@ For each approved candidate, re-read that moment's transcript window (from the c
      ```bash
      python scripts/subtitles.py work/<video_stem>/subtitles/<clip_filename_stem>_words.json work/<video_stem>/subtitles/<clip_filename_stem>.srt --max-words <subtitles.words_per_cue>
      ```
-  Reference the resulting `.srt` path as `subtitles_path` in the plan entry below.
+  Reference the resulting `.srt` path as `subtitles_path` in the plan entry below. Note: the per-word karaoke highlight rendered by `render.py` is built from `<clip_filename_stem>_words.json`, not the `.srt` — if you need to correct a word after this point, edit the words JSON (and re-run `subtitles.py` to regenerate the `.srt` from it) rather than hand-editing the `.srt` alone, or the karaoke text and the displayed caption text will drift apart.
 
 - **Title and filename** — decide a short (2-3 word) title describing the clip's content (e.g. "Boss Rage Quit"), then run:
   ```bash
@@ -110,7 +111,7 @@ Write the merged results to `work/<video_stem>/PLAN.json`: a JSON list of object
 ### 6. Render
 
 ```bash
-python scripts/render.py "<video>" work/<video_stem>/PLAN.json "<config.output_dir>" --fade-seconds <config.clip.fade_seconds> --sub-font "<config.subtitles.font>" --sub-size <config.subtitles.size> --sub-color <config.subtitles.color> --sub-outline-color <config.subtitles.outline> --sub-position <config.subtitles.position>
+python scripts/render.py "<video>" work/<video_stem>/PLAN.json "<config.output_dir>" --fade-seconds <config.clip.fade_seconds> --sub-font "<config.subtitles.font>" --sub-size <config.subtitles.size> --sub-color <config.subtitles.color> --sub-outline-color <config.subtitles.outline> --sub-highlight-color <config.subtitles.highlight_color> --sub-position <config.subtitles.position> --sub-words-per-cue <config.subtitles.words_per_cue>
 ```
 
 This probes the source video once, then renders every entry in `PLAN.json` into `config.output_dir`, printing each output path. Each clip fades video and audio to black/silence over the last `config.clip.fade_seconds` seconds (default 0.5s) — the fade only starts once the last word has fully finished (extending a bit into unused source footage past the clip's end when available), it does not overlap or cut into speech. When a clip has `subtitles_path` set, the `--sub-*` flags style the burned-in captions (font/size/colors/position); the `--sub-position bottom` default keeps a safe margin from the very bottom of the frame so captions don't sit under TikTok/Reels/Shorts' own UI buttons.

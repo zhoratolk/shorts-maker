@@ -20,7 +20,7 @@ NAMED_ASS_COLORS = {
 }
 
 SUBTITLE_ALIGNMENT = {"bottom": 2, "top": 8, "center": 5}
-SUBTITLE_MARGIN_V = {"bottom": 280, "top": 120, "center": 0}
+SUBTITLE_MARGIN_V = {"bottom": 380, "top": 120, "center": 0}
 
 
 class RenderError(ValueError):
@@ -60,8 +60,8 @@ def format_ass_timestamp(seconds: float) -> str:
 
 
 def build_ass_content(
-    cues: list[dict], font: str, size: int, color: str, outline_color: str, position: str,
-    play_res_x: int, play_res_y: int,
+    cues: list[dict], font: str, size: int, color: str, outline_color: str, highlight_color: str,
+    position: str, margin_v: int, play_res_x: int, play_res_y: int,
 ) -> str:
     """Bakes cues into a self-contained .ass with PlayResX/Y matching the render canvas.
 
@@ -70,9 +70,17 @@ def build_ass_content(
     1080x1920 canvas that blows FontSize/MarginV up by ~6.7x and the text lands off
     the top of frame. Writing PlayResX/Y equal to the actual output size avoids that
     scaling entirely, so style values apply at face value.
+
+    `highlight_color` becomes the `\\c` override color used by per-word overlay Dialogue
+    events (Layer 1) that `render_clip` builds for cues carrying word-level timing — one
+    base event (Layer 0, always visible, base `color`) per cue plus one overlay event per
+    word, each spanning exactly that word's own timespan with only that word
+    opaque/highlighted and every other word alpha-transparent. Cues without word-level
+    data (the plain `.srt` fallback) get only the base event, exactly as before.
+    `margin_v` is caller-supplied rather than derived from `position` here, so it can be
+    tied to actual crop geometry — see `compute_subtitle_margin_v`.
     """
     alignment = SUBTITLE_ALIGNMENT[position]
-    margin_v = SUBTITLE_MARGIN_V[position]
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -83,18 +91,34 @@ def build_ass_content(
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Default,{font},{size},{ass_color(color)},&H000000FF,{ass_color(outline_color)},"
+        f"Style: Default,{font},{size},{ass_color(color)},{ass_color(highlight_color)},{ass_color(outline_color)},"
         f"&H00000000,1,0,0,0,100,100,0,0,1,4,2,{alignment},10,10,{margin_v},1\n"
         "\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
-    events = "".join(
-        f"Dialogue: 0,{format_ass_timestamp(cue['start'])},{format_ass_timestamp(cue['end'])},"
-        f"Default,,0,0,0,,{cue['text'].replace(chr(10), '\\N')}\n"
-        for cue in cues
-    )
-    return header + events
+    highlight_tag = ass_color(highlight_color)
+    events_parts = []
+    for cue in cues:
+        events_parts.append(
+            f"Dialogue: 0,{format_ass_timestamp(cue['start'])},{format_ass_timestamp(cue['end'])},"
+            f"Default,,0,0,0,,{cue['text'].replace(chr(10), '\\N')}\n"
+        )
+        if "words" in cue:
+            for index, word in enumerate(cue["words"]):
+                parts = []
+                for i, w in enumerate(cue["words"]):
+                    token = w["word"].strip()
+                    if i == index:
+                        parts.append(f"{{\\alpha&H00&\\c{highlight_tag}&}}{token}{{\\c}}")
+                    else:
+                        parts.append(f"{{\\alpha&HFF&}}{token}")
+                overlay_text = " ".join(parts)
+                events_parts.append(
+                    f"Dialogue: 1,{format_ass_timestamp(word['start'])},{format_ass_timestamp(word['end'])},"
+                    f"Default,,0,0,0,,{overlay_text}\n"
+                )
+    return header + "".join(events_parts)
 
 
 def clamp_clip_bounds(start: float, end: float, video_duration: float) -> tuple[float, float]:
@@ -118,13 +142,32 @@ def compute_crop_filter(crop_style: str, src_width: int, src_height: int) -> str
     if crop_style == "pad":
         scaled_height = round(src_height * TARGET_WIDTH / src_width)
         total_pad = TARGET_HEIGHT - scaled_height
-        top_pad = round(total_pad * 0.3)
+        top_pad = round(total_pad / 2)
         return f"scale={TARGET_WIDTH}:{scaled_height},pad={TARGET_WIDTH}:{TARGET_HEIGHT}:0:{top_pad}:black"
 
     if crop_style == "original-16:9":
         scaled_height = round(src_height * TARGET_WIDTH / src_width)
         top_pad = round((TARGET_HEIGHT - scaled_height) / 2)
         return f"scale={TARGET_WIDTH}:{scaled_height},pad={TARGET_WIDTH}:{TARGET_HEIGHT}:0:{top_pad}:black"
+
+    raise RenderError(
+        f"crop_style must be a resolved value (zoom/pad/original-16:9), got {crop_style!r}. "
+        "'auto' must be resolved to a concrete style before reaching render.py."
+    )
+
+
+def compute_subtitle_margin_v(position: str, crop_style: str, src_width: int, src_height: int) -> int:
+    if position != "bottom":
+        return SUBTITLE_MARGIN_V[position]
+
+    if crop_style == "zoom":
+        return SUBTITLE_MARGIN_V["bottom"]
+
+    if crop_style in ("pad", "original-16:9"):
+        scaled_height = round(src_height * TARGET_WIDTH / src_width)
+        top_pad = round((TARGET_HEIGHT - scaled_height) / 2)
+        bottom_bar_height = TARGET_HEIGHT - top_pad - scaled_height
+        return max(SUBTITLE_MARGIN_V["bottom"], bottom_bar_height // 2)
 
     raise RenderError(
         f"crop_style must be a resolved value (zoom/pad/original-16:9), got {crop_style!r}. "
@@ -232,19 +275,30 @@ def render_clip(
     runner=subprocess.run,
 ) -> list[str]:
     start, end = clamp_clip_bounds(plan_entry["start"], plan_entry["end"], video_duration)
-    crop_filter = compute_crop_filter(plan_entry["crop_style"], src_width, src_height)
+    crop_style = plan_entry["crop_style"]
+    crop_filter = compute_crop_filter(crop_style, src_width, src_height)
     subtitles_path = plan_entry.get("subtitles_path")
 
     if subtitles_path is not None and subtitle_style is not None:
         import sys
 
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-        from scripts.subtitles import parse_srt
+        from scripts.subtitles import group_words_into_cues, parse_srt
 
-        cues = parse_srt(Path(subtitles_path).read_text(encoding="utf-8"))
+        words_path = Path(subtitles_path).with_name(Path(subtitles_path).stem + "_words.json")
+        if words_path.exists():
+            words = json.loads(words_path.read_text(encoding="utf-8"))
+            cues = group_words_into_cues(words, max_words=subtitle_style["words_per_cue"])
+        else:
+            cues = parse_srt(Path(subtitles_path).read_text(encoding="utf-8"))
+
+        margin_v = compute_subtitle_margin_v(
+            subtitle_style["position"], crop_style, src_width, src_height
+        )
         ass_content = build_ass_content(
             cues, subtitle_style["font"], subtitle_style["size"], subtitle_style["color"],
-            subtitle_style["outline_color"], subtitle_style["position"], TARGET_WIDTH, TARGET_HEIGHT,
+            subtitle_style["outline_color"], subtitle_style["highlight_color"],
+            subtitle_style["position"], margin_v, TARGET_WIDTH, TARGET_HEIGHT,
         )
         subtitles_path = str(Path(subtitles_path).with_suffix(".ass"))
         Path(subtitles_path).write_text(ass_content, encoding="utf-8")
@@ -271,10 +325,12 @@ def main() -> None:
         help="Fade video+audio to black/silence over this many seconds at the end of each clip",
     )
     parser.add_argument("--sub-font", default="Arial Black")
-    parser.add_argument("--sub-size", type=int, default=72)
+    parser.add_argument("--sub-size", type=int, default=92)
     parser.add_argument("--sub-color", default="white")
     parser.add_argument("--sub-outline-color", default="black")
+    parser.add_argument("--sub-highlight-color", default="yellow")
     parser.add_argument("--sub-position", default="bottom", choices=sorted(SUBTITLE_ALIGNMENT))
+    parser.add_argument("--sub-words-per-cue", type=int, default=4)
     args = parser.parse_args()
 
     subtitle_style = {
@@ -282,7 +338,9 @@ def main() -> None:
         "size": args.sub_size,
         "color": args.sub_color,
         "outline_color": args.sub_outline_color,
+        "highlight_color": args.sub_highlight_color,
         "position": args.sub_position,
+        "words_per_cue": args.sub_words_per_cue,
     }
 
     video_info = probe_video(args.input_video)

@@ -1,4 +1,9 @@
-from scripts.subtitles import format_srt_timestamp, group_words_into_cues, parse_srt, render_srt
+from scripts.subtitles import (
+    format_srt_timestamp,
+    group_words_into_cues,
+    parse_srt,
+    render_srt,
+)
 
 
 def test_group_words_into_cues_splits_by_max_words():
@@ -13,9 +18,9 @@ def test_group_words_into_cues_splits_by_max_words():
     cues = group_words_into_cues(words, max_words=2)
 
     assert cues == [
-        {"start": 0.0, "end": 0.6, "text": "one two"},
-        {"start": 0.6, "end": 1.2, "text": "three four"},
-        {"start": 1.2, "end": 1.5, "text": "five"},
+        {"start": 0.0, "end": 0.6, "text": "one two", "words": words[0:2]},
+        {"start": 0.6, "end": 1.2, "text": "three four", "words": words[2:4]},
+        {"start": 1.2, "end": 1.5, "text": "five", "words": words[4:5]},
     ]
 
 
@@ -28,7 +33,7 @@ def test_group_words_into_cues_strips_word_whitespace():
 
     cues = group_words_into_cues(words, max_words=4)
 
-    assert cues == [{"start": 0.0, "end": 1.0, "text": "hello world"}]
+    assert cues == [{"start": 0.0, "end": 1.0, "text": "hello world", "words": words}]
 
 
 def test_format_srt_timestamp():

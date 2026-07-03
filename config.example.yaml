@@ -20,6 +20,10 @@ analysis:
   # Stop and show CANDIDATES.md for you to pick from before rendering.
   # false = fully automatic, rendering every candidate found.
   require_approval: true
+  # Phrases that signal a strong candidate moment on their own (streamer/chat
+  # hype, meme call-outs) - pass-1 treats these, and similar language, as a
+  # positive signal even when the surrounding text looks unremarkable.
+  hype_phrases: ["завоз", "ору", "кринж", "база", "это база", "мем вышел", "жиза", "воу-воу"]
 
 clip:
   min_seconds: 30
@@ -64,11 +68,16 @@ subtitles:
   # Arial Black: bold, full Cyrillic support, ships with Windows - reliable
   # for burned-in captions over busy gameplay footage.
   font: Arial Black
-  size: 72
+  size: 92
   color: white
   outline: black
-  # bottom keeps a safe margin from the true bottom edge (280px of 1920) so
+  # Color of the word currently being spoken (karaoke-style highlight,
+  # always on). Base subtitle color above is used for words before/after.
+  highlight_color: yellow
+  # bottom keeps a safe margin from the true bottom edge (380px of 1920) so
   # captions don't sit under TikTok/Reels/Shorts' own caption/like/comment UI.
+  # For pad/original-16:9 crops, this is also the floor - captions center in
+  # the black bar under the video but never sit closer to the edge than this.
   position: bottom       # bottom | top | center
   # How many words appear per subtitle cue - keeps captions short and synced
   # to speech instead of showing a whole sentence at once.

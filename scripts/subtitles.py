@@ -14,6 +14,7 @@ def group_words_into_cues(words: list[dict], max_words: int = 4) -> list[dict]:
                 "start": group[0]["start"],
                 "end": group[-1]["end"],
                 "text": " ".join(word["word"].strip() for word in group),
+                "words": group,
             }
         )
     return cues

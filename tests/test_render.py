@@ -10,8 +10,10 @@ from scripts.render import (
     build_subtitle_force_style,
     clamp_clip_bounds,
     compute_crop_filter,
+    compute_subtitle_margin_v,
     probe_video,
     render_clip,
+    SUBTITLE_MARGIN_V,
 )
 
 
@@ -44,7 +46,7 @@ def test_compute_crop_filter_zoom():
 
 def test_compute_crop_filter_pad():
     result = compute_crop_filter("pad", src_width=1920, src_height=1080)
-    assert result == "scale=1080:608,pad=1080:1920:0:394:black"
+    assert result == "scale=1080:608,pad=1080:1920:0:656:black"
 
 
 def test_compute_crop_filter_original_16_9():
@@ -55,6 +57,32 @@ def test_compute_crop_filter_original_16_9():
 def test_compute_crop_filter_rejects_unresolved_auto():
     with pytest.raises(RenderError, match="resolved value"):
         compute_crop_filter("auto", src_width=1920, src_height=1080)
+
+
+def test_compute_subtitle_margin_v_top_and_center_passthrough():
+    assert compute_subtitle_margin_v("top", "zoom", src_width=1920, src_height=1080) == SUBTITLE_MARGIN_V["top"]
+    assert compute_subtitle_margin_v("center", "pad", src_width=1920, src_height=1080) == SUBTITLE_MARGIN_V["center"]
+
+
+def test_compute_subtitle_margin_v_zoom_uses_static_bottom_margin():
+    assert compute_subtitle_margin_v("bottom", "zoom", src_width=1920, src_height=1080) == SUBTITLE_MARGIN_V["bottom"]
+
+
+def test_compute_subtitle_margin_v_pad_uses_safe_floor_on_standard_16_9_source():
+    # bottom bar is 656px; half of that (328px) is below the 380px safe
+    # floor, so the floor wins for a typical 16:9 recording.
+    assert compute_subtitle_margin_v("bottom", "pad", src_width=1920, src_height=1080) == 380
+
+
+def test_compute_subtitle_margin_v_original_16_9_centers_in_large_bottom_bar():
+    # an ultra-wide source leaves a big black bar - captions center inside
+    # it, well past the 380px safe floor.
+    assert compute_subtitle_margin_v("bottom", "original-16:9", src_width=2560, src_height=600) == 416
+
+
+def test_compute_subtitle_margin_v_rejects_unresolved_auto():
+    with pytest.raises(RenderError, match="resolved value"):
+        compute_subtitle_margin_v("bottom", "auto", src_width=1920, src_height=1080)
 
 
 def test_build_ffmpeg_command_without_subtitles():
@@ -101,7 +129,7 @@ def test_build_subtitle_force_style_bottom_position():
     assert style == (
         "FontName=Arial Black,FontSize=72,PrimaryColour=&H00FFFFFF,"
         "OutlineColour=&H00000000,BorderStyle=1,Outline=4,Shadow=2,Bold=1,"
-        "Alignment=2,MarginV=280"
+        "Alignment=2,MarginV=380"
     )
 
 
@@ -122,7 +150,7 @@ def test_build_ffmpeg_command_with_subtitle_style():
         "scale=1080:608,pad=1080:1920:0:394:black,subtitles='work/x/subs.srt':"
         "force_style='FontName=Arial Black,FontSize=72,PrimaryColour=&H00FFFFFF,"
         "OutlineColour=&H00000000,BorderStyle=1,Outline=4,Shadow=2,Bold=1,"
-        "Alignment=2,MarginV=280'"
+        "Alignment=2,MarginV=380'"
     )
 
 
@@ -272,21 +300,46 @@ def test_render_clip_threads_fade_seconds_into_command():
 def test_build_ass_content_sets_play_res_to_canvas_size():
     cues = [{"start": 0.26, "end": 2.18, "text": "hello world"}]
 
-    ass = build_ass_content(cues, "Arial Black", 72, "white", "black", "bottom", 1080, 1920)
+    ass = build_ass_content(cues, "Arial Black", 92, "white", "black", "yellow", "bottom", 380, 1080, 1920)
 
     assert "PlayResX: 1080" in ass
     assert "PlayResY: 1920" in ass
     assert "Alignment=2" not in ass  # baked into the Style line, not a force_style override
-    assert "Style: Default,Arial Black,72,&H00FFFFFF,&H000000FF,&H00000000," in ass
+    assert "Style: Default,Arial Black,92,&H00FFFFFF,&H0000FFFF,&H00000000," in ass
+    # Style line is positional CSV (MarginL, MarginR, MarginV, Encoding), not key=value,
+    # so verify margin_v=380 lands in the MarginV slot rather than searching for "MarginV=380".
+    assert "10,10,380,1\n" in ass
     assert "Dialogue: 0,0:00:00.26,0:00:02.18,Default,,0,0,0,,hello world" in ass
 
 
 def test_build_ass_content_escapes_newlines_as_hard_breaks():
     cues = [{"start": 0.0, "end": 1.0, "text": "line one\nline two"}]
 
-    ass = build_ass_content(cues, "Arial", 48, "white", "black", "top", 1080, 1920)
+    ass = build_ass_content(cues, "Arial", 48, "white", "black", "yellow", "top", 120, 1080, 1920)
 
     assert "line one\\Nline two" in ass
+
+
+def test_build_ass_content_karaoke_cue_emits_base_plus_per_word_overlay_events():
+    words = [
+        {"word": "hello", "start": 0.0, "end": 0.4},
+        {"word": "world", "start": 0.5, "end": 1.0},
+    ]
+    cues = [{"start": 0.0, "end": 1.0, "text": "hello world", "words": words}]
+
+    ass = build_ass_content(cues, "Arial Black", 92, "white", "black", "yellow", "bottom", 380, 1080, 1920)
+
+    assert "Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,hello world" in ass
+    assert "Dialogue: 1,0:00:00.00,0:00:00.40,Default,,0,0,0," in ass
+    assert "Dialogue: 1,0:00:00.50,0:00:01.00,Default,,0,0,0," in ass
+    # first overlay (word 0 active): "hello" opaque+highlighted, "world" transparent
+    first_overlay = [line for line in ass.splitlines() if line.startswith("Dialogue: 1,0:00:00.00,0:00:00.40")][0]
+    assert "\\alpha&H00&\\c&H0000FFFF&}hello" in first_overlay
+    assert "\\alpha&HFF&}world" in first_overlay
+    # second overlay (word 1 active): "world" opaque+highlighted, "hello" transparent
+    second_overlay = [line for line in ass.splitlines() if line.startswith("Dialogue: 1,0:00:00.50,0:00:01.00")][0]
+    assert "\\alpha&HFF&}hello" in second_overlay
+    assert "\\alpha&H00&\\c&H0000FFFF&}world" in second_overlay
 
 
 def test_render_clip_bakes_subtitles_into_ass_with_canvas_play_res(tmp_path):
@@ -311,8 +364,9 @@ def test_render_clip_bakes_subtitles_into_ass_with_canvas_play_res(tmp_path):
         "subtitles_path": str(srt_path),
     }
     subtitle_style = {
-        "font": "Arial Black", "size": 72, "color": "white",
-        "outline_color": "black", "position": "bottom",
+        "font": "Arial Black", "size": 92, "color": "white",
+        "outline_color": "black", "highlight_color": "yellow",
+        "position": "bottom", "words_per_cue": 4,
     }
 
     render_clip(
@@ -331,6 +385,93 @@ def test_render_clip_bakes_subtitles_into_ass_with_canvas_play_res(tmp_path):
     command = captured["command"]
     assert any("subtitles=" in part and ".ass" in part for part in command)
     assert not any("force_style" in part for part in command)
+
+
+def test_render_clip_uses_karaoke_words_json_when_present(tmp_path):
+    srt_path = tmp_path / "subs.srt"
+    srt_path.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nhello world\n\n", encoding="utf-8"
+    )
+    words_path = tmp_path / "subs_words.json"
+    words_path.write_text(
+        json.dumps([
+            {"word": "hello", "start": 0.0, "end": 0.4},
+            {"word": "world", "start": 0.5, "end": 1.0},
+        ]),
+        encoding="utf-8",
+    )
+
+    captured = {}
+
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_runner(command, capture_output, text):
+        captured["command"] = command
+        return FakeResult()
+
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "subtitles_path": str(srt_path),
+    }
+    subtitle_style = {
+        "font": "Arial Black", "size": 92, "color": "white", "outline_color": "black",
+        "highlight_color": "yellow", "position": "bottom", "words_per_cue": 4,
+    }
+
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        subtitle_style=subtitle_style,
+        runner=fake_runner,
+    )
+
+    ass_content = srt_path.with_suffix(".ass").read_text(encoding="utf-8")
+    assert "Dialogue: 1," in ass_content  # per-word overlay events present
+    assert "\\c&H0000FFFF&" in ass_content  # highlight color applied somewhere
+    assert "hello" in ass_content
+    assert "world" in ass_content
+
+
+def test_render_clip_computes_frame_relative_margin_for_pad_crop_style(tmp_path):
+    srt_path = tmp_path / "subs.srt"
+    srt_path.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nhello world\n\n", encoding="utf-8"
+    )
+
+    captured = {}
+
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_runner(command, capture_output, text):
+        captured["command"] = command
+        return FakeResult()
+
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "pad",
+        "subtitles_path": str(srt_path),
+    }
+    subtitle_style = {
+        "font": "Arial Black", "size": 92, "color": "white", "outline_color": "black",
+        "highlight_color": "yellow", "position": "bottom", "words_per_cue": 4,
+    }
+
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        subtitle_style=subtitle_style,
+        runner=fake_runner,
+    )
+
+    ass_content = srt_path.with_suffix(".ass").read_text(encoding="utf-8")
+    # pad crop on a 1920x1080 source: bottom bar 656px, half=328 < 380 safe floor -> 380 wins,
+    # same numeric value as zoom's static margin, but reached via the geometry branch this time.
+    assert "10,10,380,1\n" in ass_content
 
 
 def test_render_clip_raises_on_ffmpeg_failure():
