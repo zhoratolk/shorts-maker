@@ -102,3 +102,46 @@ Added after the initial implementation shipped. Two related gaps: rendered clips
 The LLM (pass 2) produces this per-clip as a small JSON object keyed by platform name; a deterministic script (`scripts/metadata.py`) renders it into one human-readable text file per clip (one file, all requested platforms as separate `=== PLATFORM ===` sections) for easy copy-paste when posting — not a separate file per platform, since the user posts the same clip to several platforms from one sitting. The metadata file shares the clip's slug (e.g. `0001-boss-rage-quit.txt` next to `0001-boss-rage-quit.mp4`) so the pairing is obvious at a glance.
 
 `METADATA_PLATFORMS` (the set of valid platform keys) lives in `scripts/config.py` alongside the other enum sets (`CROP_MODES`, `FACECAM_MODES`, `WHISPER_DEVICES`) as the single source of truth; `scripts/metadata.py` imports it rather than redefining it.
+
+## Addendum: audio-spike signal, first-run config prompt, natural-language triggers (2026-07-03)
+
+Added after a real end-to-end run surfaced two rough edges (silent env setup, GPU fallback masking a real dependency gap — see below) and the user asked for three usability improvements. This addendum covers only the three new features; the environment/dependency bugs found during that run were fixed directly in code, not as part of this design (missing `scripts.*` absolute-import resolution when scripts are run directly, and the GPU→CPU fallback not catching the ctranslate2 lazy CUDA-library load failure — both already fixed in `scripts/transcribe.py`/`scripts/metadata.py`).
+
+### 1. Audio loudness-spike signal for candidate finding
+
+Pass-1 candidate finding currently judges text alone. Loud audio moments (laughter, exclamations, reactions) are a real signal for "good moment" that pure transcript text can miss or under-represent (e.g. a genuine laugh transcribes as nothing, or as a short interjection easy to skim past).
+
+**`scripts/loudness.py`** (new, mirrors `transcribe.py`'s shape):
+- `analyze_loudness(video_path, window_seconds=1.0) -> list[{"start", "end", "rms_db"}]` — decodes the video's audio track via `av` (already an installed dependency of `faster-whisper`/ctranslate2, no new package needed) and computes RMS loudness per fixed window over the whole track.
+- `detect_spikes(windows, baseline_seconds=30, z_threshold=2.0) -> list[{"start", "end", "rms_db"}]` — for each window, compares `rms_db` against a trailing rolling average over `baseline_seconds` of preceding windows and flags it as a spike when it exceeds that local baseline by `z_threshold`. Relative to a local rolling baseline, not an absolute dB cutoff, so it works across recordings with different overall mic/game-audio levels. The very first window (no preceding windows yet, so no baseline exists) is never flagged, regardless of its loudness — it takes at least one window of history to establish a baseline. `baseline_seconds`/`z_threshold` are internal constants, not exposed in `config.yaml` — they're implementation tuning, not something a user needs to reach for per-recording.
+- CLI: `python scripts/loudness.py "<video>" transcripts` — prints the cache path (`transcripts/<video_stem>.loudness.json`), skips analysis if that file already exists (same caching convention as `transcribe.py`).
+
+**Wiring into the pipeline:**
+- `config.yaml` gets `analysis.audio_spikes` (bool, default `true`) — the only new user-facing knob for this feature.
+- `SKILL.md`'s prerequisite/pipeline steps: when `analysis.audio_spikes` is true, run `loudness.py` on the video right after transcription, then pass its cache path to `chunker.py`.
+- `chunker.py` gains an optional loudness-cache argument; when given, each `chunk_NNNN.json` gets an extra `loud_spikes` list containing every spike whose time range overlaps that chunk's window (absolute timestamps, same coordinate space as the transcript segments already in the chunk). Omitting the argument leaves chunk output unchanged — fully backward compatible.
+- Pass-1 instructions in `SKILL.md` gain one rule: a `loud_spikes` entry overlapping or immediately following a transcript segment is a signal that moment is a stronger candidate (reaction, laugh, punchline landing) — but a spike with no corresponding text nearby (silence-adjacent noise, a bump, game explosion sound) does not by itself create a candidate. Audio is a *booster*, never the sole trigger.
+
+### 2. First-run config prompt
+
+Today, first-time setup requires manually copying `config.example.yaml` to `config.yaml` and hand-editing paths — an easy step to get wrong or skip (e.g. a fresh clone's `config.yaml` still pointing at someone else's `F:/...` paths). `scripts/setup.py` becomes the single entry point that also handles this:
+
+- After the existing ffmpeg/deps/GPU checks, `setup.py` checks whether `config.yaml` exists. If not, it prompts for `input_dir` and `output_dir` (via the same `prompt_yes_no`-style helper, extended for free-text answers) and writes `config.yaml` from `config.example.yaml` with just those two values substituted.
+- Substitution is a targeted line replace on the copied template text (not a YAML parse/re-dump), so all the explanatory comments in `config.example.yaml` survive into the user's `config.yaml` — round-tripping through the `scripts.config` dataclasses would strip them.
+- Non-interactive environments (no stdin, e.g. CI) hit `EOFError` on the prompt — same fallback already added for the ffmpeg/deps prompts: fall back silently to a verbatim copy of the example file and print a note to edit the two paths by hand. Never crashes.
+- If `config.yaml` already exists, `setup.py` leaves it untouched — this only runs once, on a fresh clone.
+
+### 3. Natural-language chat triggers
+
+Currently the skill only activates on the literal `/make-shorts <path>` slash command. The user also wants it to trigger from ordinary chat requests — "давай сделаем шортсы", "нарежь тикток", "make a reel out of this", "cut some shorts from this VOD" — in both Russian and English.
+
+Claude Code matches a skill to a request based on the skill's frontmatter `description` field, so this is a documentation-only change, no new Python:
+- `SKILL.md`'s frontmatter `description` is expanded from the current single sentence to explicitly list common RU/EN phrasing (шортс/шортсы/рилс/тикток/нарезка/нарезать, "make shorts", "make a reel", "make a tiktok", "cut/clip this VOD") in addition to the literal `/make-shorts` invocation, so the skill surfaces for natural requests, not just the exact command.
+- New short section in `SKILL.md`'s body: when invoked from natural phrasing rather than the slash command (i.e. no video path was given), ask the user which file/path to process before doing anything else — never guess or default to "most recent file in `input_dir`".
+
+### Testing
+
+- `tests/test_loudness.py`: `analyze_loudness` tested against a synthetic decoded-audio fixture (mock `av`'s decode output the same way `test_transcribe.py` mocks `faster_whisper` — a fake module returning fixed frames, not real audio files); `detect_spikes` is pure data-in/data-out and tested directly against hand-built window lists (quiet baseline + one deliberate spike, the first window never flagged even if loud, all-quiet track with no spikes).
+- `tests/test_chunker.py`: new cases for the optional loudness argument — spikes correctly attributed to the overlapping chunk(s), chunk output unchanged when the argument is omitted (regression guard for backward compatibility).
+- `tests/test_setup.py`: new cases for config creation — interactive answers produce a `config.yaml` with substituted paths and preserved comments, missing-stdin (`EOFError`) falls back to a verbatim copy, and an already-existing `config.yaml` is left untouched.
+- No test changes needed for the natural-language trigger feature — it's a `SKILL.md` prompt/description change with nothing deterministic to unit test.
