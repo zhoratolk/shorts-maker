@@ -10,8 +10,10 @@ from scripts.render import (
     build_subtitle_force_style,
     clamp_clip_bounds,
     compute_crop_filter,
+    compute_subtitle_margin_v,
     probe_video,
     render_clip,
+    SUBTITLE_MARGIN_V,
 )
 
 
@@ -55,6 +57,32 @@ def test_compute_crop_filter_original_16_9():
 def test_compute_crop_filter_rejects_unresolved_auto():
     with pytest.raises(RenderError, match="resolved value"):
         compute_crop_filter("auto", src_width=1920, src_height=1080)
+
+
+def test_compute_subtitle_margin_v_top_and_center_passthrough():
+    assert compute_subtitle_margin_v("top", "zoom", src_width=1920, src_height=1080) == SUBTITLE_MARGIN_V["top"]
+    assert compute_subtitle_margin_v("center", "pad", src_width=1920, src_height=1080) == SUBTITLE_MARGIN_V["center"]
+
+
+def test_compute_subtitle_margin_v_zoom_uses_static_bottom_margin():
+    assert compute_subtitle_margin_v("bottom", "zoom", src_width=1920, src_height=1080) == SUBTITLE_MARGIN_V["bottom"]
+
+
+def test_compute_subtitle_margin_v_pad_uses_safe_floor_on_standard_16_9_source():
+    # bottom bar is 656px; half of that (328px) is below the 380px safe
+    # floor, so the floor wins for a typical 16:9 recording.
+    assert compute_subtitle_margin_v("bottom", "pad", src_width=1920, src_height=1080) == 380
+
+
+def test_compute_subtitle_margin_v_original_16_9_centers_in_large_bottom_bar():
+    # an ultra-wide source leaves a big black bar - captions center inside
+    # it, well past the 380px safe floor.
+    assert compute_subtitle_margin_v("bottom", "original-16:9", src_width=2560, src_height=600) == 416
+
+
+def test_compute_subtitle_margin_v_rejects_unresolved_auto():
+    with pytest.raises(RenderError, match="resolved value"):
+        compute_subtitle_margin_v("bottom", "auto", src_width=1920, src_height=1080)
 
 
 def test_build_ffmpeg_command_without_subtitles():

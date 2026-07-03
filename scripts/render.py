@@ -132,6 +132,25 @@ def compute_crop_filter(crop_style: str, src_width: int, src_height: int) -> str
     )
 
 
+def compute_subtitle_margin_v(position: str, crop_style: str, src_width: int, src_height: int) -> int:
+    if position != "bottom":
+        return SUBTITLE_MARGIN_V[position]
+
+    if crop_style == "zoom":
+        return SUBTITLE_MARGIN_V["bottom"]
+
+    if crop_style in ("pad", "original-16:9"):
+        scaled_height = round(src_height * TARGET_WIDTH / src_width)
+        top_pad = round((TARGET_HEIGHT - scaled_height) / 2)
+        bottom_bar_height = TARGET_HEIGHT - top_pad - scaled_height
+        return max(SUBTITLE_MARGIN_V["bottom"], bottom_bar_height // 2)
+
+    raise RenderError(
+        f"crop_style must be a resolved value (zoom/pad/original-16:9), got {crop_style!r}. "
+        "'auto' must be resolved to a concrete style before reaching render.py."
+    )
+
+
 def compute_fade_plan(
     clip_duration: float, fade_seconds: float, tail_available: float
 ) -> tuple[float, float, float]:
