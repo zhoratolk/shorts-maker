@@ -118,7 +118,7 @@ def compute_crop_filter(crop_style: str, src_width: int, src_height: int) -> str
     if crop_style == "pad":
         scaled_height = round(src_height * TARGET_WIDTH / src_width)
         total_pad = TARGET_HEIGHT - scaled_height
-        top_pad = round(total_pad * 0.3)
+        top_pad = round(total_pad / 2)
         return f"scale={TARGET_WIDTH}:{scaled_height},pad={TARGET_WIDTH}:{TARGET_HEIGHT}:0:{top_pad}:black"
 
     if crop_style == "original-16:9":

@@ -44,7 +44,7 @@ def test_compute_crop_filter_zoom():
 
 def test_compute_crop_filter_pad():
     result = compute_crop_filter("pad", src_width=1920, src_height=1080)
-    assert result == "scale=1080:608,pad=1080:1920:0:394:black"
+    assert result == "scale=1080:608,pad=1080:1920:0:656:black"
 
 
 def test_compute_crop_filter_original_16_9():
