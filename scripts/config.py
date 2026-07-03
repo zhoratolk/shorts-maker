@@ -53,11 +53,12 @@ class FacecamConfig:
 @dataclasses.dataclass
 class SubtitlesConfig:
     enabled: bool = False
-    font: str = "Arial"
-    size: int = 48
+    font: str = "Arial Black"
+    size: int = 72
     color: str = "white"
     outline: str = "black"
     position: str = "bottom"
+    words_per_cue: int = 4
 
 
 @dataclasses.dataclass
@@ -133,6 +134,8 @@ def _validate(config: Config) -> None:
         raise ConfigError("clip.min_seconds must be less than clip.max_seconds")
     if config.clip.fade_seconds < 0:
         raise ConfigError("clip.fade_seconds must be >= 0")
+    if config.subtitles.words_per_cue <= 0:
+        raise ConfigError("subtitles.words_per_cue must be > 0")
     if config.crop.mode not in CROP_MODES:
         raise ConfigError(f"crop.mode must be one of {sorted(CROP_MODES)}, got {config.crop.mode!r}")
     if config.facecam.mode not in FACECAM_MODES:

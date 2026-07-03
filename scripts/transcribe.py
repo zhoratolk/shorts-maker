@@ -47,7 +47,15 @@ def transcribe_video(
     segments_iter, info = model.transcribe(video_path, language=whisper_language, word_timestamps=True)
 
     segments = [
-        {"start": segment.start, "end": segment.end, "text": segment.text}
+        {
+            "start": segment.start,
+            "end": segment.end,
+            "text": segment.text,
+            "words": [
+                {"word": word.word, "start": word.start, "end": word.end}
+                for word in (segment.words or [])
+            ],
+        }
         for segment in segments_iter
     ]
     result = {

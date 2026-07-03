@@ -61,8 +61,15 @@ facecam:
 
 subtitles:
   enabled: false
-  font: Arial
-  size: 48
+  # Arial Black: bold, full Cyrillic support, ships with Windows - reliable
+  # for burned-in captions over busy gameplay footage.
+  font: Arial Black
+  size: 72
   color: white
   outline: black
+  # bottom keeps a safe margin from the true bottom edge (280px of 1920) so
+  # captions don't sit under TikTok/Reels/Shorts' own caption/like/comment UI.
   position: bottom       # bottom | top | center
+  # How many words appear per subtitle cue - keeps captions short and synced
+  # to speech instead of showing a whole sentence at once.
+  words_per_cue: 4

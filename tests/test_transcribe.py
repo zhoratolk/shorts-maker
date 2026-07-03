@@ -29,11 +29,19 @@ def test_is_cached_true_when_present(tmp_path):
     assert is_cached(str(tmp_path / "video.mp4"), str(transcripts_dir)) is True
 
 
+class FakeWord:
+    def __init__(self, word, start, end):
+        self.word = word
+        self.start = start
+        self.end = end
+
+
 class FakeSegment:
-    def __init__(self, start, end, text):
+    def __init__(self, start, end, text, words=None):
         self.start = start
         self.end = end
         self.text = text
+        self.words = words or []
 
 
 class FakeInfo:
@@ -44,7 +52,10 @@ class FakeInfo:
 
 class FakeModel:
     def transcribe(self, video_path, language, word_timestamps):
-        segments = [FakeSegment(0.0, 2.0, "hello"), FakeSegment(2.0, 4.0, "world")]
+        segments = [
+            FakeSegment(0.0, 2.0, "hello", [FakeWord("hello", 0.0, 2.0)]),
+            FakeSegment(2.0, 4.0, "world", [FakeWord("world", 2.0, 4.0)]),
+        ]
         return iter(segments), FakeInfo("en", 4.0)
 
 
@@ -59,8 +70,14 @@ def test_transcribe_video_writes_cache(tmp_path):
         "language": "en",
         "duration": 4.0,
         "segments": [
-            {"start": 0.0, "end": 2.0, "text": "hello"},
-            {"start": 2.0, "end": 4.0, "text": "world"},
+            {
+                "start": 0.0, "end": 2.0, "text": "hello",
+                "words": [{"word": "hello", "start": 0.0, "end": 2.0}],
+            },
+            {
+                "start": 2.0, "end": 4.0, "text": "world",
+                "words": [{"word": "world", "start": 2.0, "end": 4.0}],
+            },
         ],
     }
     cache_file = Path(transcripts_dir) / "video.json"

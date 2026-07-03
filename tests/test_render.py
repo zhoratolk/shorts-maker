@@ -4,7 +4,9 @@ import pytest
 
 from scripts.render import (
     RenderError,
+    ass_color,
     build_ffmpeg_command,
+    build_subtitle_force_style,
     clamp_clip_bounds,
     compute_crop_filter,
     probe_video,
@@ -81,6 +83,48 @@ def test_build_ffmpeg_command_with_subtitles():
     assert command[9] == "scale=1080:608,pad=1080:1920:0:394:black,subtitles='work/x/subs.srt'"
 
 
+def test_ass_color_named():
+    assert ass_color("white") == "&H00FFFFFF"
+    assert ass_color("black") == "&H00000000"
+
+
+def test_ass_color_hex():
+    assert ass_color("#FF8800") == "&H000088FF"
+
+
+def test_build_subtitle_force_style_bottom_position():
+    style = build_subtitle_force_style(
+        font="Arial Black", size=72, color="white", outline_color="black", position="bottom"
+    )
+
+    assert style == (
+        "FontName=Arial Black,FontSize=72,PrimaryColour=&H00FFFFFF,"
+        "OutlineColour=&H00000000,BorderStyle=1,Outline=4,Shadow=2,Bold=1,"
+        "Alignment=2,MarginV=280"
+    )
+
+
+def test_build_subtitle_force_style_top_and_center_positions():
+    assert "Alignment=8" in build_subtitle_force_style("Arial", 48, "white", "black", "top")
+    assert "Alignment=5" in build_subtitle_force_style("Arial", 48, "white", "black", "center")
+
+
+def test_build_ffmpeg_command_with_subtitle_style():
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0,
+        crop_filter="scale=1080:608,pad=1080:1920:0:394:black",
+        subtitles_path="work/x/subs.srt",
+        subtitle_style={"font": "Arial Black", "size": 72, "color": "white", "outline_color": "black", "position": "bottom"},
+    )
+
+    assert command[9] == (
+        "scale=1080:608,pad=1080:1920:0:394:black,subtitles='work/x/subs.srt':"
+        "force_style='FontName=Arial Black,FontSize=72,PrimaryColour=&H00FFFFFF,"
+        "OutlineColour=&H00000000,BorderStyle=1,Outline=4,Shadow=2,Bold=1,"
+        "Alignment=2,MarginV=280'"
+    )
+
+
 def test_build_ffmpeg_command_with_fade_out():
     command = build_ffmpeg_command(
         "in.mp4", "out.mp4", start=10.0, end=40.0,
@@ -102,6 +146,46 @@ def test_build_ffmpeg_command_fade_out_clamped_to_half_clip_duration():
     )
 
     assert "fade=t=out:st=0.3:d=0.3" in command[9]
+
+
+def test_build_ffmpeg_command_fade_starts_after_last_word_when_tail_available():
+    # 60s of source footage remain past the clip's end -> fade happens in
+    # extra appended footage instead of overlapping the last word.
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        fade_seconds=0.5,
+        video_duration=100.0,
+    )
+
+    assert command[command.index("-t") + 1] == "30.5"
+    assert "fade=t=out:st=30.0:d=0.5" in command[9]
+    assert "afade=t=out:st=30.0:d=0.5" in command
+
+
+def test_build_ffmpeg_command_fade_extend_clamped_to_available_tail():
+    # only 0.2s of source footage remains past the clip's end
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        fade_seconds=0.5,
+        video_duration=40.2,
+    )
+
+    assert command[command.index("-t") + 1] == "30.2"
+    assert "fade=t=out:st=30.0:d=0.2" in command[9]
+
+
+def test_build_ffmpeg_command_fade_falls_back_to_overlap_when_no_tail():
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        fade_seconds=0.5,
+        video_duration=40.0,
+    )
+
+    assert command[command.index("-t") + 1] == "30.0"
+    assert "fade=t=out:st=29.5:d=0.5" in command[9]
 
 
 def test_build_ffmpeg_command_without_fade_has_no_audio_filter():
@@ -181,7 +265,7 @@ def test_render_clip_threads_fade_seconds_into_command():
     )
 
     assert command == captured["command"]
-    assert "fade=t=out:st=29.5:d=0.5" in command[9]
+    assert "fade=t=out:st=30.0:d=0.5" in command[9]
 
 
 def test_render_clip_raises_on_ffmpeg_failure():

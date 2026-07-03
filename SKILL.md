@@ -66,7 +66,14 @@ For each approved candidate, re-read that moment's transcript window (from the c
   - If `config.crop.mode` is `auto`, choose per clip among all three documented options: `zoom` (visually dynamic moment, crop in tight), `pad` (dialogue/joke-driven moment where the visual matters less, reserve room for captions), or `original-16:9` (a moment where the full frame matters and cropping would cut off something relevant — keep the whole 16:9 frame, letterboxed).
   - Never write `auto` into `PLAN.json` — it must always be a concrete resolved value.
 - If `config.facecam.enabled` is `true`, let the facecam overlay inform (not override) the crop_style choice above — e.g. prefer `pad` or `original-16:9` so the overlay stays in frame, rather than a `zoom` that might crop it out. `facecam.mode` and `facecam.region` describe where the overlay sits, for this judgment call only — `render.py` does not crop to those pixel coordinates; it only ever applies the resolved crop_style (a center crop for `zoom`, or a full-frame letterbox for `pad`/`original-16:9`).
-- If `config.subtitles.enabled` is `true`, generate an `.srt` file for the clip's exact window under `work/<video_stem>/subtitles/` from the transcript segments, and reference it in the plan entry. Transcript segments carry **absolute** timestamps from the full source video, but `render.py` seeks with `-ss` before `-i`, so each rendered clip's internal timeline starts at 0, not at the clip's `start` offset. Before writing the `.srt`, subtract this clip's `start` time from every segment's start/end so the subtitle timestamps are clip-relative (starting at/near 0) — otherwise the subtitles will be timed for a point far past the end of the rendered clip and never appear.
+- If `config.subtitles.enabled` is `true`, build the clip's subtitles from **word-level** timestamps, not whole segments, so captions appear a few words at a time in sync with speech:
+  1. Collect every `words` entry (`{"word", "start", "end"}`) from the transcript segments covering this clip's time range. Transcript timestamps are **absolute** (full source video); `render.py` seeks with `-ss` before `-i`, so each rendered clip's internal timeline starts at 0 — subtract this clip's `start` time from every word's `start`/`end` before writing anything, otherwise the subtitles will be timed for a point past the end of the rendered clip and never appear. Drop/clip any word that falls outside `[0, end-start]` after the shift.
+  2. **Correct obviously mis-transcribed words** (Whisper garbles words, especially on fast/profane/slang speech). Read each word in context of its neighbors and fix it only when the intended word is unambiguous from context — a real word standing in for a nonsense token, an obvious one-letter slip, a homophone that doesn't fit the sentence. Do not rewrite unclear or ambiguous phrases you can't confidently reconstruct — leave those as Whisper transcribed them rather than guessing. This is a light proofreading pass, not a rewrite: keep every correction minimal and keep the original word's timestamps.
+  3. Write the corrected, clip-relative word list to `work/<video_stem>/subtitles/<clip_filename_stem>_words.json` as a JSON list of `{"word", "start", "end"}` objects, then group them into short synced cues and render the `.srt`:
+     ```bash
+     python scripts/subtitles.py work/<video_stem>/subtitles/<clip_filename_stem>_words.json work/<video_stem>/subtitles/<clip_filename_stem>.srt --max-words <subtitles.words_per_cue>
+     ```
+  Reference the resulting `.srt` path as `subtitles_path` in the plan entry below.
 
 - **Title and filename** — decide a short (2-3 word) title describing the clip's content (e.g. "Boss Rage Quit"), then run:
   ```bash
@@ -103,10 +110,10 @@ Write the merged results to `work/<video_stem>/PLAN.json`: a JSON list of object
 ### 6. Render
 
 ```bash
-python scripts/render.py "<video>" work/<video_stem>/PLAN.json "<config.output_dir>" --fade-seconds <config.clip.fade_seconds>
+python scripts/render.py "<video>" work/<video_stem>/PLAN.json "<config.output_dir>" --fade-seconds <config.clip.fade_seconds> --sub-font "<config.subtitles.font>" --sub-size <config.subtitles.size> --sub-color <config.subtitles.color> --sub-outline-color <config.subtitles.outline> --sub-position <config.subtitles.position>
 ```
 
-This probes the source video once, then renders every entry in `PLAN.json` into `config.output_dir`, printing each output path. Each clip fades video and audio to black/silence over the last `config.clip.fade_seconds` seconds (default 0.5s) instead of cutting off abruptly on the last word.
+This probes the source video once, then renders every entry in `PLAN.json` into `config.output_dir`, printing each output path. Each clip fades video and audio to black/silence over the last `config.clip.fade_seconds` seconds (default 0.5s) — the fade only starts once the last word has fully finished (extending a bit into unused source footage past the clip's end when available), it does not overlap or cut into speech. When a clip has `subtitles_path` set, the `--sub-*` flags style the burned-in captions (font/size/colors/position); the `--sub-position bottom` default keeps a safe margin from the very bottom of the frame so captions don't sit under TikTok/Reels/Shorts' own UI buttons.
 
 ## Library-wide search
 
