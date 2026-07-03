@@ -300,19 +300,22 @@ def test_render_clip_threads_fade_seconds_into_command():
 def test_build_ass_content_sets_play_res_to_canvas_size():
     cues = [{"start": 0.26, "end": 2.18, "text": "hello world"}]
 
-    ass = build_ass_content(cues, "Arial Black", 72, "white", "black", "bottom", 1080, 1920)
+    ass = build_ass_content(cues, "Arial Black", 92, "white", "black", "yellow", "bottom", 380, 1080, 1920)
 
     assert "PlayResX: 1080" in ass
     assert "PlayResY: 1920" in ass
     assert "Alignment=2" not in ass  # baked into the Style line, not a force_style override
-    assert "Style: Default,Arial Black,72,&H00FFFFFF,&H000000FF,&H00000000," in ass
+    assert "Style: Default,Arial Black,92,&H00FFFFFF,&H0000FFFF,&H00000000," in ass
+    # Style line is positional CSV (MarginL, MarginR, MarginV, Encoding), not key=value,
+    # so verify margin_v=380 lands in the MarginV slot rather than searching for "MarginV=380".
+    assert "10,10,380,1\n" in ass
     assert "Dialogue: 0,0:00:00.26,0:00:02.18,Default,,0,0,0,,hello world" in ass
 
 
 def test_build_ass_content_escapes_newlines_as_hard_breaks():
     cues = [{"start": 0.0, "end": 1.0, "text": "line one\nline two"}]
 
-    ass = build_ass_content(cues, "Arial", 48, "white", "black", "top", 1080, 1920)
+    ass = build_ass_content(cues, "Arial", 48, "white", "black", "yellow", "top", 120, 1080, 1920)
 
     assert "line one\\Nline two" in ass
 
@@ -339,8 +342,9 @@ def test_render_clip_bakes_subtitles_into_ass_with_canvas_play_res(tmp_path):
         "subtitles_path": str(srt_path),
     }
     subtitle_style = {
-        "font": "Arial Black", "size": 72, "color": "white",
-        "outline_color": "black", "position": "bottom",
+        "font": "Arial Black", "size": 92, "color": "white",
+        "outline_color": "black", "highlight_color": "yellow",
+        "position": "bottom", "words_per_cue": 4,
     }
 
     render_clip(
@@ -359,6 +363,53 @@ def test_render_clip_bakes_subtitles_into_ass_with_canvas_play_res(tmp_path):
     command = captured["command"]
     assert any("subtitles=" in part and ".ass" in part for part in command)
     assert not any("force_style" in part for part in command)
+
+
+def test_render_clip_uses_karaoke_words_json_when_present(tmp_path):
+    srt_path = tmp_path / "subs.srt"
+    srt_path.write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nhello world\n\n", encoding="utf-8"
+    )
+    words_path = tmp_path / "subs_words.json"
+    words_path.write_text(
+        json.dumps([
+            {"word": "hello", "start": 0.0, "end": 0.4},
+            {"word": "world", "start": 0.5, "end": 1.0},
+        ]),
+        encoding="utf-8",
+    )
+
+    captured = {}
+
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_runner(command, capture_output, text):
+        captured["command"] = command
+        return FakeResult()
+
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "subtitles_path": str(srt_path),
+    }
+    subtitle_style = {
+        "font": "Arial Black", "size": 92, "color": "white", "outline_color": "black",
+        "highlight_color": "yellow", "position": "bottom", "words_per_cue": 4,
+    }
+
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        subtitle_style=subtitle_style,
+        runner=fake_runner,
+    )
+
+    ass_content = srt_path.with_suffix(".ass").read_text(encoding="utf-8")
+    assert "\\k" in ass_content
+    assert "hello" in ass_content
+    assert "world" in ass_content
 
 
 def test_render_clip_raises_on_ffmpeg_failure():

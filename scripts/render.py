@@ -60,8 +60,8 @@ def format_ass_timestamp(seconds: float) -> str:
 
 
 def build_ass_content(
-    cues: list[dict], font: str, size: int, color: str, outline_color: str, position: str,
-    play_res_x: int, play_res_y: int,
+    cues: list[dict], font: str, size: int, color: str, outline_color: str, highlight_color: str,
+    position: str, margin_v: int, play_res_x: int, play_res_y: int,
 ) -> str:
     """Bakes cues into a self-contained .ass with PlayResX/Y matching the render canvas.
 
@@ -70,9 +70,14 @@ def build_ass_content(
     1080x1920 canvas that blows FontSize/MarginV up by ~6.7x and the text lands off
     the top of frame. Writing PlayResX/Y equal to the actual output size avoids that
     scaling entirely, so style values apply at face value.
+
+    `highlight_color` becomes the style's SecondaryColour, which ASS `\\k<centiseconds>`
+    tags in the cue text use for the karaoke sweep (word highlighted while spoken,
+    reverting to `color`/PrimaryColour once done). `margin_v` is caller-supplied rather
+    than derived from `position` here, so it can be tied to actual crop geometry —
+    see `compute_subtitle_margin_v`.
     """
     alignment = SUBTITLE_ALIGNMENT[position]
-    margin_v = SUBTITLE_MARGIN_V[position]
     header = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -83,7 +88,7 @@ def build_ass_content(
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Default,{font},{size},{ass_color(color)},&H000000FF,{ass_color(outline_color)},"
+        f"Style: Default,{font},{size},{ass_color(color)},{ass_color(highlight_color)},{ass_color(outline_color)},"
         f"&H00000000,1,0,0,0,100,100,0,0,1,4,2,{alignment},10,10,{margin_v},1\n"
         "\n"
         "[Events]\n"
@@ -251,19 +256,30 @@ def render_clip(
     runner=subprocess.run,
 ) -> list[str]:
     start, end = clamp_clip_bounds(plan_entry["start"], plan_entry["end"], video_duration)
-    crop_filter = compute_crop_filter(plan_entry["crop_style"], src_width, src_height)
+    crop_style = plan_entry["crop_style"]
+    crop_filter = compute_crop_filter(crop_style, src_width, src_height)
     subtitles_path = plan_entry.get("subtitles_path")
 
     if subtitles_path is not None and subtitle_style is not None:
         import sys
 
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-        from scripts.subtitles import parse_srt
+        from scripts.subtitles import group_words_into_karaoke_cues, parse_srt
 
-        cues = parse_srt(Path(subtitles_path).read_text(encoding="utf-8"))
+        words_path = Path(subtitles_path).with_name(Path(subtitles_path).stem + "_words.json")
+        if words_path.exists():
+            words = json.loads(words_path.read_text(encoding="utf-8"))
+            cues = group_words_into_karaoke_cues(words, max_words=subtitle_style["words_per_cue"])
+        else:
+            cues = parse_srt(Path(subtitles_path).read_text(encoding="utf-8"))
+
+        margin_v = compute_subtitle_margin_v(
+            subtitle_style["position"], crop_style, src_width, src_height
+        )
         ass_content = build_ass_content(
             cues, subtitle_style["font"], subtitle_style["size"], subtitle_style["color"],
-            subtitle_style["outline_color"], subtitle_style["position"], TARGET_WIDTH, TARGET_HEIGHT,
+            subtitle_style["outline_color"], subtitle_style["highlight_color"],
+            subtitle_style["position"], margin_v, TARGET_WIDTH, TARGET_HEIGHT,
         )
         subtitles_path = str(Path(subtitles_path).with_suffix(".ass"))
         Path(subtitles_path).write_text(ass_content, encoding="utf-8")
@@ -290,10 +306,12 @@ def main() -> None:
         help="Fade video+audio to black/silence over this many seconds at the end of each clip",
     )
     parser.add_argument("--sub-font", default="Arial Black")
-    parser.add_argument("--sub-size", type=int, default=72)
+    parser.add_argument("--sub-size", type=int, default=92)
     parser.add_argument("--sub-color", default="white")
     parser.add_argument("--sub-outline-color", default="black")
+    parser.add_argument("--sub-highlight-color", default="yellow")
     parser.add_argument("--sub-position", default="bottom", choices=sorted(SUBTITLE_ALIGNMENT))
+    parser.add_argument("--sub-words-per-cue", type=int, default=4)
     args = parser.parse_args()
 
     subtitle_style = {
@@ -301,7 +319,9 @@ def main() -> None:
         "size": args.sub_size,
         "color": args.sub_color,
         "outline_color": args.sub_outline_color,
+        "highlight_color": args.sub_highlight_color,
         "position": args.sub_position,
+        "words_per_cue": args.sub_words_per_cue,
     }
 
     video_info = probe_video(args.input_video)
