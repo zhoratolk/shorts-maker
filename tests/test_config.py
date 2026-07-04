@@ -512,6 +512,7 @@ def test_load_config_subtitles_defaults_size_and_highlight_color(tmp_path):
 
     assert config.subtitles.size == 92
     assert config.subtitles.highlight_color == "yellow"
+    assert config.subtitles.strip_punctuation is True
 
 
 def test_load_config_analysis_default_hype_phrases(tmp_path):
@@ -521,6 +522,7 @@ def test_load_config_analysis_default_hype_phrases(tmp_path):
 
     assert config.analysis.hype_phrases == [
         "завоз", "ору", "кринж", "база", "это база", "мем вышел", "жиза", "воу-воу",
+        "рофл", "дичь", "жесть", "разрыв", "го клип", "клипани", "красава", "топчик", "агонь",
     ]
 
 

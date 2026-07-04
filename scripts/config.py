@@ -32,6 +32,7 @@ class AnalysisConfig:
     hype_phrases: list[str] = dataclasses.field(
         default_factory=lambda: [
             "завоз", "ору", "кринж", "база", "это база", "мем вышел", "жиза", "воу-воу",
+            "рофл", "дичь", "жесть", "разрыв", "го клип", "клипани", "красава", "топчик", "агонь",
         ]
     )
 
@@ -65,6 +66,7 @@ class SubtitlesConfig:
     highlight_color: str = "yellow"
     position: str = "bottom"
     words_per_cue: int = 4
+    strip_punctuation: bool = True
 
 
 @dataclasses.dataclass

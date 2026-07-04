@@ -21,4 +21,5 @@ def test_example_config_loads_without_error():
     assert config.subtitles.highlight_color == "yellow"
     assert config.analysis.hype_phrases == [
         "завоз", "ору", "кринж", "база", "это база", "мем вышел", "жиза", "воу-воу",
+        "рофл", "дичь", "жесть", "разрыв", "го клип", "клипани", "красава", "топчик", "агонь",
     ]

@@ -23,8 +23,11 @@ analysis:
   # Phrases (streamer/chat hype, meme call-outs) that tag a moment as extra
   # noteworthy - pass-1 uses these, and similar language, to boost a moment
   # that already stands on its own. They do NOT turn unremarkable/filler
-  # surrounding text into a candidate by themselves.
-  hype_phrases: ["завоз", "ору", "кринж", "база", "это база", "мем вышел", "жиза", "воу-воу"]
+  # surrounding text into a candidate by themselves. "го клип"/"клипани" are
+  # chat literally asking for a clip of this exact moment - the strongest
+  # signal in the list, treat it as near-automatic inclusion (still subject
+  # to the mature-content and manufactured-candidate rules in SKILL.md).
+  hype_phrases: ["завоз", "ору", "кринж", "база", "это база", "мем вышел", "жиза", "воу-воу", "рофл", "дичь", "жесть", "разрыв", "го клип", "клипани", "красава", "топчик", "агонь"]
 
 clip:
   min_seconds: 30
@@ -83,6 +86,10 @@ subtitles:
   # How many words appear per subtitle cue - keeps captions short and synced
   # to speech instead of showing a whole sentence at once.
   words_per_cue: 4
+  # Strip leading/trailing punctuation (commas, periods, quotes, dashes) from
+  # displayed caption words - a comma sitting alone in a 3-4 word burst reads
+  # as visual noise, not a sentence.
+  strip_punctuation: true
 
 audio:
   # FFmpeg noise-reduction filter (afftdn) applied to every clip's audio -

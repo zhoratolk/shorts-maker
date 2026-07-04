@@ -458,7 +458,10 @@ def render_clip(
         words_path = Path(subtitles_path).with_name(Path(subtitles_path).stem + "_words.json")
         if words_path.exists():
             words = json.loads(words_path.read_text(encoding="utf-8"))
-            cues = group_words_into_cues(words, max_words=subtitle_style["words_per_cue"])
+            cues = group_words_into_cues(
+                words, max_words=subtitle_style["words_per_cue"],
+                strip_punctuation=subtitle_style.get("strip_punctuation", True),
+            )
         else:
             cues = parse_srt(Path(subtitles_path).read_text(encoding="utf-8"))
 
@@ -512,6 +515,10 @@ def main() -> None:
     parser.add_argument("--sub-position", default="bottom", choices=sorted(SUBTITLE_ALIGNMENT))
     parser.add_argument("--sub-words-per-cue", type=int, default=4)
     parser.add_argument(
+        "--sub-strip-punctuation", action=argparse.BooleanOptionalAction, default=True,
+        help="Strip leading/trailing punctuation from burned-in caption words (default: on)",
+    )
+    parser.add_argument(
         "--denoise", action=argparse.BooleanOptionalAction, default=True,
         help="Apply an FFmpeg noise-reduction filter (afftdn) to each clip's audio",
     )
@@ -545,6 +552,7 @@ def main() -> None:
         "highlight_color": args.sub_highlight_color,
         "position": args.sub_position,
         "words_per_cue": args.sub_words_per_cue,
+        "strip_punctuation": args.sub_strip_punctuation,
     }
 
     video_info = probe_video(args.input_video)
