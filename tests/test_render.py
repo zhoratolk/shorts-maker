@@ -7,6 +7,8 @@ from scripts.render import (
     ass_color,
     build_ass_content,
     build_ffmpeg_command,
+    build_jumpcut_command,
+    build_punch_zoom_filter,
     build_subtitle_force_style,
     clamp_clip_bounds,
     compute_crop_filter,
@@ -260,6 +262,160 @@ def test_build_ffmpeg_command_denoise_loudnorm_and_fade_chain_in_order():
     )
 
 
+def test_build_ffmpeg_command_vignette_applies_after_crop_before_subtitles():
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        subtitles_path="work/x/subs.srt",
+        vignette=True,
+    )
+
+    assert command[9] == (
+        "crop=608:1080:656:0,scale=1080:1920,vignette,subtitles='work/x/subs.srt'"
+    )
+
+
+def test_build_ffmpeg_command_grain_strength_applies():
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        grain_strength=25,
+    )
+
+    assert command[9] == "crop=608:1080:656:0,scale=1080:1920,noise=alls=25:allf=t"
+
+
+def test_build_ffmpeg_command_vignette_and_grain_chain_together():
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        vignette=True,
+        grain_strength=25,
+    )
+
+    assert command[9] == (
+        "crop=608:1080:656:0,scale=1080:1920,vignette,noise=alls=25:allf=t"
+    )
+
+
+def test_build_ffmpeg_command_grain_strength_out_of_range_raises():
+    with pytest.raises(RenderError, match="grain_strength must be between 0 and 100"):
+        build_ffmpeg_command(
+            "in.mp4", "out.mp4", start=10.0, end=40.0,
+            crop_filter="crop=608:1080:656:0,scale=1080:1920",
+            grain_strength=150,
+        )
+
+
+def test_build_punch_zoom_filter_shape():
+    result = build_punch_zoom_filter(punch_at=5.0, zoom_amount=1.15, ramp=0.25)
+
+    assert result == (
+        "crop=w='1080/(if(lt(t,5.0),1,if(lt(t,5.25),1+(1.15-1)*(t-5.0)/0.25,1.15)))':"
+        "h='1920/(if(lt(t,5.0),1,if(lt(t,5.25),1+(1.15-1)*(t-5.0)/0.25,1.15)))':"
+        "x='(in_w-out_w)/2':y='(in_h-out_h)/2',scale=1080:1920"
+    )
+
+
+def test_build_punch_zoom_filter_rejects_non_positive_zoom():
+    with pytest.raises(RenderError, match="zoom_amount must be > 1.0"):
+        build_punch_zoom_filter(punch_at=5.0, zoom_amount=1.0)
+
+
+def test_build_punch_zoom_filter_rejects_non_positive_ramp():
+    with pytest.raises(RenderError, match="ramp must be > 0"):
+        build_punch_zoom_filter(punch_at=5.0, ramp=0.0)
+
+
+def test_build_punch_zoom_filter_rejects_negative_punch_at():
+    with pytest.raises(RenderError, match="punch_at must be >= 0"):
+        build_punch_zoom_filter(punch_at=-1.0)
+
+
+def test_build_ffmpeg_command_punch_zoom_at_applies_before_effects_and_subtitles():
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        subtitles_path="work/x/subs.srt",
+        vignette=True,
+        punch_zoom_at=5.0,
+    )
+
+    assert command[9] == (
+        "crop=608:1080:656:0,scale=1080:1920,"
+        + build_punch_zoom_filter(5.0)
+        + ",vignette,subtitles='work/x/subs.srt'"
+    )
+
+
+def test_build_ffmpeg_command_no_punch_zoom_by_default():
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+    )
+
+    assert "crop=w=" not in command[9]
+
+
+def test_build_jumpcut_command_single_segment_matches_plain_trim_concat():
+    command = build_jumpcut_command(
+        "in.mp4", "out.mp4", clip_start=10.0, clip_end=40.0,
+        keep_segments=[(10.0, 40.0)],
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+    )
+
+    assert command[:4] == ["ffmpeg", "-y", "-ss", "10.0"]
+    assert command[command.index("-i") + 1] == "in.mp4"
+    assert command[command.index("-t") + 1] == "30.0"
+
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert filter_complex == (
+        "[0:v]trim=start=0.0:end=30.0,setpts=PTS-STARTPTS[v0];"
+        "[0:a]atrim=start=0.0:end=30.0,asetpts=PTS-STARTPTS[a0];"
+        "[v0][a0]concat=n=1:v=1:a=1[vcat][acat];"
+        "[vcat]crop=608:1080:656:0,scale=1080:1920[vout];"
+        "[acat]anull[aout]"
+    )
+    assert command[-1] == "out.mp4"
+    assert "[vout]" in command
+    assert "[aout]" in command
+
+
+def test_build_jumpcut_command_multiple_segments_trims_and_concats_each():
+    command = build_jumpcut_command(
+        "in.mp4", "out.mp4", clip_start=10.0, clip_end=40.0,
+        keep_segments=[(10.0, 20.0), (22.0, 40.0)],
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+    )
+
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "[0:v]trim=start=0.0:end=10.0,setpts=PTS-STARTPTS[v0]" in filter_complex
+    assert "[0:v]trim=start=12.0:end=30.0,setpts=PTS-STARTPTS[v1]" in filter_complex
+    assert "[v0][a0][v1][a1]concat=n=2:v=1:a=1[vcat][acat]" in filter_complex
+
+
+def test_build_jumpcut_command_applies_denoise_loudnorm_and_fade_to_acat():
+    command = build_jumpcut_command(
+        "in.mp4", "out.mp4", clip_start=0.0, clip_end=10.0,
+        keep_segments=[(0.0, 10.0)],
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        fade_seconds=0.5, denoise=True, loudnorm=True,
+    )
+
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "[acat]afftdn,loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=out:st=9.5:d=0.5[aout]" in filter_complex
+    assert "[vcat]crop=608:1080:656:0,scale=1080:1920,fade=t=out:st=9.5:d=0.5[vout]" in filter_complex
+
+
+def test_build_jumpcut_command_rejects_empty_keep_segments():
+    with pytest.raises(RenderError, match="keep_segments must not be empty"):
+        build_jumpcut_command(
+            "in.mp4", "out.mp4", clip_start=10.0, clip_end=40.0,
+            keep_segments=[],
+            crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        )
+
+
 def test_build_ffmpeg_command_no_audio_flags_has_no_audio_filter():
     command = build_ffmpeg_command(
         "in.mp4", "out.mp4", start=10.0, end=40.0,
@@ -315,6 +471,64 @@ def test_render_clip_builds_and_runs_command():
     assert command == captured["command"]
     assert command[-1] == "out.mp4"
     assert "crop=608:1080:656:0,scale=1080:1920" in command
+
+
+def test_render_clip_reads_punch_zoom_at_from_plan_entry():
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom", "punch_zoom_at": 5.0}
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=lambda command, capture_output, text: FakeResult(),
+    )
+
+    video_filter = command[command.index("-vf") + 1]
+    assert "crop=w='1080/" in video_filter
+
+
+def test_render_clip_without_punch_zoom_at_has_no_zoom_filter():
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom"}
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=lambda command, capture_output, text: FakeResult(),
+    )
+
+    video_filter = command[command.index("-vf") + 1]
+    assert "crop=w='" not in video_filter
+
+
+def test_render_clip_uses_jumpcut_command_when_keep_segments_present():
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "keep_segments": [[10.0, 20.0], [22.0, 40.0]],
+    }
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=lambda command, capture_output, text: FakeResult(),
+    )
+
+    assert "-filter_complex" in command
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "concat=n=2:v=1:a=1" in filter_complex
 
 
 def test_render_clip_threads_fade_seconds_into_command():

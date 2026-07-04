@@ -91,3 +91,28 @@ audio:
   # FFmpeg loudness normalization (EBU R128 loudnorm) applied after denoise -
   # evens out volume across clips so viewers aren't reaching for the slider.
   loudnorm: true
+
+effects:
+  # Darken the frame edges for a cinematic look (FFmpeg vignette filter).
+  vignette: false
+  # Film-grain noise strength, 0-100 (0 = off, FFmpeg noise filter).
+  grain_strength: 0
+  # Zoom multiplier for a punch-in on a clip's hype/reaction moment
+  # (pass 2 decides per clip whether and where to punch in - see
+  # PLAN.json's punch_zoom_at). 1.15 = 15% zoom-in.
+  punch_zoom_amount: 1.15
+  # Seconds the punch-in takes to ramp from 1x to the full amount.
+  punch_zoom_ramp: 0.25
+
+jumpcuts:
+  # Cut out long dead-air pauses from inside a clip instead of leaving
+  # them in - real editing does this to keep pacing tight. Uses
+  # scripts/silence.py's adaptive threshold (this file's own loudness
+  # gating level, not a guessed fixed dB) to find pauses.
+  enabled: false
+  # Passed to ffmpeg's silencedetect as the minimum pause length to even
+  # report - keep this low so short, meaningful gaps aren't missed.
+  detect_min_seconds: 0.15
+  # Only pauses longer than this actually get cut out; anything at or
+  # under this length is left as a natural speech rhythm pause.
+  cut_threshold_seconds: 0.4

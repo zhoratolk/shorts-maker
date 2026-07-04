@@ -198,6 +198,49 @@ def compute_fade_plan(
     return 0.0, fade_start, effective_fade
 
 
+def build_video_effects_chain(vignette: bool, grain_strength: int) -> str | None:
+    """Optional cinematic touch-ups applied after crop, before subtitles are
+    burned in - so grain/vignette don't degrade caption readability.
+    """
+    if grain_strength < 0 or grain_strength > 100:
+        raise RenderError(f"grain_strength must be between 0 and 100, got {grain_strength}")
+
+    filters = []
+    if vignette:
+        filters.append("vignette")
+    if grain_strength > 0:
+        filters.append(f"noise=alls={grain_strength}:allf=t")
+    return ",".join(filters) if filters else None
+
+
+def build_punch_zoom_filter(punch_at: float, zoom_amount: float = 1.15, ramp: float = 0.25) -> str:
+    """A snappy camera punch-in at punch_at (clip-relative seconds): holds at
+    1x, ramps up to zoom_amount over `ramp` seconds, then holds zoomed for
+    the rest of the clip - it does not zoom back out, matching how editors
+    punch in on a punchline/reaction and stay there through the next cut.
+
+    Re-crops the already-1080x1920 frame around its center using an
+    FFmpeg per-frame expression (evaluated via the `t` time variable), then
+    rescales back to 1080x1920 so downstream filters see a constant size.
+    """
+    if zoom_amount <= 1.0:
+        raise RenderError(f"zoom_amount must be > 1.0, got {zoom_amount}")
+    if ramp <= 0:
+        raise RenderError(f"ramp must be > 0, got {ramp}")
+    if punch_at < 0:
+        raise RenderError(f"punch_at must be >= 0, got {punch_at}")
+
+    ramp_end = punch_at + ramp
+    zoom_expr = (
+        f"if(lt(t,{punch_at}),1,"
+        f"if(lt(t,{ramp_end}),1+({zoom_amount}-1)*(t-{punch_at})/{ramp},{zoom_amount}))"
+    )
+    return (
+        f"crop=w='{TARGET_WIDTH}/({zoom_expr})':h='{TARGET_HEIGHT}/({zoom_expr})':"
+        f"x='(in_w-out_w)/2':y='(in_h-out_h)/2',scale={TARGET_WIDTH}:{TARGET_HEIGHT}"
+    )
+
+
 def build_audio_filter_chain(denoise: bool, loudnorm: bool, fade_filter: str | None) -> str | None:
     """Combines the optional cleanup filters and the fade into one -af chain.
 
@@ -226,6 +269,11 @@ def build_ffmpeg_command(
     subtitle_style: dict | None = None,
     denoise: bool = False,
     loudnorm: bool = False,
+    vignette: bool = False,
+    grain_strength: int = 0,
+    punch_zoom_at: float | None = None,
+    punch_zoom_amount: float = 1.15,
+    punch_zoom_ramp: float = 0.25,
 ) -> list[str]:
     clip_duration = end - start
     tail_available = 0.0 if video_duration is None else max(0.0, video_duration - end)
@@ -233,6 +281,11 @@ def build_ffmpeg_command(
     total_duration = round(clip_duration + extend, 3)
 
     video_filter = crop_filter
+    if punch_zoom_at is not None:
+        video_filter = f"{video_filter},{build_punch_zoom_filter(punch_zoom_at, punch_zoom_amount, punch_zoom_ramp)}"
+    effects_chain = build_video_effects_chain(vignette, grain_strength)
+    if effects_chain:
+        video_filter = f"{video_filter},{effects_chain}"
     if subtitles_path is not None:
         escaped_path = subtitles_path.replace("\\", "/").replace(":", "\\:")
         video_filter = f"{video_filter},subtitles='{escaped_path}'"
@@ -260,6 +313,95 @@ def build_ffmpeg_command(
         "-t", str(total_duration),
         "-vf", video_filter,
         *audio_args,
+        "-c:v", "libx264",
+        "-c:a", "aac",
+        output_path,
+    ]
+
+
+def build_jumpcut_command(
+    input_path: str,
+    output_path: str,
+    clip_start: float,
+    clip_end: float,
+    keep_segments: list[tuple[float, float]],
+    crop_filter: str,
+    subtitles_path: str | None = None,
+    fade_seconds: float = 0.0,
+    subtitle_style: dict | None = None,
+    denoise: bool = False,
+    loudnorm: bool = False,
+    vignette: bool = False,
+    grain_strength: int = 0,
+    punch_zoom_at: float | None = None,
+    punch_zoom_amount: float = 1.15,
+    punch_zoom_ramp: float = 0.25,
+) -> list[str]:
+    """Like build_ffmpeg_command, but keep_segments (absolute source-file
+    seconds, from jumpcuts.compute_keep_segments) are trimmed out of the
+    decoded window and concatenated before crop/effects/subtitles/fade are
+    applied - this is what actually cuts the dead air out of the clip
+    instead of just rendering start..end verbatim.
+
+    punch_zoom_at, if set, must already be expressed in seconds on the
+    *spliced* output timeline (see jumpcuts.remap_timestamp), not the
+    original source timeline - the concat above changes where anything
+    after the first cut lands.
+    """
+    if not keep_segments:
+        raise RenderError("keep_segments must not be empty")
+
+    # -ss before -i seeks fast and resets the decoded timeline to 0, so every
+    # segment boundary below must be expressed relative to clip_start.
+    relative_segments = [(seg_start - clip_start, seg_end - clip_start) for seg_start, seg_end in keep_segments]
+
+    trim_stages = []
+    concat_refs = []
+    for index, (seg_start, seg_end) in enumerate(relative_segments):
+        trim_stages.append(f"[0:v]trim=start={seg_start}:end={seg_end},setpts=PTS-STARTPTS[v{index}]")
+        trim_stages.append(f"[0:a]atrim=start={seg_start}:end={seg_end},asetpts=PTS-STARTPTS[a{index}]")
+        concat_refs.append(f"[v{index}][a{index}]")
+    concat_stage = f"{''.join(concat_refs)}concat=n={len(relative_segments)}:v=1:a=1[vcat][acat]"
+
+    total_duration = round(sum(seg_end - seg_start for seg_start, seg_end in relative_segments), 3)
+    _, fade_start, fade_duration = compute_fade_plan(total_duration, fade_seconds, tail_available=0.0)
+
+    video_ops = [crop_filter]
+    if punch_zoom_at is not None:
+        video_ops.append(build_punch_zoom_filter(punch_zoom_at, punch_zoom_amount, punch_zoom_ramp))
+    effects_chain = build_video_effects_chain(vignette, grain_strength)
+    if effects_chain:
+        video_ops.append(effects_chain)
+    if subtitles_path is not None:
+        escaped_path = subtitles_path.replace("\\", "/").replace(":", "\\:")
+        subtitles_clause = f"subtitles='{escaped_path}'"
+        if subtitle_style is not None:
+            style = build_subtitle_force_style(
+                subtitle_style["font"], subtitle_style["size"],
+                subtitle_style["color"], subtitle_style["outline_color"], subtitle_style["position"],
+            )
+            subtitles_clause = f"{subtitles_clause}:force_style='{style}'"
+        video_ops.append(subtitles_clause)
+
+    fade_filter = None
+    if fade_duration > 0:
+        video_ops.append(f"fade=t=out:st={fade_start}:d={fade_duration}")
+        fade_filter = f"afade=t=out:st={fade_start}:d={fade_duration}"
+
+    audio_filter_chain = build_audio_filter_chain(denoise, loudnorm, fade_filter) or "anull"
+
+    video_stage = f"[vcat]{','.join(video_ops)}[vout]"
+    audio_stage = f"[acat]{audio_filter_chain}[aout]"
+    filter_complex = ";".join(trim_stages + [concat_stage, video_stage, audio_stage])
+
+    return [
+        "ffmpeg", "-y",
+        "-ss", str(clip_start),
+        "-i", input_path,
+        "-t", str(round(clip_end - clip_start, 3)),
+        "-filter_complex", filter_complex,
+        "-map", "[vout]",
+        "-map", "[aout]",
         "-c:v", "libx264",
         "-c:a", "aac",
         output_path,
@@ -295,11 +437,16 @@ def render_clip(
     subtitle_style: dict | None = None,
     denoise: bool = False,
     loudnorm: bool = False,
+    vignette: bool = False,
+    grain_strength: int = 0,
+    punch_zoom_amount: float = 1.15,
+    punch_zoom_ramp: float = 0.25,
     runner=subprocess.run,
 ) -> list[str]:
     start, end = clamp_clip_bounds(plan_entry["start"], plan_entry["end"], video_duration)
     crop_style = plan_entry["crop_style"]
     crop_filter = compute_crop_filter(crop_style, src_width, src_height)
+    punch_zoom_at = plan_entry.get("punch_zoom_at")
     subtitles_path = plan_entry.get("subtitles_path")
 
     if subtitles_path is not None and subtitle_style is not None:
@@ -327,10 +474,20 @@ def render_clip(
         Path(subtitles_path).write_text(ass_content, encoding="utf-8")
         subtitle_style = None  # baked into the .ass style block already; no force_style needed
 
-    command = build_ffmpeg_command(
-        input_path, output_path, start, end, crop_filter, subtitles_path,
-        fade_seconds, video_duration, subtitle_style, denoise, loudnorm,
-    )
+    keep_segments_raw = plan_entry.get("keep_segments")
+    if keep_segments_raw is not None:
+        keep_segments = [(segment[0], segment[1]) for segment in keep_segments_raw]
+        command = build_jumpcut_command(
+            input_path, output_path, start, end, keep_segments, crop_filter, subtitles_path,
+            fade_seconds, subtitle_style, denoise, loudnorm,
+            vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
+        )
+    else:
+        command = build_ffmpeg_command(
+            input_path, output_path, start, end, crop_filter, subtitles_path,
+            fade_seconds, video_duration, subtitle_style, denoise, loudnorm,
+            vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
+        )
 
     result = runner(command, capture_output=True, text=True)
     if result.returncode != 0:
@@ -362,6 +519,22 @@ def main() -> None:
         "--loudnorm", action=argparse.BooleanOptionalAction, default=True,
         help="Normalize each clip's audio loudness (EBU R128 via FFmpeg's loudnorm)",
     )
+    parser.add_argument(
+        "--vignette", action=argparse.BooleanOptionalAction, default=False,
+        help="Darken the frame edges for a cinematic look (FFmpeg vignette filter)",
+    )
+    parser.add_argument(
+        "--grain-strength", type=int, default=0,
+        help="Add film-grain noise at this strength, 0-100 (0 = off, FFmpeg noise filter)",
+    )
+    parser.add_argument(
+        "--punch-zoom-amount", type=float, default=1.15,
+        help="Zoom multiplier for a plan entry's punch_zoom_at (e.g. 1.15 = 15%% punch-in)",
+    )
+    parser.add_argument(
+        "--punch-zoom-ramp", type=float, default=0.25,
+        help="Seconds the punch-in zoom takes to ramp from 1x to the full amount",
+    )
     args = parser.parse_args()
 
     subtitle_style = {
@@ -391,6 +564,10 @@ def main() -> None:
             subtitle_style=subtitle_style,
             denoise=args.denoise,
             loudnorm=args.loudnorm,
+            vignette=args.vignette,
+            grain_strength=args.grain_strength,
+            punch_zoom_amount=args.punch_zoom_amount,
+            punch_zoom_ramp=args.punch_zoom_ramp,
         )
         print(output_path)
 

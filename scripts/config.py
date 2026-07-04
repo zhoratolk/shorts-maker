@@ -79,6 +79,21 @@ class AudioConfig:
 
 
 @dataclasses.dataclass
+class JumpcutsConfig:
+    enabled: bool = False
+    detect_min_seconds: float = 0.15
+    cut_threshold_seconds: float = 0.4
+
+
+@dataclasses.dataclass
+class EffectsConfig:
+    vignette: bool = False
+    grain_strength: int = 0
+    punch_zoom_amount: float = 1.15
+    punch_zoom_ramp: float = 0.25
+
+
+@dataclasses.dataclass
 class MetadataConfig:
     enabled: bool = True
     platforms: list[str] = dataclasses.field(
@@ -100,6 +115,8 @@ class Config:
     content: ContentConfig = dataclasses.field(default_factory=ContentConfig)
     metadata: MetadataConfig = dataclasses.field(default_factory=MetadataConfig)
     audio: AudioConfig = dataclasses.field(default_factory=AudioConfig)
+    effects: EffectsConfig = dataclasses.field(default_factory=EffectsConfig)
+    jumpcuts: JumpcutsConfig = dataclasses.field(default_factory=JumpcutsConfig)
 
 
 def _build(section_cls, data: dict, section_name: str):
@@ -130,6 +147,8 @@ def load_config(path: str) -> Config:
         content=_build(ContentConfig, data.get("content", {}), "content"),
         metadata=_build(MetadataConfig, data.get("metadata", {}), "metadata"),
         audio=_build(AudioConfig, data.get("audio", {}), "audio"),
+        effects=_build(EffectsConfig, data.get("effects", {}), "effects"),
+        jumpcuts=_build(JumpcutsConfig, data.get("jumpcuts", {}), "jumpcuts"),
     )
     _validate(config)
     return config
@@ -162,6 +181,28 @@ def _validate(config: Config) -> None:
         )
     if config.facecam.region is not None and len(config.facecam.region) != 4:
         raise ConfigError("facecam.region must have exactly 4 values: [x, y, w, h]")
+    if config.effects.grain_strength < 0 or config.effects.grain_strength > 100:
+        raise ConfigError(
+            f"effects.grain_strength must be between 0 and 100, got {config.effects.grain_strength}"
+        )
+    if config.effects.punch_zoom_amount <= 1.0:
+        raise ConfigError(
+            f"effects.punch_zoom_amount must be > 1.0, got {config.effects.punch_zoom_amount}"
+        )
+    if config.effects.punch_zoom_ramp <= 0:
+        raise ConfigError(f"effects.punch_zoom_ramp must be > 0, got {config.effects.punch_zoom_ramp}")
+    if config.jumpcuts.detect_min_seconds <= 0:
+        raise ConfigError(
+            f"jumpcuts.detect_min_seconds must be > 0, got {config.jumpcuts.detect_min_seconds}"
+        )
+    if config.jumpcuts.cut_threshold_seconds <= 0:
+        raise ConfigError(
+            f"jumpcuts.cut_threshold_seconds must be > 0, got {config.jumpcuts.cut_threshold_seconds}"
+        )
+    if config.jumpcuts.cut_threshold_seconds < config.jumpcuts.detect_min_seconds:
+        raise ConfigError(
+            "jumpcuts.cut_threshold_seconds must be >= jumpcuts.detect_min_seconds"
+        )
     if config.metadata.enabled:
         if not config.metadata.platforms:
             raise ConfigError("metadata.platforms must be non-empty when metadata.enabled is true")

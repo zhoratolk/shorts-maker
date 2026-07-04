@@ -289,6 +289,151 @@ def test_load_config_audio_can_be_disabled(tmp_path):
     assert config.audio.loudnorm is False
 
 
+def test_load_config_effects_defaults(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.effects.vignette is False
+    assert config.effects.grain_strength == 0
+
+
+def test_load_config_effects_can_be_enabled(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        effects:
+          vignette: true
+          grain_strength: 20
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.effects.vignette is True
+    assert config.effects.grain_strength == 20
+
+
+def test_load_config_effects_grain_strength_out_of_range_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        effects:
+          grain_strength: 150
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="grain_strength must be between 0 and 100"):
+        load_config(path)
+
+
+def test_load_config_effects_punch_zoom_defaults(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.effects.punch_zoom_amount == 1.15
+    assert config.effects.punch_zoom_ramp == 0.25
+
+
+def test_load_config_effects_punch_zoom_amount_must_exceed_one(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        effects:
+          punch_zoom_amount: 1.0
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="punch_zoom_amount must be > 1.0"):
+        load_config(path)
+
+
+def test_load_config_effects_punch_zoom_ramp_must_be_positive(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        effects:
+          punch_zoom_ramp: 0
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="punch_zoom_ramp must be > 0"):
+        load_config(path)
+
+
+def test_load_config_jumpcuts_defaults(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.jumpcuts.enabled is False
+    assert config.jumpcuts.detect_min_seconds == 0.15
+    assert config.jumpcuts.cut_threshold_seconds == 0.4
+
+
+def test_load_config_jumpcuts_can_be_enabled(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        jumpcuts:
+          enabled: true
+          detect_min_seconds: 0.2
+          cut_threshold_seconds: 0.5
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.jumpcuts.enabled is True
+    assert config.jumpcuts.detect_min_seconds == 0.2
+    assert config.jumpcuts.cut_threshold_seconds == 0.5
+
+
+def test_load_config_jumpcuts_cut_threshold_must_be_at_least_detect_min(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        jumpcuts:
+          detect_min_seconds: 0.5
+          cut_threshold_seconds: 0.2
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="cut_threshold_seconds must be >= jumpcuts.detect_min_seconds"):
+        load_config(path)
+
+
 def test_load_config_metadata_disabled_allows_empty_platforms(tmp_path):
     path = write_config(
         tmp_path,
