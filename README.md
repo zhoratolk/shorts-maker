@@ -32,7 +32,7 @@ Edit `config.yaml` — see the comments in `config.example.yaml` for what each f
 
 ## Making `/make-shorts` available in Claude Code
 
-Claude Code discovers skills from `.claude/skills/<name>/SKILL.md` in the project it's running in — it will not pick up the bare `SKILL.md` at this repo's root on its own. Since that file's instructions invoke `scripts/*.py` and read/write `transcripts/`/`work/` using paths relative to this repo, the skill only works correctly when Claude Code's working directory is this repo. Set it up once:
+Claude Code discovers skills from `.claude/skills/<name>/SKILL.md` in the project it's running in — it will not pick up the bare `SKILL.md` at this repo's root on its own. Since that file's instructions invoke `scripts/*.py` and read/write `work/` using paths relative to this repo, the skill only works correctly when Claude Code's working directory is this repo. Set it up once:
 
 ```bash
 mkdir .claude\skills\make-shorts
@@ -87,5 +87,5 @@ That's it — `transcribe.py` finds and registers those packages' DLL directorie
 
 - `scripts/` — the deterministic building blocks (config loading, transcript chunking, candidate merging, ffmpeg rendering, dependency setup) — each has a Python API and a CLI wrapper.
 - `SKILL.md` — the Claude Code skill that orchestrates the above plus the semantic analysis passes.
-- `transcripts/` — cached Whisper output per video (gitignored).
+- `<output_dir>/transcripts/` — cached Whisper output per video, next to the rendered clips.
 - `work/<video>/` — per-video working files: chunked transcript, candidate list, render plan (gitignored).

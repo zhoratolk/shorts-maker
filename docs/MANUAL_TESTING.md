@@ -6,7 +6,7 @@ Automated tests cover deterministic building blocks (config, chunking, candidate
 2. Run `python scripts/setup.py`, confirm ffmpeg found and reported GPU/CPU device correct.
 3. Copy `config.example.yaml` to `config.yaml`, point `input_dir`/`output_dir` at test folders, set `whisper.model: small` (faster for a quick check).
 4. In Claude Code, run `/make-shorts test_video.mp4` with `analysis.use_subagents: true` and `analysis.require_approval: true`. Confirm:
-   - Transcript cached under `transcripts/test_video.json`.
+   - Transcript cached under `<output_dir>/transcripts/test_video.json`.
    - `work/test_video/CANDIDATES.md` lists timecodes landing on genuinely interesting moments.
    - Re-running `/make-shorts test_video.mp4` skips transcription (no Whisper re-run).
 5. Approve one candidate, confirm `work/test_video/PLAN.json` has plausible trim points and a resolved (non-`auto`) `crop_style`.

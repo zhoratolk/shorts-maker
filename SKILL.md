@@ -24,25 +24,25 @@ Given a video path `<video>` and the loaded `config.yaml`:
 ### 1. Transcribe (cached)
 
 ```bash
-python scripts/transcribe.py "<video>" transcripts --model <whisper.model> --device <whisper.device> --language <whisper.language>
+python scripts/transcribe.py "<video>" "<config.output_dir>/transcripts" --model <whisper.model> --device <whisper.device> --language <whisper.language>
 ```
 
-This prints the path to the cached transcript JSON (`transcripts/<video_stem>.json`). If the file already existed, transcription is skipped — do not re-run Whisper on a video that already has a cached transcript.
+This prints the path to the cached transcript JSON (`<config.output_dir>/transcripts/<video_stem>.json`). If the file already existed, transcription is skipped — do not re-run Whisper on a video that already has a cached transcript.
 
 ### 1b. Detect pauses (cached, only if `config.jumpcuts.enabled`)
 
 Skip this step entirely when `config.jumpcuts.enabled` is `false` (default).
 
 ```bash
-python scripts/silence.py "<video>" --min-duration <jumpcuts.detect_min_seconds> > transcripts/<video_stem>_pauses.json
+python scripts/silence.py "<video>" --min-duration <jumpcuts.detect_min_seconds> > "<config.output_dir>/transcripts/<video_stem>_pauses.json"
 ```
 
-This measures the file's own loudness gating threshold (FFmpeg `loudnorm`) and uses it — instead of a guessed fixed dB value — to find every pause at least `jumpcuts.detect_min_seconds` long, cached the same way the transcript is: if `transcripts/<video_stem>_pauses.json` already exists, skip re-running this.
+This measures the file's own loudness gating threshold (FFmpeg `loudnorm`) and uses it — instead of a guessed fixed dB value — to find every pause at least `jumpcuts.detect_min_seconds` long, cached the same way the transcript is: if `<config.output_dir>/transcripts/<video_stem>_pauses.json` already exists, skip re-running this.
 
 ### 2. Split into chunks
 
 ```bash
-python scripts/chunker.py transcripts/<video_stem>.json work/<video_stem>/chunks --chunk-minutes <analysis.chunk_minutes>
+python scripts/chunker.py "<config.output_dir>/transcripts/<video_stem>.json" work/<video_stem>/chunks --chunk-minutes <analysis.chunk_minutes>
 ```
 
 This writes one `chunk_NNNN.json` file per window into `work/<video_stem>/chunks/`.
@@ -84,7 +84,7 @@ For each approved candidate, re-read that moment's transcript window (from the c
 - If `config.facecam.enabled` is `true`, let the facecam overlay inform (not override) the crop_style choice above — e.g. prefer `pad` or `original-16:9` so the overlay stays in frame, rather than a `zoom` that might crop it out. `facecam.mode` and `facecam.region` describe where the overlay sits, for this judgment call only — `render.py` does not crop to those pixel coordinates; it only ever applies the resolved crop_style (a center crop for `zoom`, or a full-frame letterbox for `pad`/`original-16:9`).
 - **Jump cuts** — only when `config.jumpcuts.enabled` is `true` (default `false`; requires step 1b's pause file):
   ```bash
-  python scripts/jumpcuts.py keep-segments transcripts/<video_stem>_pauses.json <start> <end> work/<video_stem>/jumpcuts/<clip_filename_stem>_keep.json --max-pause-seconds <jumpcuts.cut_threshold_seconds>
+  python scripts/jumpcuts.py keep-segments "<config.output_dir>/transcripts/<video_stem>_pauses.json" <start> <end> work/<video_stem>/jumpcuts/<clip_filename_stem>_keep.json --max-pause-seconds <jumpcuts.cut_threshold_seconds>
   ```
   `<start>`/`<end>` are this clip's trim points from the step above (absolute source seconds). This writes the sub-segments to actually keep after cutting out any pause longer than `jumpcuts.cut_threshold_seconds`. If the written file has more than one `[start, end]` pair, record it verbatim as `keep_segments` in the plan entry below — `render.py` trims and concatenates those segments instead of using the plain `start`/`end` when `keep_segments` is present. If it has exactly one pair, omit `keep_segments` entirely (nothing worth cutting).
 - **Punch-zoom** — optional, any clip: if a clear punchline/reaction/hype moment lands mid-clip (not right at the start), decide a `punch_zoom_at` for the plan entry below — the camera snap-zooms in there and holds for the rest of the clip. It must be expressed in seconds on the clip's **final rendered timeline**: if `keep_segments` was set above, that's the *spliced* timeline (seconds after the cut pauses are removed, i.e. the same output the word remap step below produces) — pick the remapped `start` of the word the punch should land on. If `keep_segments` was not set, it's simply `<moment's absolute time> - <start>`. Omit `punch_zoom_at` when nothing stands out enough to warrant it — most clips shouldn't have one.
@@ -157,4 +157,4 @@ This probes the source video once, then renders every entry in `PLAN.json` into 
 
 ## Library-wide search
 
-Because every transcript is cached under `transcripts/`, steps 2-5 can be re-run against any subset of already-transcribed videos to search for moments across the whole archive, not just the video just processed — skip step 1 for videos that are already cached.
+Because every transcript is cached under `<config.output_dir>/transcripts/`, steps 2-5 can be re-run against any subset of already-transcribed videos to search for moments across the whole archive, not just the video just processed — skip step 1 for videos that are already cached.
