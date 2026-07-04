@@ -226,6 +226,51 @@ def test_build_ffmpeg_command_without_fade_has_no_audio_filter():
     assert "-af" not in command
 
 
+def test_build_ffmpeg_command_denoise_only():
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        denoise=True,
+    )
+
+    assert command[command.index("-af") + 1] == "afftdn"
+
+
+def test_build_ffmpeg_command_loudnorm_only():
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        loudnorm=True,
+    )
+
+    assert command[command.index("-af") + 1] == "loudnorm=I=-16:TP=-1.5:LRA=11"
+
+
+def test_build_ffmpeg_command_denoise_loudnorm_and_fade_chain_in_order():
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        fade_seconds=0.5,
+        denoise=True,
+        loudnorm=True,
+    )
+
+    assert command[command.index("-af") + 1] == (
+        "afftdn,loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=out:st=29.5:d=0.5"
+    )
+
+
+def test_build_ffmpeg_command_no_audio_flags_has_no_audio_filter():
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        denoise=False,
+        loudnorm=False,
+    )
+
+    assert "-af" not in command
+
+
 def test_probe_video_parses_ffprobe_json():
     fake_stdout = json.dumps(
         {

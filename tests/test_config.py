@@ -256,6 +256,39 @@ def test_load_config_content_allow_mature_can_be_disabled(tmp_path):
     assert config.content.allow_mature is False
 
 
+def test_load_config_audio_defaults(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.audio.denoise is True
+    assert config.audio.loudnorm is True
+
+
+def test_load_config_audio_can_be_disabled(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        audio:
+          denoise: false
+          loudnorm: false
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.audio.denoise is False
+    assert config.audio.loudnorm is False
+
+
 def test_load_config_metadata_disabled_allows_empty_platforms(tmp_path):
     path = write_config(
         tmp_path,

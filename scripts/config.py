@@ -73,6 +73,12 @@ class ContentConfig:
 
 
 @dataclasses.dataclass
+class AudioConfig:
+    denoise: bool = True
+    loudnorm: bool = True
+
+
+@dataclasses.dataclass
 class MetadataConfig:
     enabled: bool = True
     platforms: list[str] = dataclasses.field(
@@ -93,6 +99,7 @@ class Config:
     subtitles: SubtitlesConfig = dataclasses.field(default_factory=SubtitlesConfig)
     content: ContentConfig = dataclasses.field(default_factory=ContentConfig)
     metadata: MetadataConfig = dataclasses.field(default_factory=MetadataConfig)
+    audio: AudioConfig = dataclasses.field(default_factory=AudioConfig)
 
 
 def _build(section_cls, data: dict, section_name: str):
@@ -122,6 +129,7 @@ def load_config(path: str) -> Config:
         subtitles=_build(SubtitlesConfig, data.get("subtitles", {}), "subtitles"),
         content=_build(ContentConfig, data.get("content", {}), "content"),
         metadata=_build(MetadataConfig, data.get("metadata", {}), "metadata"),
+        audio=_build(AudioConfig, data.get("audio", {}), "audio"),
     )
     _validate(config)
     return config

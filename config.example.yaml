@@ -20,9 +20,10 @@ analysis:
   # Stop and show CANDIDATES.md for you to pick from before rendering.
   # false = fully automatic, rendering every candidate found.
   require_approval: true
-  # Phrases that signal a strong candidate moment on their own (streamer/chat
-  # hype, meme call-outs) - pass-1 treats these, and similar language, as a
-  # positive signal even when the surrounding text looks unremarkable.
+  # Phrases (streamer/chat hype, meme call-outs) that tag a moment as extra
+  # noteworthy - pass-1 uses these, and similar language, to boost a moment
+  # that already stands on its own. They do NOT turn unremarkable/filler
+  # surrounding text into a candidate by themselves.
   hype_phrases: ["завоз", "ору", "кринж", "база", "это база", "мем вышел", "жиза", "воу-воу"]
 
 clip:
@@ -82,3 +83,11 @@ subtitles:
   # How many words appear per subtitle cue - keeps captions short and synced
   # to speech instead of showing a whole sentence at once.
   words_per_cue: 4
+
+audio:
+  # FFmpeg noise-reduction filter (afftdn) applied to every clip's audio -
+  # strips hiss/hum/fan noise picked up by the mic.
+  denoise: true
+  # FFmpeg loudness normalization (EBU R128 loudnorm) applied after denoise -
+  # evens out volume across clips so viewers aren't reaching for the slider.
+  loudnorm: true

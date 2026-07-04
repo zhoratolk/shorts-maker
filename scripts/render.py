@@ -198,6 +198,22 @@ def compute_fade_plan(
     return 0.0, fade_start, effective_fade
 
 
+def build_audio_filter_chain(denoise: bool, loudnorm: bool, fade_filter: str | None) -> str | None:
+    """Combines the optional cleanup filters and the fade into one -af chain.
+
+    Order matters: denoise the raw signal first, normalize loudness on the
+    cleaned signal, then fade last so the fade-out isn't undone by loudnorm.
+    """
+    filters = []
+    if denoise:
+        filters.append("afftdn")
+    if loudnorm:
+        filters.append("loudnorm=I=-16:TP=-1.5:LRA=11")
+    if fade_filter:
+        filters.append(fade_filter)
+    return ",".join(filters) if filters else None
+
+
 def build_ffmpeg_command(
     input_path: str,
     output_path: str,
@@ -208,6 +224,8 @@ def build_ffmpeg_command(
     fade_seconds: float = 0.0,
     video_duration: float | None = None,
     subtitle_style: dict | None = None,
+    denoise: bool = False,
+    loudnorm: bool = False,
 ) -> list[str]:
     clip_duration = end - start
     tail_available = 0.0 if video_duration is None else max(0.0, video_duration - end)
@@ -225,12 +243,15 @@ def build_ffmpeg_command(
             )
             video_filter = f"{video_filter}:force_style='{style}'"
 
-    audio_args: list[str] = []
+    fade_filter = None
     if fade_duration > 0:
         # -ss before -i makes ffmpeg's own output timeline start at 0, so the fade's
         # start offset is relative to the trimmed clip, not the source video.
         video_filter = f"{video_filter},fade=t=out:st={fade_start}:d={fade_duration}"
-        audio_args = ["-af", f"afade=t=out:st={fade_start}:d={fade_duration}"]
+        fade_filter = f"afade=t=out:st={fade_start}:d={fade_duration}"
+
+    audio_filter_chain = build_audio_filter_chain(denoise, loudnorm, fade_filter)
+    audio_args = ["-af", audio_filter_chain] if audio_filter_chain else []
 
     return [
         "ffmpeg", "-y",
@@ -272,6 +293,8 @@ def render_clip(
     src_height: int,
     fade_seconds: float = 0.0,
     subtitle_style: dict | None = None,
+    denoise: bool = False,
+    loudnorm: bool = False,
     runner=subprocess.run,
 ) -> list[str]:
     start, end = clamp_clip_bounds(plan_entry["start"], plan_entry["end"], video_duration)
@@ -306,7 +329,7 @@ def render_clip(
 
     command = build_ffmpeg_command(
         input_path, output_path, start, end, crop_filter, subtitles_path,
-        fade_seconds, video_duration, subtitle_style,
+        fade_seconds, video_duration, subtitle_style, denoise, loudnorm,
     )
 
     result = runner(command, capture_output=True, text=True)
@@ -331,6 +354,14 @@ def main() -> None:
     parser.add_argument("--sub-highlight-color", default="yellow")
     parser.add_argument("--sub-position", default="bottom", choices=sorted(SUBTITLE_ALIGNMENT))
     parser.add_argument("--sub-words-per-cue", type=int, default=4)
+    parser.add_argument(
+        "--denoise", action=argparse.BooleanOptionalAction, default=True,
+        help="Apply an FFmpeg noise-reduction filter (afftdn) to each clip's audio",
+    )
+    parser.add_argument(
+        "--loudnorm", action=argparse.BooleanOptionalAction, default=True,
+        help="Normalize each clip's audio loudness (EBU R128 via FFmpeg's loudnorm)",
+    )
     args = parser.parse_args()
 
     subtitle_style = {
@@ -358,6 +389,8 @@ def main() -> None:
             src_height=video_info["height"],
             fade_seconds=args.fade_seconds,
             subtitle_style=subtitle_style,
+            denoise=args.denoise,
+            loudnorm=args.loudnorm,
         )
         print(output_path)
 
