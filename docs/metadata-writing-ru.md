@@ -10,7 +10,9 @@ generic to short-form Russian copy either way; the git-specific material
 
 Apply this after drafting `youtube.title`/`description` and
 `tiktok`/`instagram` captions in SKILL.md step 5, before writing the
-metadata JSON.
+metadata JSON. See also [register-ru.md](register-ru.md) for sentence-level
+rules (short sentences, active voice, concrete numbers/names) and its own
+speak-test/Telegram-test/random-test.
 
 ## Hook (first line of the caption / the title itself)
 
