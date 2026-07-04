@@ -79,6 +79,14 @@ class AudioConfig:
 
 
 @dataclasses.dataclass
+class VisualConfig:
+    enabled: bool = False
+    frame_interval_seconds: float = 120.0
+    detect_game_context: bool = True
+    detect_visual_candidates: bool = True
+
+
+@dataclasses.dataclass
 class JumpcutsConfig:
     enabled: bool = False
     detect_min_seconds: float = 0.15
@@ -117,6 +125,7 @@ class Config:
     audio: AudioConfig = dataclasses.field(default_factory=AudioConfig)
     effects: EffectsConfig = dataclasses.field(default_factory=EffectsConfig)
     jumpcuts: JumpcutsConfig = dataclasses.field(default_factory=JumpcutsConfig)
+    visual: VisualConfig = dataclasses.field(default_factory=VisualConfig)
 
 
 def _build(section_cls, data: dict, section_name: str):
@@ -149,6 +158,7 @@ def load_config(path: str) -> Config:
         audio=_build(AudioConfig, data.get("audio", {}), "audio"),
         effects=_build(EffectsConfig, data.get("effects", {}), "effects"),
         jumpcuts=_build(JumpcutsConfig, data.get("jumpcuts", {}), "jumpcuts"),
+        visual=_build(VisualConfig, data.get("visual", {}), "visual"),
     )
     _validate(config)
     return config
@@ -202,6 +212,10 @@ def _validate(config: Config) -> None:
     if config.jumpcuts.cut_threshold_seconds < config.jumpcuts.detect_min_seconds:
         raise ConfigError(
             "jumpcuts.cut_threshold_seconds must be >= jumpcuts.detect_min_seconds"
+        )
+    if config.visual.frame_interval_seconds <= 0:
+        raise ConfigError(
+            f"visual.frame_interval_seconds must be > 0, got {config.visual.frame_interval_seconds}"
         )
     if config.metadata.enabled:
         if not config.metadata.platforms:

@@ -116,3 +116,18 @@ jumpcuts:
   # Only pauses longer than this actually get cut out; anything at or
   # under this length is left as a natural speech rhythm pause.
   cut_threshold_seconds: 0.4
+
+visual:
+  # Sample still frames per chunk (scripts/frames.py) so Claude can see
+  # what's on screen instead of judging from the transcript alone - the
+  # game/topic can change partway through a recording, so this runs per
+  # chunk, not once for the whole video.
+  enabled: false
+  # Seconds between sampled frames within a chunk.
+  frame_interval_seconds: 120.0
+  # Label each chunk's game/topic (e.g. "Elden Ring") from its frames -
+  # reused in step 5's metadata (real name beats a generic category).
+  detect_game_context: true
+  # Also let frames surface candidates the transcript text alone would
+  # miss (a death screen, a clutch play, a visual gag).
+  detect_visual_candidates: true

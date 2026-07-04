@@ -434,6 +434,59 @@ def test_load_config_jumpcuts_cut_threshold_must_be_at_least_detect_min(tmp_path
         load_config(path)
 
 
+def test_load_config_visual_defaults(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.visual.enabled is False
+    assert config.visual.frame_interval_seconds == 120.0
+    assert config.visual.detect_game_context is True
+    assert config.visual.detect_visual_candidates is True
+
+
+def test_load_config_visual_can_be_enabled(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        visual:
+          enabled: true
+          frame_interval_seconds: 60
+          detect_visual_candidates: false
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.visual.enabled is True
+    assert config.visual.frame_interval_seconds == 60
+    assert config.visual.detect_game_context is True
+    assert config.visual.detect_visual_candidates is False
+
+
+def test_load_config_visual_frame_interval_must_be_positive(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        visual:
+          frame_interval_seconds: 0
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="frame_interval_seconds must be > 0"):
+        load_config(path)
+
+
 def test_load_config_metadata_disabled_allows_empty_platforms(tmp_path):
     path = write_config(
         tmp_path,
