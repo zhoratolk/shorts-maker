@@ -59,6 +59,14 @@ Claude Code will transcribe (cached — only happens once per video ever), searc
 pytest
 ```
 
+This runs everything, including `tests/test_integration_ffmpeg.py` — real ffmpeg smoke tests (no mocked subprocess) that catch broken filter graphs a string assertion can't, at the cost of ~30-40s of real encoding. For the fast day-to-day loop:
+
+```bash
+pytest -m "not integration"
+```
+
+The integration file skips itself automatically if ffmpeg/ffprobe aren't on `PATH`.
+
 ## Troubleshooting
 
 **`ModuleNotFoundError` / EOFError during `python scripts/setup.py`:** old clones may hit either issue — both are fixed as of this commit. If `setup.py` still asks `[y/N]` and hangs when run non-interactively (no terminal attached), it now defaults to "no" instead of crashing; install ffmpeg yourself with `winget install Gyan.FFmpeg` and re-run.

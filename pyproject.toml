@@ -1,3 +1,6 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "integration: real-ffmpeg smoke tests, no mocked subprocess - slower, needs ffmpeg on PATH",
+]
