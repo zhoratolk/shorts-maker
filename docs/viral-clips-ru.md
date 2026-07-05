@@ -98,13 +98,26 @@ one that trails off after it.
   punchline — comedy that's mostly setup with a small payoff trims worse
   into short-form than a short setup with a big payoff.
 
+## Grounding this in your own channel's numbers
+
+General research above is a reasonable default, but generic by nature —
+`scripts/youtube_analytics.py` (see README) pulls this channel's own real
+per-clip view/retention/traffic-source numbers into a local, gitignored
+JSON cache. When that cache exists, weigh it as first-party confirmation
+(or correction) of the patterns above — shorter-vs-longer completion,
+which hook framings actually land, how much of a clip's views came from
+the Shorts feed algorithm itself vs. search/subscribers — rather than
+relying only on this doc's general research. It's a data point to weigh
+per-channel, not a permanent rule, and it updates every time the script
+re-runs.
+
 ## What this doc is not
 
 This isn't a scrape or transcript analysis of specific viral videos (no
 such source list existed for this project) — it's general short-form
-video research applied to judgment calls on *this* streamer's own
-material. Treat it as a lens alongside `hype_phrases` and `coherence`, not
-a replacement for judging whether the moment is actually funny/interesting
+video research applied to judgment calls on a streamer's own material.
+Treat it as a lens alongside `hype_phrases` and `coherence`, not a
+replacement for judging whether the moment is actually funny/interesting
 in context — a technically well-structured clip about nothing is still a
 bad candidate.
 

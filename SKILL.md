@@ -23,6 +23,18 @@ Make sure `config.yaml` exists (copy `config.example.yaml` if not) and read it b
 
 Speaker diarization (step 1c) is opt-in and not covered by `setup.py`: only needed when `config.diarization.enabled` is `true`. Requires `pip install pyannote.audio` plus a HuggingFace token (`HF_TOKEN` env var) that has accepted the gated model terms for `pyannote/speaker-diarization-3.1` and `pyannote/segmentation-3.0` on huggingface.co.
 
+### First-ever run in this repo: offer the optional analysis features
+
+Trigger this once: `<config.output_dir>/transcripts/` doesn't exist yet (i.e. no video has ever been processed here). Skip this whole section on every later run, even if the user declined everything the first time — don't re-ask.
+
+Before running the pipeline, tell the user in plain chat (not a wall of text) that three optional analysis features exist, each off by default and each purely additive (the pipeline works fine without them):
+
+- **Speaker diarization** (`diarization.enabled`) — labels who's talking per segment, feeds `coherence` scoring. Needs a free HuggingFace token, see README's "Optional: speaker diarization".
+- **Audio-energy spike detection** (`audio_energy.enabled`) — catches wordless hype moments (screams/laughs) transcript search misses. No token needed, just ffmpeg (already required).
+- **Own-channel analytics grounding** (`scripts/youtube_analytics.py`, run separately from the pipeline) — pulls this channel's real view/retention/traffic-source numbers into a local JSON so candidate-finding can weigh real performance instead of only general research. Needs a one-time Google OAuth setup, see README's "Grounding candidate-finding in your own channel's real performance".
+
+Ask which (if any) they want set up now; for anything they decline, just proceed with it left off — never block the actual clip-making on this. If they want diarization or audio-energy, flip the relevant `config.yaml` key(s) for them. If they want the YouTube analytics grounding, point them at the README section (it's an interactive one-time OAuth flow, not something to run unattended). Whatever they answer, continue straight into step 1 below afterward.
+
 ## Pipeline
 
 Given a video path `<video>` and the loaded `config.yaml`:
