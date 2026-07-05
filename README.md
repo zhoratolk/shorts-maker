@@ -1,6 +1,6 @@
 # shorts-maker
 
-Turn long gameplay/stream recordings into vertical (9:16) short clips — fully local, free, no watermarks, no time limits. Runs as a Claude Code skill: local Whisper transcription + ffmpeg rendering do the mechanical work, Claude Code reads the transcript to find and trim the good moments. Optional speaker diarization (who's talking when) lets it also judge how sustained a monologue/dialogue's train of thought is, on top of finding jokes/reactions/stories.
+Turn long gameplay/stream recordings into vertical (9:16) short clips — fully local, free, no watermarks, no time limits. Runs as a Claude Code skill: local Whisper transcription + ffmpeg rendering do the mechanical work, Claude Code reads the transcript to find and trim the good moments. Optional speaker diarization (who's talking when) lets it also judge how sustained a monologue/dialogue's train of thought is, and optional audio-energy spike detection catches wordless hype moments (screams/laughs) the transcript alone would miss — both feed candidate-finding alongside a short-form-virality research doc ([docs/viral-clips-ru.md](docs/viral-clips-ru.md)).
 
 ## Requirements
 
@@ -52,6 +52,10 @@ To actually use it:
    ```
    `setx` only takes effect in *new* terminal windows/processes started after you run it — close and reopen your terminal (or restart Claude Code) before the next `/make-shorts` run.
 
+### Optional: audio-energy spike detection
+
+`audio_energy.enabled` (off by default) finds sudden loudness jumps (screams, laughs, hype yells) relative to the stream's own recent volume, and feeds them into candidate-finding as their own signal — the same kind of signal production AI clipping tools use, and one that catches wordless moments a transcript search structurally can't (nothing was said, or Whisper mangled it). No extra dependency or token needed, just ffmpeg (already required). Tune sensitivity via `audio_energy.threshold_db` (how big a jump counts, in dB) and `audio_energy.floor_lufs` (ignore jumps that stay within near-silence) in `config.yaml` if it's over/under-triggering — see the comments in `config.example.yaml`.
+
 ## Making `/make-shorts` available in Claude Code
 
 Claude Code discovers skills from `.claude/skills/<name>/SKILL.md` in the project it's running in — it will not pick up the bare `SKILL.md` at this repo's root on its own. Since that file's instructions invoke `scripts/*.py` and read/write `work/` using paths relative to this repo, the skill only works correctly when Claude Code's working directory is this repo. Set it up once:
@@ -74,6 +78,12 @@ In Claude Code, from this project directory:
 ```
 
 Claude Code will transcribe (cached — only happens once per video ever), search the transcript for candidate moments, show you a list to approve, then render the approved clips into `config.output_dir`. When `metadata.enabled` is `true`, each rendered clip also gets a same-named `.txt` file with ready-to-post title/description/tags/captions for every configured platform.
+
+## Grounding candidate-finding in your own channel's real performance (optional)
+
+`docs/viral-clips-ru.md` is built from general short-form-video research — a reasonable default, but generic by nature. If you've published clips already and want Claude Code to check what's *actually* landing on your own channel (view counts, average-view-duration/completion, traffic sources) instead of relying only on general research, connect the [claude-in-chrome](https://claude.com/claude-code) browser extension, sign into it with your Anthropic account, then just ask Claude Code to open your YouTube Studio content/analytics pages — it browses using your logged-in session, so authenticated pages work without any separate API setup. Good uses: sanity-checking whether a hook style or clip length that tests well in general research also works for your specific audience, or feeding a handful of real numbers back into `docs/viral-clips-ru.md` as a dated, channel-specific note.
+
+This is a manual, ask-Claude-to-check workflow, not a background job — there's no scheduled/automatic analytics pull, and building one would mean setting up the YouTube Data API with OAuth (a separate, bigger undertaking this repo doesn't currently do).
 
 ## Running the tests
 
@@ -111,5 +121,6 @@ That's it — `transcribe.py` finds and registers those packages' DLL directorie
 
 - `scripts/` — the deterministic building blocks (config loading, transcript chunking, candidate merging, ffmpeg rendering, dependency setup) — each has a Python API and a CLI wrapper.
 - `SKILL.md` — the Claude Code skill that orchestrates the above plus the semantic analysis passes.
+- `docs/` — reference material the skill reads during the semantic passes: [viral-clips-ru.md](docs/viral-clips-ru.md) (candidate-finding/trim lens), [metadata-writing-ru.md](docs/metadata-writing-ru.md) and [register-ru.md](docs/register-ru.md) (title/description/caption writing).
 - `<output_dir>/transcripts/` — cached Whisper output per video, next to the rendered clips.
 - `work/<video>/` — per-video working files: chunked transcript, candidate list, render plan (gitignored).
