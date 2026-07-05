@@ -67,6 +67,9 @@ class SubtitlesConfig:
     position: str = "bottom"
     words_per_cue: int = 4
     strip_punctuation: bool = True
+    # A pause longer than this closes the current cue early, so a caption
+    # never spans a silence and shows words the speaker hasn't said yet.
+    max_gap_seconds: float = 1.2
 
 
 @dataclasses.dataclass
@@ -201,6 +204,8 @@ def _validate(config: Config) -> None:
         raise ConfigError("clip.fade_seconds must be >= 0")
     if config.subtitles.words_per_cue <= 0:
         raise ConfigError("subtitles.words_per_cue must be > 0")
+    if config.subtitles.max_gap_seconds <= 0:
+        raise ConfigError("subtitles.max_gap_seconds must be > 0")
     if config.crop.mode not in CROP_MODES:
         raise ConfigError(f"crop.mode must be one of {sorted(CROP_MODES)}, got {config.crop.mode!r}")
     if config.facecam.mode not in FACECAM_MODES:

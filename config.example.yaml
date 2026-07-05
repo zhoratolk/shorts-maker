@@ -106,6 +106,10 @@ subtitles:
   # displayed caption words - a comma sitting alone in a 3-4 word burst reads
   # as visual noise, not a sentence.
   strip_punctuation: true
+  # Close a cue early when the pause before the next word is longer than this
+  # many seconds, so a caption never spans a silence and shows words the
+  # speaker hasn't said yet.
+  max_gap_seconds: 1.2
 
 audio:
   # FFmpeg noise-reduction filter (afftdn) applied to every clip's audio -

@@ -29,6 +29,34 @@ def test_group_words_into_cues_empty_input():
     assert group_words_into_cues([], max_words=4) == []
 
 
+def test_group_words_into_cues_splits_early_on_long_gap():
+    words = [
+        {"word": "one", "start": 0.0, "end": 0.3},
+        {"word": "two", "start": 0.3, "end": 0.6},
+        # 5 second silence here - "three"/"four" haven't been said yet
+        {"word": "three", "start": 5.6, "end": 5.9},
+        {"word": "four", "start": 5.9, "end": 6.2},
+    ]
+
+    cues = group_words_into_cues(words, max_words=4, max_gap_seconds=1.2)
+
+    assert cues == [
+        {"start": 0.0, "end": 0.6, "text": "one two", "words": words[0:2]},
+        {"start": 5.6, "end": 6.2, "text": "three four", "words": words[2:4]},
+    ]
+
+
+def test_group_words_into_cues_keeps_short_gap_in_same_cue():
+    words = [
+        {"word": "one", "start": 0.0, "end": 0.3},
+        {"word": "two", "start": 1.0, "end": 1.3},
+    ]
+
+    cues = group_words_into_cues(words, max_words=4, max_gap_seconds=1.2)
+
+    assert cues == [{"start": 0.0, "end": 1.3, "text": "one two", "words": words}]
+
+
 def test_group_words_into_cues_strips_word_whitespace():
     words = [{"word": " hello ", "start": 0.0, "end": 0.5}, {"word": "world", "start": 0.5, "end": 1.0}]
 

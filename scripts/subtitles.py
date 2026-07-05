@@ -19,20 +19,39 @@ def strip_display_punctuation(word: str) -> str:
     return _STRIP_PUNCTUATION_RE.sub("", word)
 
 
-def group_words_into_cues(words: list[dict], max_words: int = 4, strip_punctuation: bool = True) -> list[dict]:
+def _build_cue(group: list[dict], strip_punctuation: bool) -> dict:
+    if strip_punctuation:
+        group = [{**word, "word": strip_display_punctuation(word["word"])} for word in group]
+    return {
+        "start": group[0]["start"],
+        "end": group[-1]["end"],
+        "text": " ".join(word["word"].strip() for word in group if word["word"].strip()),
+        "words": group,
+    }
+
+
+def group_words_into_cues(
+    words: list[dict],
+    max_words: int = 4,
+    strip_punctuation: bool = True,
+    max_gap_seconds: float = 1.2,
+) -> list[dict]:
+    if not words:
+        return []
+
     cues = []
-    for i in range(0, len(words), max_words):
-        group = words[i : i + max_words]
-        if strip_punctuation:
-            group = [{**word, "word": strip_display_punctuation(word["word"])} for word in group]
-        cues.append(
-            {
-                "start": group[0]["start"],
-                "end": group[-1]["end"],
-                "text": " ".join(word["word"].strip() for word in group if word["word"].strip()),
-                "words": group,
-            }
-        )
+    current_group = [words[0]]
+    for word in words[1:]:
+        gap = word["start"] - current_group[-1]["end"]
+        if len(current_group) >= max_words or gap > max_gap_seconds:
+            # A gap this long means the speaker is pausing - close the cue
+            # here instead of spanning it, otherwise the caption would show
+            # words from after the pause before they're actually said.
+            cues.append(_build_cue(current_group, strip_punctuation))
+            current_group = [word]
+        else:
+            current_group.append(word)
+    cues.append(_build_cue(current_group, strip_punctuation))
     return cues
 
 
@@ -88,10 +107,18 @@ def main() -> None:
         "--strip-punctuation", action=argparse.BooleanOptionalAction, default=True,
         help="Strip leading/trailing punctuation from displayed caption words (default: on)",
     )
+    parser.add_argument(
+        "--max-gap-seconds", type=float, default=1.2,
+        help="Close a cue early when the pause before the next word exceeds this many seconds, "
+        "so captions don't span a silence and show not-yet-spoken words (default: 1.2)",
+    )
     args = parser.parse_args()
 
     words = json.loads(Path(args.words_json).read_text(encoding="utf-8"))
-    cues = group_words_into_cues(words, max_words=args.max_words, strip_punctuation=args.strip_punctuation)
+    cues = group_words_into_cues(
+        words, max_words=args.max_words, strip_punctuation=args.strip_punctuation,
+        max_gap_seconds=args.max_gap_seconds,
+    )
     Path(args.output_srt).write_text(render_srt(cues), encoding="utf-8")
     print(f"{len(cues)} cues written to {args.output_srt}")
 

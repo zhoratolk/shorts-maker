@@ -36,6 +36,7 @@ def test_load_config_applies_defaults(tmp_path):
     assert config.facecam.mode == "manual_region"
     assert config.subtitles.enabled is False
     assert config.subtitles.words_per_cue == 4
+    assert config.subtitles.max_gap_seconds == 1.2
     assert config.content.allow_mature is True
     assert config.diarization.enabled is False
     assert config.diarization.num_speakers is None
@@ -196,6 +197,21 @@ def test_load_config_subtitles_words_per_cue_must_be_positive(tmp_path):
     )
 
     with pytest.raises(ConfigError, match="words_per_cue"):
+        load_config(path)
+
+
+def test_load_config_subtitles_max_gap_seconds_must_be_positive(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        subtitles:
+          max_gap_seconds: 0
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="max_gap_seconds"):
         load_config(path)
 
 
