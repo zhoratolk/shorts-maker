@@ -1,6 +1,6 @@
 # shorts-maker
 
-Turn long gameplay/stream recordings into vertical (9:16) short clips — fully local, free, no watermarks, no time limits. Runs as a Claude Code skill: local Whisper transcription + ffmpeg rendering do the mechanical work, Claude Code reads the transcript to find and trim the good moments.
+Turn long gameplay/stream recordings into vertical (9:16) short clips — fully local, free, no watermarks, no time limits. Runs as a Claude Code skill: local Whisper transcription + ffmpeg rendering do the mechanical work, Claude Code reads the transcript to find and trim the good moments. Optional speaker diarization (who's talking when) lets it also judge how sustained a monologue/dialogue's train of thought is, on top of finding jokes/reactions/stories.
 
 ## Requirements
 
@@ -30,17 +30,27 @@ copy config.example.yaml config.yaml
 
 Edit `config.yaml` — see the comments in `config.example.yaml` for what each field does (recommended chunk size ranges, facecam mode cost tradeoffs, etc).
 
-Optional: speaker diarization (`diarization.enabled`, off by default) labels who's talking per transcript segment, which the candidate search then uses to score how self-contained a monologue/dialogue moment is. It needs one extra package and a free HuggingFace token:
+### Optional: speaker diarization
 
-```bash
-pip install pyannote.audio
-```
+`diarization.enabled` (off by default in `config.example.yaml`) labels who's talking per transcript segment, which the candidate search then uses to score how sustained a monologue/dialogue's train of thought is (`coherence`, step 3). If you don't want it, leave it `false` — nothing else below is needed, and a missing/invalid token just makes that step skip itself (fail-open, doesn't break the rest of the pipeline).
 
-Then accept the model terms (one-time, requires a HuggingFace account) for [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) and [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0), create an access token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens), and set it as an environment variable before running the skill:
+To actually use it:
 
-```powershell
-$env:HF_TOKEN = "hf_..."
-```
+1. Install the extra package: `pip install pyannote.audio`
+2. Create a free account at [huggingface.co/join](https://huggingface.co/join) if you don't have one.
+3. Accept the model terms — a separate one-time click-through for **each** of these two model pages, while logged in (a token alone isn't enough without this step, it's a per-model gate, not an account-wide permission):
+   - [huggingface.co/pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) → "Agree and access repository"
+   - [huggingface.co/pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0) → "Agree and access repository"
+4. Create an access token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) → "New token" → type **Read** (write access isn't needed) → Create, then copy it (`hf_...`, shown only once).
+5. Set it as `HF_TOKEN` so the skill can find it. Session-only (current terminal window):
+   ```powershell
+   $env:HF_TOKEN = "hf_..."
+   ```
+   Or persistent (survives new terminals/reboots, recommended — set once and forget it):
+   ```powershell
+   setx HF_TOKEN "hf_..."
+   ```
+   `setx` only takes effect in *new* terminal windows/processes started after you run it — close and reopen your terminal (or restart Claude Code) before the next `/make-shorts` run.
 
 ## Making `/make-shorts` available in Claude Code
 
