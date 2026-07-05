@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import sys
 from pathlib import Path
 
 # Read-only scopes - this script never uploads/edits/deletes anything.
@@ -213,11 +214,30 @@ def fetch_channel_performance(
     videos = list_uploaded_videos(data_service, channel["uploads_playlist_id"])
     video_ids = [video["video_id"] for video in videos]
 
+    # Data API (statistics) and Analytics API (everything below) are two
+    # separate Google services reachable over separate connections - some
+    # networks/ISPs block youtubeanalytics.googleapis.com specifically
+    # (observed directly: TLS handshake times out there while
+    # www.googleapis.com works fine) without touching the Data API at all.
+    # Fail open on the Analytics half so a network block only means
+    # "no retention/traffic-source data this run", not a crashed script -
+    # view/like/comment counts (Data API) are still worth having on their own.
     statistics = fetch_video_statistics(data_service, video_ids)
-    analytics = fetch_analytics_for_videos(analytics_service, channel["channel_id"], video_ids, start_date, end_date)
-    traffic_sources = fetch_traffic_sources_for_videos(
-        analytics_service, channel["channel_id"], video_ids, start_date, end_date
-    )
+    try:
+        analytics = fetch_analytics_for_videos(
+            analytics_service, channel["channel_id"], video_ids, start_date, end_date
+        )
+        traffic_sources = fetch_traffic_sources_for_videos(
+            analytics_service, channel["channel_id"], video_ids, start_date, end_date
+        )
+    except Exception as error:
+        print(
+            f"[warn] YouTube Analytics API unreachable ({error}); continuing with view/like/comment "
+            "counts only, no retention/traffic-source data this run",
+            file=sys.stderr,
+        )
+        analytics, traffic_sources = {}, {}
+
     return merge_performance_records(videos, statistics, analytics, traffic_sources)
 
 

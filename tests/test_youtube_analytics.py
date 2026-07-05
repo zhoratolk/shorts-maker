@@ -1,6 +1,7 @@
 from scripts.youtube_analytics import (
     chunk_video_ids,
     fetch_analytics_for_videos,
+    fetch_channel_performance,
     fetch_traffic_sources_for_videos,
     fetch_video_statistics,
     get_own_channel,
@@ -238,6 +239,83 @@ def test_merge_performance_records_combines_all_sources():
             "traffic_sources": {"YT_SHORTS": 775},
         }
     ]
+
+
+class FakeDataService:
+    """Combines channels/playlistItems/videos resources on one object, since
+    fetch_channel_performance calls all three on the same data_service.
+    """
+
+    def __init__(self, channel_response, playlist_pages, video_stats_responses):
+        self._channel_response = channel_response
+        self._playlist_pages = list(playlist_pages)
+        self._video_stats_responses = list(video_stats_responses)
+        self._mode = None
+
+    def channels(self):
+        self._mode = "channels"
+        return self
+
+    def playlistItems(self):
+        self._mode = "playlistItems"
+        return self
+
+    def videos(self):
+        self._mode = "videos"
+        return self
+
+    def list(self, **kwargs):
+        if self._mode == "channels":
+            self._current = self._channel_response
+        elif self._mode == "playlistItems":
+            self._current = self._playlist_pages.pop(0)
+        else:
+            self._current = self._video_stats_responses.pop(0)
+        return self
+
+    def execute(self):
+        return self._current
+
+
+class BrokenAnalyticsService:
+    def reports(self):
+        return self
+
+    def query(self, **kwargs):
+        return self
+
+    def execute(self):
+        raise ConnectionResetError("simulated network block on youtubeanalytics.googleapis.com")
+
+
+def test_fetch_channel_performance_fails_open_when_analytics_unreachable(capsys):
+    data_service = FakeDataService(
+        channel_response={"items": [{"id": "UC1", "contentDetails": {"relatedPlaylists": {"uploads": "UU1"}}}]},
+        playlist_pages=[
+            {"items": [{"snippet": {"resourceId": {"videoId": "vid1"}, "title": "T", "publishedAt": "t1"}}]}
+        ],
+        video_stats_responses=[{"items": [{"id": "vid1", "statistics": {"viewCount": "10"}}]}],
+    )
+
+    records = fetch_channel_performance(
+        data_service, BrokenAnalyticsService(), start_date="2020-01-01", end_date="2020-02-01"
+    )
+
+    assert records == [
+        {
+            "video_id": "vid1",
+            "title": "T",
+            "published_at": "t1",
+            "view_count": 10,
+            "like_count": None,
+            "comment_count": None,
+            "views_in_range": None,
+            "average_view_duration": None,
+            "average_view_percentage": None,
+            "traffic_sources": {},
+        }
+    ]
+    assert "unreachable" in capsys.readouterr().err
 
 
 def test_merge_performance_records_fills_gaps_for_video_with_no_data_yet():

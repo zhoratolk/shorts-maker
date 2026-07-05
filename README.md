@@ -129,6 +129,8 @@ That's it — `transcribe.py` finds and registers those packages' DLL directorie
 
 **`diarize.py` fails with a 403/gated-repo error:** you haven't accepted the model terms for `pyannote/speaker-diarization-3.1` and/or `pyannote/segmentation-3.0` on huggingface.co with the account that issued your `HF_TOKEN` — visit both model pages while logged in, click through the terms, and re-run.
 
+**`youtube_analytics.py` prints `[warn] YouTube Analytics API unreachable` every run:** the Data API (view/like/comment counts) and Analytics API (retention/traffic sources) are separate services on separate hosts — some ISPs/networks block `youtubeanalytics.googleapis.com` specifically while `www.googleapis.com` works fine (observed directly: TLS handshake to that one host times out, `curl` to it hangs, `nslookup` resolves it fine). This is a network-level block outside the script's control, not a bug — it fails open and still writes view/like/comment counts, just without retention/traffic-source data. A VPN that routes around the block is the only fix if you need that data.
+
 **Cyrillic (or other non-ASCII) text prints as `????`/mojibake in your terminal:** the transcript/config files themselves are correct UTF-8 (`ensure_ascii=False`) — this is only a terminal code page issue. Open the `.json`/`.txt` files in an editor, or on Windows run `chcp 65001` first, to see the text correctly.
 
 ## Project layout
