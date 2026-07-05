@@ -95,6 +95,14 @@ audio:
   # FFmpeg noise-reduction filter (afftdn) applied to every clip's audio -
   # strips hiss/hum/fan noise picked up by the mic.
   denoise: true
+  # afftdn's noise-reduction amount in dB (0.01-97). FFmpeg's own default is
+  # 12, which is fine for an isolated mic track but on a mixed game+voice
+  # recording reads as a wind-like/musical-noise smear over non-voice audio
+  # (game SFX, music) while voice mostly survives - the filter can't tell
+  # "noise" from "game audio" on a single mixed track. Set lower than 6, or
+  # denoise: false, if game audio still sounds smeared; raise it back up if
+  # the mic is genuinely hissy and voice-only silence is clean.
+  denoise_strength: 6.0
   # FFmpeg loudness normalization (EBU R128 loudnorm) applied after denoise -
   # evens out volume across clips so viewers aren't reaching for the slider.
   loudnorm: true

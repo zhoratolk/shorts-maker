@@ -129,7 +129,7 @@ def test_combined_features_render_together(test_video, tmp_path):
     one render_clip call - the exact combination verified manually during
     development, now pinned as a regression test."""
     plan_entry = {
-        "start": 0.0, "end": SRC_DURATION, "crop_style": "pad",
+        "start": 0.0, "end": SRC_DURATION, "crop_style": "zoom",
         "keep_segments": [[0.0, 2.0], [4.0, SRC_DURATION]],
         "punch_zoom_at": 0.5,
     }

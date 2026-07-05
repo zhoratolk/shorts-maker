@@ -241,7 +241,9 @@ def build_punch_zoom_filter(punch_at: float, zoom_amount: float = 1.15, ramp: fl
     )
 
 
-def build_audio_filter_chain(denoise: bool, loudnorm: bool, fade_filter: str | None) -> str | None:
+def build_audio_filter_chain(
+    denoise: bool, loudnorm: bool, fade_filter: str | None, denoise_strength: float = 6.0
+) -> str | None:
     """Combines the optional cleanup filters and the fade into one -af chain.
 
     Order matters: denoise the raw signal first, normalize loudness on the
@@ -249,7 +251,7 @@ def build_audio_filter_chain(denoise: bool, loudnorm: bool, fade_filter: str | N
     """
     filters = []
     if denoise:
-        filters.append("afftdn")
+        filters.append(f"afftdn=nr={denoise_strength}")
     if loudnorm:
         filters.append("loudnorm=I=-16:TP=-1.5:LRA=11")
     if fade_filter:
@@ -274,6 +276,7 @@ def build_ffmpeg_command(
     punch_zoom_at: float | None = None,
     punch_zoom_amount: float = 1.15,
     punch_zoom_ramp: float = 0.25,
+    denoise_strength: float = 6.0,
 ) -> list[str]:
     clip_duration = end - start
     tail_available = 0.0 if video_duration is None else max(0.0, video_duration - end)
@@ -303,7 +306,7 @@ def build_ffmpeg_command(
         video_filter = f"{video_filter},fade=t=out:st={fade_start}:d={fade_duration}"
         fade_filter = f"afade=t=out:st={fade_start}:d={fade_duration}"
 
-    audio_filter_chain = build_audio_filter_chain(denoise, loudnorm, fade_filter)
+    audio_filter_chain = build_audio_filter_chain(denoise, loudnorm, fade_filter, denoise_strength)
     audio_args = ["-af", audio_filter_chain] if audio_filter_chain else []
 
     return [
@@ -336,6 +339,7 @@ def build_jumpcut_command(
     punch_zoom_at: float | None = None,
     punch_zoom_amount: float = 1.15,
     punch_zoom_ramp: float = 0.25,
+    denoise_strength: float = 6.0,
 ) -> list[str]:
     """Like build_ffmpeg_command, but keep_segments (absolute source-file
     seconds, from jumpcuts.compute_keep_segments) are trimmed out of the
@@ -388,7 +392,7 @@ def build_jumpcut_command(
         video_ops.append(f"fade=t=out:st={fade_start}:d={fade_duration}")
         fade_filter = f"afade=t=out:st={fade_start}:d={fade_duration}"
 
-    audio_filter_chain = build_audio_filter_chain(denoise, loudnorm, fade_filter) or "anull"
+    audio_filter_chain = build_audio_filter_chain(denoise, loudnorm, fade_filter, denoise_strength) or "anull"
 
     video_stage = f"[vcat]{','.join(video_ops)}[vout]"
     audio_stage = f"[acat]{audio_filter_chain}[aout]"
@@ -441,12 +445,23 @@ def render_clip(
     grain_strength: int = 0,
     punch_zoom_amount: float = 1.15,
     punch_zoom_ramp: float = 0.25,
+    denoise_strength: float = 6.0,
     runner=subprocess.run,
 ) -> list[str]:
     start, end = clamp_clip_bounds(plan_entry["start"], plan_entry["end"], video_duration)
     crop_style = plan_entry["crop_style"]
     crop_filter = compute_crop_filter(crop_style, src_width, src_height)
     punch_zoom_at = plan_entry.get("punch_zoom_at")
+    if punch_zoom_at is not None and crop_style != "zoom":
+        # pad/original-16:9 scale the source to fill TARGET_WIDTH with no
+        # horizontal slack (only top/bottom letterbox bars) - punch-zoom's
+        # crop is centered on both axes, so it always eats into real video
+        # content on the sides for these styles instead of just tightening
+        # the letterbox, defeating the reason pad/original-16:9 was chosen.
+        raise RenderError(
+            f"punch_zoom_at requires crop_style='zoom' (got {crop_style!r}); "
+            "on pad/original-16:9 the punch-zoom crop cuts into real frame content, not just the letterbox bars"
+        )
     subtitles_path = plan_entry.get("subtitles_path")
 
     if subtitles_path is not None and subtitle_style is not None:
@@ -484,12 +499,14 @@ def render_clip(
             input_path, output_path, start, end, keep_segments, crop_filter, subtitles_path,
             fade_seconds, subtitle_style, denoise, loudnorm,
             vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
+            denoise_strength,
         )
     else:
         command = build_ffmpeg_command(
             input_path, output_path, start, end, crop_filter, subtitles_path,
             fade_seconds, video_duration, subtitle_style, denoise, loudnorm,
             vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
+            denoise_strength,
         )
 
     result = runner(command, capture_output=True, text=True)
@@ -521,6 +538,11 @@ def main() -> None:
     parser.add_argument(
         "--denoise", action=argparse.BooleanOptionalAction, default=True,
         help="Apply an FFmpeg noise-reduction filter (afftdn) to each clip's audio",
+    )
+    parser.add_argument(
+        "--denoise-strength", type=float, default=6.0,
+        help="afftdn noise-reduction amount in dB, 0.01-97 (FFmpeg default 12 is aggressive on "
+        "mixed game+voice audio and can smear non-voice sound into a wind-like artifact)",
     )
     parser.add_argument(
         "--loudnorm", action=argparse.BooleanOptionalAction, default=True,
@@ -571,6 +593,7 @@ def main() -> None:
             fade_seconds=args.fade_seconds,
             subtitle_style=subtitle_style,
             denoise=args.denoise,
+            denoise_strength=args.denoise_strength,
             loudnorm=args.loudnorm,
             vignette=args.vignette,
             grain_strength=args.grain_strength,

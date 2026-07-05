@@ -77,6 +77,13 @@ class ContentConfig:
 @dataclasses.dataclass
 class AudioConfig:
     denoise: bool = True
+    # FFmpeg afftdn's own default (12) treats the whole mixed track as noise
+    # to subtract - fine for an isolated mic, but on a mixed game+voice track
+    # it introduces a "musical noise"/wind-like artifact on non-stationary
+    # game audio (SFX, music) while voice survives. Gentler default here;
+    # raise it back up for a genuinely hissy/noisy mic, lower or disable
+    # denoise entirely if game audio still sounds smeared.
+    denoise_strength: float = 6.0
     loudnorm: bool = True
 
 
@@ -214,6 +221,10 @@ def _validate(config: Config) -> None:
     if config.jumpcuts.cut_threshold_seconds < config.jumpcuts.detect_min_seconds:
         raise ConfigError(
             "jumpcuts.cut_threshold_seconds must be >= jumpcuts.detect_min_seconds"
+        )
+    if config.audio.denoise_strength <= 0 or config.audio.denoise_strength > 97:
+        raise ConfigError(
+            f"audio.denoise_strength must be between 0 and 97, got {config.audio.denoise_strength}"
         )
     if config.visual.frame_interval_seconds <= 0:
         raise ConfigError(

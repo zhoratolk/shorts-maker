@@ -235,7 +235,18 @@ def test_build_ffmpeg_command_denoise_only():
         denoise=True,
     )
 
-    assert command[command.index("-af") + 1] == "afftdn"
+    assert command[command.index("-af") + 1] == "afftdn=nr=6.0"
+
+
+def test_build_ffmpeg_command_denoise_custom_strength():
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        denoise=True,
+        denoise_strength=20.0,
+    )
+
+    assert command[command.index("-af") + 1] == "afftdn=nr=20.0"
 
 
 def test_build_ffmpeg_command_loudnorm_only():
@@ -258,7 +269,7 @@ def test_build_ffmpeg_command_denoise_loudnorm_and_fade_chain_in_order():
     )
 
     assert command[command.index("-af") + 1] == (
-        "afftdn,loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=out:st=29.5:d=0.5"
+        "afftdn=nr=6.0,loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=out:st=29.5:d=0.5"
     )
 
 
@@ -403,7 +414,7 @@ def test_build_jumpcut_command_applies_denoise_loudnorm_and_fade_to_acat():
     )
 
     filter_complex = command[command.index("-filter_complex") + 1]
-    assert "[acat]afftdn,loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=out:st=9.5:d=0.5[aout]" in filter_complex
+    assert "[acat]afftdn=nr=6.0,loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=out:st=9.5:d=0.5[aout]" in filter_complex
     assert "[vcat]crop=608:1080:656:0,scale=1080:1920,fade=t=out:st=9.5:d=0.5[vout]" in filter_complex
 
 
@@ -489,6 +500,38 @@ def test_render_clip_reads_punch_zoom_at_from_plan_entry():
 
     video_filter = command[command.index("-vf") + 1]
     assert "crop=w='1080/" in video_filter
+
+
+def test_render_clip_rejects_punch_zoom_at_on_pad_crop_style():
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "pad", "punch_zoom_at": 5.0}
+
+    with pytest.raises(RenderError, match="punch_zoom_at requires crop_style='zoom'"):
+        render_clip(
+            "in.mp4", "out.mp4", plan_entry,
+            video_duration=100.0, src_width=1920, src_height=1080,
+            runner=lambda command, capture_output, text: FakeResult(),
+        )
+
+
+def test_render_clip_rejects_punch_zoom_at_on_original_16_9_crop_style():
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "original-16:9", "punch_zoom_at": 5.0}
+
+    with pytest.raises(RenderError, match="punch_zoom_at requires crop_style='zoom'"):
+        render_clip(
+            "in.mp4", "out.mp4", plan_entry,
+            video_duration=100.0, src_width=1920, src_height=1080,
+            runner=lambda command, capture_output, text: FakeResult(),
+        )
 
 
 def test_render_clip_without_punch_zoom_at_has_no_zoom_filter():

@@ -268,6 +268,7 @@ def test_load_config_audio_defaults(tmp_path):
     config = load_config(path)
 
     assert config.audio.denoise is True
+    assert config.audio.denoise_strength == 6.0
     assert config.audio.loudnorm is True
 
 
@@ -287,6 +288,37 @@ def test_load_config_audio_can_be_disabled(tmp_path):
 
     assert config.audio.denoise is False
     assert config.audio.loudnorm is False
+
+
+def test_load_config_audio_denoise_strength_custom(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        audio:
+          denoise_strength: 15
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.audio.denoise_strength == 15
+
+
+def test_load_config_audio_denoise_strength_rejects_out_of_range(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        audio:
+          denoise_strength: 0
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="audio.denoise_strength"):
+        load_config(path)
 
 
 def test_load_config_effects_defaults(tmp_path):
