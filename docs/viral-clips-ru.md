@@ -53,6 +53,38 @@ one that trails off after it.
   is or what happened 20 minutes earlier is a weaker candidate than one
   that explains itself in-line, unless the missing context is trivial
   (a name, not a whole backstory).
+- **Wordless reactions count too, not just funny lines** — production AI
+  clipping tools (Opus, Choppity, and similar) explicitly detect sudden
+  audio-energy jumps (screams, laughs, hype yells) as a primary viral-moment
+  signal, independent of what was actually said. `config.audio_energy`
+  (step 1d, off by default) implements exactly this: a momentary-loudness
+  spike relative to the stream's own recent baseline. It exists specifically
+  for moments the transcript search structurally cannot find — a wordless
+  scream, a laugh with no words in it, a moment Whisper mistranscribes into
+  nonsense. It's a signal that a *real, unstaged* reaction is happening
+  there (see the point above), not a replacement for judging whether the
+  moment is actually interesting.
+
+## Pacing and the ending
+
+- Fast pacing and visual variety (cuts, zooms, on-screen text) hold
+  attention better than a static, unchanging shot — this is already
+  covered by `config.jumpcuts` (cuts dead air/pauses) and
+  `config.effects.punch_zoom_*` (a snap-zoom on the payoff); lean on both
+  for a clip that's mostly one person talking to camera/game.
+- A clip that ends right on the payoff completes better than one that
+  trails off into "anyway, yeah" after the funny part already landed — trim
+  `end` to the punchline/reaction, not the point the speaker happens to
+  stop talking. A short pause for the reaction to land is fine; a new,
+  unrelated sentence starting after the payoff is not — cut before it.
+- Shorts that are re-watchable (the ending loops back into the beginning
+  conceptually, or the clip rewards a second watch) get pushed harder by
+  the algorithm than ones watched once and scrolled past. This isn't
+  always available in a clipped-from-stream moment (unlike a produced
+  video, you can't always reshoot the ending to callback the opening) —
+  don't force it, but when a clip's last line naturally echoes or pays off
+  its own opening line, that's a real, if incidental, strength worth
+  noting in `reason` rather than something to engineer artificially.
 
 ## Anti-patterns — weaker candidates even when the line itself is funny
 
@@ -81,4 +113,8 @@ Sources: [TechTimes — Viral Gameplay in 2026](https://www.techtimes.com/articl
 [Clypse — Best TikTok Gaming Clip Length 2026](https://clypse.ai/blog/best-tiktok-gaming-clip-length-2026),
 [Praper Media — Viral YouTube Shorts 2026](https://prapermedia.com/blog/make-viral-youtube-shorts/),
 [Medium — Setup-Punchline Combo](https://medium.com/screenwriting-storytelling/transcending-stand-up-comedy-by-mastering-the-setup-punchline-combo-f9bf6f4632df),
-[Moonb — Storytelling Techniques That Trigger Virality](https://www.moonb.io/blog/techniques-that-trigger-virality).
+[Moonb — Storytelling Techniques That Trigger Virality](https://www.moonb.io/blog/techniques-that-trigger-virality),
+[TwoAverageGamers — Best AI Clip Detection Tools for Streamers 2026](https://www.twoaveragegamers.com/best-ai-clip-detection-tools-for-streamers-2026/),
+[Choppity — Free AI Clip Maker](https://www.choppity.com/tools/free-ai-clip-maker/),
+[ReelMind — Rapid-Fire Editing Workflows for Shorts](https://reelmind.ai/blog/short-youtube-video-transitions-rapid-fire-editing-workflows-for-tiktok-style-reels),
+[ALM Corp — Short-Form Video Mastery 2026](https://almcorp.com/blog/short-form-video-mastery-tiktok-reels-youtube-shorts-2026/).

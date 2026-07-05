@@ -42,6 +42,60 @@ def test_load_config_applies_defaults(tmp_path):
     assert config.diarization.num_speakers is None
     assert config.diarization.min_speakers is None
     assert config.diarization.max_speakers is None
+    assert config.audio_energy.enabled is False
+    assert config.audio_energy.threshold_db == 6.0
+    assert config.audio_energy.floor_lufs == -35.0
+    assert config.audio_energy.baseline_window_seconds == 20.0
+    assert config.audio_energy.min_duration == 0.3
+    assert config.audio_energy.merge_gap_seconds == 1.0
+
+
+def test_load_config_audio_energy_custom_values(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        audio_energy:
+          enabled: true
+          threshold_db: 8.0
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.audio_energy.enabled is True
+    assert config.audio_energy.threshold_db == 8.0
+
+
+def test_load_config_audio_energy_threshold_db_must_be_positive(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        audio_energy:
+          threshold_db: 0
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="audio_energy.threshold_db"):
+        load_config(path)
+
+
+def test_load_config_audio_energy_merge_gap_seconds_rejects_negative(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        audio_energy:
+          merge_gap_seconds: -1
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="audio_energy.merge_gap_seconds"):
+        load_config(path)
 
 
 def test_load_config_diarization_custom_values(tmp_path):

@@ -64,6 +64,29 @@ diarization:
   min_speakers: null
   max_speakers: null
 
+audio_energy:
+  # Sudden audio-energy spike detection (screams/laughs/hype yells) via
+  # ffmpeg's EBU R128 momentary loudness, step 1d - catches wordless hype
+  # moments a transcript-only search misses entirely (nothing said, or
+  # Whisper mistranscribes it). Off by default: it's an additive signal
+  # fed into step 3 alongside hype_phrases/coherence, not a replacement
+  # for the transcript search.
+  enabled: false
+  # A momentary-loudness jump at least this many dB above its own local
+  # rolling baseline counts as a spike. Lower = more sensitive/more spikes.
+  threshold_db: 6.0
+  # Below this absolute LUFS a "spike" is just noise-floor movement inside
+  # near-silence - ignored regardless of the relative jump.
+  floor_lufs: -35.0
+  # How far back to look for the local "normal" loudness to compare
+  # against - a loud music segment and a quiet chatting segment need
+  # different baselines for "spike" to mean the same thing in both.
+  baseline_window_seconds: 20.0
+  # Drop anything shorter than this - a transient blip, not a real reaction.
+  min_duration: 0.3
+  # Merge two spike windows separated by a gap this short or less into one.
+  merge_gap_seconds: 1.0
+
 metadata:
   # Generate title/description/tags/caption text for posting, reusing the
   # same transcript window pass 2 already reads for trim/crop decisions.

@@ -59,6 +59,18 @@ This labels each segment of the cached transcript JSON in place with a `"speaker
 
 **Fail open, do not abort the run.** If this command errors for any reason (missing `HF_TOKEN`, `pyannote` not installed, a 403/gated-repo error, no GPU/out-of-memory, etc.), tell the user why in one line and continue the pipeline exactly as if `config.diarization.enabled` were `false` for this run — the transcript simply has no `"speaker"` fields, so step 3 omits `coherence` from every candidate. Never let a diarization failure block transcription/chunking/candidate-finding/rendering; it's a purely additive signal, not a dependency the rest of the pipeline needs.
 
+### 1d. Detect audio energy spikes (cached, only if `config.audio_energy.enabled`)
+
+Skip this step entirely when `config.audio_energy.enabled` is `false` (default).
+
+```bash
+python scripts/audio_energy.py "<video>" --threshold-db <audio_energy.threshold_db> --floor-lufs <audio_energy.floor_lufs> --baseline-window-seconds <audio_energy.baseline_window_seconds> --min-duration <audio_energy.min_duration> --merge-gap-seconds <audio_energy.merge_gap_seconds> > "<config.output_dir>/transcripts/<video_stem>_energy_spikes.json"
+```
+
+This finds sudden audio-energy jumps (screams, laughs, hype yells — real production AI clipping tools use exactly this signal) relative to the file's own recent loudness, not a fixed dB guess. Cached the same way as the pause file: skip re-running this if `<config.output_dir>/transcripts/<video_stem>_energy_spikes.json` already exists. Fails open the same way diarization does — if the command errors, tell the user in one line and continue with an empty spike list for this run rather than aborting the pipeline.
+
+Why this exists alongside the transcript search: a real scream/laugh/hype moment often transcribes to nothing meaningful (wordless noise) or gets mangled by Whisper, so text-only candidate-finding can miss it outright — this pass exists to catch exactly that gap, not to replace the transcript search.
+
 ### 2. Split into chunks
 
 ```bash
@@ -85,6 +97,7 @@ Before scoring, read [docs/viral-clips-ru.md](docs/viral-clips-ru.md) — it dis
   2. Read the extracted `frame_*.jpg` files directly — whichever agent is doing this chunk (the dispatched subagent from the bullet above, or yourself when `use_subagents` is `false`) looks at them alongside the transcript text it's already reading.
   3. If `config.visual.detect_game_context` is `true` (default): write a short game/topic label for this chunk to `work/<video_stem>/frames/chunk_NNNN/game_context.txt` (e.g. `Elden Ring`, `Valorant`, `Just Chatting`). Step 5 below reads it back in for any clip landing in this chunk's time range.
   4. If `config.visual.detect_visual_candidates` is `true` (default): add candidates for visually strong moments the transcript text alone wouldn't surface — a death/game-over screen, a clutch play, a funny on-screen glitch, a big reaction — to this chunk's `candidates_chunk_NNNN.json` list (same format as the text-based ones), with a `reason` that names what was actually seen, e.g. `"visual: death screen + chat spam"`, not a vague `"funny moment"`.
+- **Audio energy pass** — only when `config.audio_energy.enabled` is `true` (default `false`; requires step 1d). For this chunk's time range, take every entry from `<config.output_dir>/transcripts/<video_stem>_energy_spikes.json` whose `start`/`end` overlaps `[chunk_start, chunk_end]`. For each: check whether it already lines up with a candidate already found from the transcript/visual passes above (same or overlapping window) — if so, skip it, the moment is already covered. Otherwise add it as its own candidate: read the transcript segments covering that window for context (there may be little or no real text — that's expected, this pass exists for exactly that case) and write a `reason` that says what kind of spike it is if inferable from context (e.g. `"audio energy spike: scream reaction to death"`, `"audio energy spike: sudden laughter, no clear cause in transcript"`) rather than leaving the generic placeholder reason from the JSON file as-is.
 
 Once every chunk has a candidates file, merge them:
 

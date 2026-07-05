@@ -110,6 +110,20 @@ class VisualConfig:
 
 
 @dataclasses.dataclass
+class AudioEnergyConfig:
+    enabled: bool = False
+    # A momentary-loudness jump at least this many dB above its own local
+    # rolling baseline counts as a spike (scream/laugh/hype yell).
+    threshold_db: float = 6.0
+    # Below this absolute LUFS, a "spike" is just noise floor moving inside
+    # near-silence - ignored regardless of the relative jump.
+    floor_lufs: float = -35.0
+    baseline_window_seconds: float = 20.0
+    min_duration: float = 0.3
+    merge_gap_seconds: float = 1.0
+
+
+@dataclasses.dataclass
 class JumpcutsConfig:
     enabled: bool = False
     detect_min_seconds: float = 0.15
@@ -145,6 +159,7 @@ class Config:
     subtitles: SubtitlesConfig = dataclasses.field(default_factory=SubtitlesConfig)
     content: ContentConfig = dataclasses.field(default_factory=ContentConfig)
     diarization: DiarizationConfig = dataclasses.field(default_factory=DiarizationConfig)
+    audio_energy: AudioEnergyConfig = dataclasses.field(default_factory=AudioEnergyConfig)
     metadata: MetadataConfig = dataclasses.field(default_factory=MetadataConfig)
     audio: AudioConfig = dataclasses.field(default_factory=AudioConfig)
     effects: EffectsConfig = dataclasses.field(default_factory=EffectsConfig)
@@ -179,6 +194,7 @@ def load_config(path: str) -> Config:
         subtitles=_build(SubtitlesConfig, data.get("subtitles", {}), "subtitles"),
         content=_build(ContentConfig, data.get("content", {}), "content"),
         diarization=_build(DiarizationConfig, data.get("diarization", {}), "diarization"),
+        audio_energy=_build(AudioEnergyConfig, data.get("audio_energy", {}), "audio_energy"),
         metadata=_build(MetadataConfig, data.get("metadata", {}), "metadata"),
         audio=_build(AudioConfig, data.get("audio", {}), "audio"),
         effects=_build(EffectsConfig, data.get("effects", {}), "effects"),
@@ -275,3 +291,18 @@ def _validate(config: Config) -> None:
         and config.diarization.min_speakers > config.diarization.max_speakers
     ):
         raise ConfigError("diarization.min_speakers must be <= diarization.max_speakers")
+    if config.audio_energy.threshold_db <= 0:
+        raise ConfigError(
+            f"audio_energy.threshold_db must be > 0, got {config.audio_energy.threshold_db}"
+        )
+    if config.audio_energy.baseline_window_seconds <= 0:
+        raise ConfigError(
+            f"audio_energy.baseline_window_seconds must be > 0, got "
+            f"{config.audio_energy.baseline_window_seconds}"
+        )
+    if config.audio_energy.min_duration <= 0:
+        raise ConfigError(f"audio_energy.min_duration must be > 0, got {config.audio_energy.min_duration}")
+    if config.audio_energy.merge_gap_seconds < 0:
+        raise ConfigError(
+            f"audio_energy.merge_gap_seconds must be >= 0, got {config.audio_energy.merge_gap_seconds}"
+        )
