@@ -81,9 +81,23 @@ Claude Code will transcribe (cached — only happens once per video ever), searc
 
 ## Grounding candidate-finding in your own channel's real performance (optional)
 
-`docs/viral-clips-ru.md` is built from general short-form-video research — a reasonable default, but generic by nature. If you've published clips already and want Claude Code to check what's *actually* landing on your own channel (view counts, average-view-duration/completion, traffic sources) instead of relying only on general research, connect the [claude-in-chrome](https://claude.com/claude-code) browser extension, sign into it with your Anthropic account, then just ask Claude Code to open your YouTube Studio content/analytics pages — it browses using your logged-in session, so authenticated pages work without any separate API setup. Good uses: sanity-checking whether a hook style or clip length that tests well in general research also works for your specific audience, or feeding a handful of real numbers back into `docs/viral-clips-ru.md` as a dated, channel-specific note.
+`docs/viral-clips-ru.md` is built from general short-form-video research — a reasonable default, but generic by nature. Two ways to check what's *actually* landing on your own channel instead of relying only on general research:
 
-This is a manual, ask-Claude-to-check workflow, not a background job — there's no scheduled/automatic analytics pull, and building one would mean setting up the YouTube Data API with OAuth (a separate, bigger undertaking this repo doesn't currently do).
+**Quick, no setup:** connect the [claude-in-chrome](https://claude.com/claude-code) browser extension, sign into it with your Anthropic account, then just ask Claude Code to open your YouTube Studio content/analytics pages — it browses using your logged-in session, so authenticated pages work without any separate API setup. Manual, ask-Claude-to-check, one video (or page) at a time.
+
+**Whole-channel snapshot in one file:** `scripts/youtube_analytics.py` pulls every uploaded video's view count, average-view-duration/completion percentage, and traffic-source breakdown (Shorts feed vs. search vs. subscribers, etc.) into one local JSON via the YouTube Data + Analytics APIs — read-only, never uploads/edits/deletes anything. One-time setup:
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com/), create a project (any name).
+2. In that project, enable **YouTube Data API v3** and **YouTube Analytics API** (APIs & Services → Library → search each → Enable). Both are free, no billing account needed for this usage level.
+3. APIs & Services → OAuth consent screen → External → fill the required fields (app name, your email) → add both scopes (`.../auth/youtube.readonly`, `.../auth/yt-analytics.readonly`) → add yourself under **Test users**. The app stays in "Testing" mode (fine for personal use) — note that Google expires a testing-mode refresh token after 7 days of inactivity, so you may need to re-consent occasionally if you don't run this often; publishing the app removes that limit but isn't necessary for solo use.
+4. APIs & Services → Credentials → Create Credentials → OAuth client ID → Application type **Desktop app** → Create, then Download JSON. Save it as `client_secret.json` in this repo's root (gitignored — never commit it).
+5. `pip install google-api-python-client google-auth-oauthlib google-auth-httplib2`
+6. Run it:
+   ```bash
+   python scripts/youtube_analytics.py "<config.output_dir>/analytics/channel_performance.json"
+   ```
+   The first run opens a browser for you to sign in and consent, then caches the token as `token.json` (also gitignored) — later runs are silent until that token needs refreshing. `--start-date`/`--end-date` (YYYY-MM-DD) narrow the window if you don't want full channel history.
+7. Point Claude Code at the resulting JSON when you want candidate-finding/hook choices grounded in real numbers instead of (or alongside) `docs/viral-clips-ru.md`'s general research.
 
 ## Running the tests
 

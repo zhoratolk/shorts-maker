@@ -4,3 +4,5 @@ __pycache__/
 .venv/
 config.yaml
 .claude/
+client_secret.json
+token.json

@@ -196,3 +196,7 @@ This probes the source video once, then renders every entry in `PLAN.json` into 
 ## Library-wide search
 
 Because every transcript is cached under `<config.output_dir>/transcripts/`, steps 2-5 can be re-run against any subset of already-transcribed videos to search for moments across the whole archive, not just the video just processed — skip step 1 for videos that are already cached.
+
+## Real channel performance (optional)
+
+If `<config.output_dir>/analytics/channel_performance.json` exists (produced by `python scripts/youtube_analytics.py`, see README — requires one-time OAuth setup, not run automatically as part of this skill), read it before step 3 when it's present and treat it the same way as [docs/viral-clips-ru.md](docs/viral-clips-ru.md): a lens, not a hard filter. Each entry has `title`, `view_count`, `average_view_percentage` (completion rate), and `traffic_sources` (e.g. how much came from the Shorts feed algorithm itself vs. search/subscribers). Use it to check whether a hook style, length, or structure that's about to be applied actually matches what's landed on *this* channel historically — e.g. if short, tightly-resolved clips consistently show higher `average_view_percentage` than longer ones in the file, that's a real reason to trim toward the shorter end of `config.clip.min_seconds`-`max_seconds` for this run, on top of the general guidance in viral-clips-ru.md. Don't fetch or refresh this file yourself as part of the pipeline — it's a manually-run, occasional snapshot; just read it if it's already there.
