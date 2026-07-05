@@ -80,5 +80,29 @@ def test_write_candidates_json_round_trips(tmp_path):
     write_candidates_json(candidates, path)
 
     assert json.loads(Path(path).read_text(encoding="utf-8")) == [
-        {"id": 1, "start": 10.0, "end": 20.0, "reason": "first joke"}
+        {"id": 1, "start": 10.0, "end": 20.0, "reason": "first joke", "coherence": None}
     ]
+
+
+def test_merge_candidates_carries_optional_coherence_field():
+    chunk = [{"start": 10.0, "end": 20.0, "reason": "clean monologue", "coherence": 5}]
+
+    merged = merge_candidates([chunk])
+
+    assert merged == [Candidate(id=1, start=10.0, end=20.0, reason="clean monologue", coherence=5)]
+
+
+def test_merge_candidates_coherence_defaults_to_none_when_absent():
+    chunk = [{"start": 10.0, "end": 20.0, "reason": "no speaker data"}]
+
+    merged = merge_candidates([chunk])
+
+    assert merged[0].coherence is None
+
+
+def test_render_candidates_markdown_includes_coherence_when_present():
+    candidates = [Candidate(id=1, start=10.0, end=20.0, reason="clean monologue", coherence=5)]
+
+    markdown = render_candidates_markdown(candidates)
+
+    assert markdown == "# Candidates\n\n1. `00:00:10` - `00:00:20` — clean monologue (целостность: 5/5)\n"

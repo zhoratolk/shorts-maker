@@ -37,6 +37,61 @@ def test_load_config_applies_defaults(tmp_path):
     assert config.subtitles.enabled is False
     assert config.subtitles.words_per_cue == 4
     assert config.content.allow_mature is True
+    assert config.diarization.enabled is False
+    assert config.diarization.num_speakers is None
+    assert config.diarization.min_speakers is None
+    assert config.diarization.max_speakers is None
+
+
+def test_load_config_diarization_custom_values(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        diarization:
+          enabled: true
+          min_speakers: 2
+          max_speakers: 4
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.diarization.enabled is True
+    assert config.diarization.min_speakers == 2
+    assert config.diarization.max_speakers == 4
+
+
+def test_load_config_diarization_num_speakers_zero_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        diarization:
+          num_speakers: 0
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="diarization.num_speakers"):
+        load_config(path)
+
+
+def test_load_config_diarization_min_greater_than_max_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        diarization:
+          min_speakers: 5
+          max_speakers: 2
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="diarization.min_speakers must be <= diarization.max_speakers"):
+        load_config(path)
 
 
 def test_load_config_missing_input_dir_raises(tmp_path):

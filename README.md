@@ -30,6 +30,18 @@ copy config.example.yaml config.yaml
 
 Edit `config.yaml` — see the comments in `config.example.yaml` for what each field does (recommended chunk size ranges, facecam mode cost tradeoffs, etc).
 
+Optional: speaker diarization (`diarization.enabled`, off by default) labels who's talking per transcript segment, which the candidate search then uses to score how self-contained a monologue/dialogue moment is. It needs one extra package and a free HuggingFace token:
+
+```bash
+pip install pyannote.audio
+```
+
+Then accept the model terms (one-time, requires a HuggingFace account) for [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) and [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0), create an access token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens), and set it as an environment variable before running the skill:
+
+```powershell
+$env:HF_TOKEN = "hf_..."
+```
+
 ## Making `/make-shorts` available in Claude Code
 
 Claude Code discovers skills from `.claude/skills/<name>/SKILL.md` in the project it's running in — it will not pick up the bare `SKILL.md` at this repo's root on its own. Since that file's instructions invoke `scripts/*.py` and read/write `work/` using paths relative to this repo, the skill only works correctly when Claude Code's working directory is this repo. Set it up once:
@@ -80,6 +92,8 @@ pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
 That's it — `transcribe.py` finds and registers those packages' DLL directories itself (Windows' DLL loader ignores `PATH` for this, so it uses `os.add_dll_directory` instead), no manual `PATH` editing needed.
 
 **Video has no real speech, or is mostly game-audio-only:** Whisper hallucinates short filler transcriptions (repeated `"Okay."`, `"Thank you."`, etc.) on near-silent or non-speech audio instead of leaving segments empty. That's a known Whisper behavior, not a bug in this project — pick a source video that actually has voice commentary.
+
+**`diarize.py` fails with a 403/gated-repo error:** you haven't accepted the model terms for `pyannote/speaker-diarization-3.1` and/or `pyannote/segmentation-3.0` on huggingface.co with the account that issued your `HF_TOKEN` — visit both model pages while logged in, click through the terms, and re-run.
 
 **Cyrillic (or other non-ASCII) text prints as `????`/mojibake in your terminal:** the transcript/config files themselves are correct UTF-8 (`ensure_ascii=False`) — this is only a terminal code page issue. Open the `.json`/`.txt` files in an editor, or on Windows run `chcp 65001` first, to see the text correctly.
 

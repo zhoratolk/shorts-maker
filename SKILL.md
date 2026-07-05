@@ -21,6 +21,8 @@ This checks/installs ffmpeg (via winget) and the Python dependencies, and report
 
 Make sure `config.yaml` exists (copy `config.example.yaml` if not) and read it before starting — every step below is governed by it.
 
+Speaker diarization (step 1c) is opt-in and not covered by `setup.py`: only needed when `config.diarization.enabled` is `true`. Requires `pip install pyannote.audio` plus a HuggingFace token (`HF_TOKEN` env var) that has accepted the gated model terms for `pyannote/speaker-diarization-3.1` and `pyannote/segmentation-3.0` on huggingface.co.
+
 ## Pipeline
 
 Given a video path `<video>` and the loaded `config.yaml`:
@@ -43,6 +45,18 @@ python scripts/silence.py "<video>" --min-duration <jumpcuts.detect_min_seconds>
 
 This measures the file's own loudness gating threshold (FFmpeg `loudnorm`) and uses it — instead of a guessed fixed dB value — to find every pause at least `jumpcuts.detect_min_seconds` long, cached the same way the transcript is: if `<config.output_dir>/transcripts/<video_stem>_pauses.json` already exists, skip re-running this.
 
+### 1c. Diarize speakers (cached, only if `config.diarization.enabled`)
+
+Skip this step entirely when `config.diarization.enabled` is `false` (default).
+
+```bash
+python scripts/diarize.py "<video>" "<config.output_dir>/transcripts" --num-speakers <diarization.num_speakers> --min-speakers <diarization.min_speakers> --max-speakers <diarization.max_speakers>
+```
+
+Requires `pip install pyannote.audio` and an `HF_TOKEN` environment variable (a HuggingFace access token that has accepted the model terms for `pyannote/speaker-diarization-3.1` and `pyannote/segmentation-3.0` on huggingface.co — one-time setup, tell the user if the run fails with a gated-model error). Pass `--num-speakers` when `diarization.num_speakers` is set (fixed cast size); otherwise omit it and pass `--min-speakers`/`--max-speakers` only for whichever of the two is set (lets pyannote infer the count within that range).
+
+This labels each segment of the cached transcript JSON in place with a `"speaker"` field (`"Голос 1"`, `"Голос 2"`, ... assigned by first appearance in the audio) and rewrites the same `<video_stem>.json` cache file — no separate output file. Idempotent: if every segment already has a `"speaker"` field, this is a no-op, so it's safe to re-run against an already-diarized transcript.
+
 ### 2. Split into chunks
 
 ```bash
@@ -53,7 +67,9 @@ This writes one `chunk_NNNN.json` file per window into `work/<video_stem>/chunks
 
 ### 3. Find candidates (pass 1)
 
-For each `chunk_NNNN.json` file, produce a `work/<video_stem>/candidates/candidates_chunk_NNNN.json` file containing a JSON list of objects `{"start": <seconds>, "end": <seconds>, "reason": "<short reason>"}` for every strong moment found in that chunk's segments (jokes, reactions, stories — judged from the text itself, not audio energy).
+For each `chunk_NNNN.json` file, produce a `work/<video_stem>/candidates/candidates_chunk_NNNN.json` file containing a JSON list of objects `{"start": <seconds>, "end": <seconds>, "reason": "<short reason>", "coherence": <1-5, optional>}` for every strong moment found in that chunk's segments (jokes, reactions, stories — judged from the text itself, not audio energy).
+
+- **`coherence`** — only set this field when the chunk's segments carry a `"speaker"` field (i.e. `config.diarization.enabled` was `true` for this run); omit it entirely otherwise. Use the speaker labels to judge whether the candidate window is a *complete, self-contained unit* rather than a fragment: a monologue candidate should hold one speaker across a full setup→payoff arc without being cut mid-story; a dialogue/banter candidate should capture a clean full exchange (the setup line and the punchline/reaction from the other speaker), not start after the setup already happened or end before the reaction lands. Score 5 = fully self-contained, no truncation at either edge; 3 = understandable but missing a bit of context or trailing off slightly; 1 = arbitrary fragment, cuts mid-sentence or mid-turn. This is purely about structural wholeness, not about how funny/strong the moment is — a hilarious but truncated exchange still scores low, and a mild but complete one scores high. Widen `start`/`end` slightly (still within this chunk) when doing so would turn a low-scoring fragment into a complete unit, rather than just scoring the fragment as-is.
 
 - If `config.analysis.use_subagents` is `true` (default): dispatch one Agent (subagent_type: general-purpose) per chunk file, **in parallel in a single message**, each instructed to read its assigned chunk JSON and write its own `candidates_chunk_NNNN.json` file with that format. Do not have subagents talk to each other — they work independently on disjoint time windows.
 - If `config.analysis.use_subagents` is `false`: read every chunk file yourself, sequentially, and write the candidate files directly without dispatching agents.

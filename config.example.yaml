@@ -48,6 +48,22 @@ content:
   # them.
   allow_mature: true
 
+diarization:
+  # Speaker diarization (who's talking when) for candidate-finding, step 1c.
+  # Off by default: needs `pip install pyannote.audio` plus an HF_TOKEN env
+  # var (a HuggingFace token that accepted the model terms for
+  # pyannote/speaker-diarization-3.1 + pyannote/segmentation-3.0 on
+  # huggingface.co). When enabled, each transcript segment is labeled
+  # "Голос 1"/"Голос 2"/... and step 3's candidate search uses that to score
+  # a "coherence" (1-5) for each candidate — how complete/self-contained a
+  # monologue or dialogue exchange is, vs. an arbitrary fragment.
+  enabled: false
+  # Fixed speaker count (e.g. always exactly 2 mics) - takes priority over
+  # min/max_speakers below when set. Leave null to let pyannote infer count.
+  num_speakers: null
+  min_speakers: null
+  max_speakers: null
+
 metadata:
   # Generate title/description/tags/caption text for posting, reusing the
   # same transcript window pass 2 already reads for trim/crop decisions.

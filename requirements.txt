@@ -1,2 +1,5 @@
 faster-whisper>=1.0.0
 PyYAML>=6.0
+# optional, only needed when diarization.enabled is true - requires an
+# HF_TOKEN with pyannote/speaker-diarization-3.1 model terms accepted
+pyannote.audio>=3.1

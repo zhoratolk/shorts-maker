@@ -12,6 +12,9 @@ class Candidate:
     start: float
     end: float
     reason: str
+    # 1-5, set by candidate-finding subagents only when speaker-labeled
+    # segments are available (config.diarization.enabled); None otherwise.
+    coherence: int | None = None
 
 
 def format_timecode(total_seconds: float) -> str:
@@ -31,7 +34,13 @@ def merge_candidates(chunks_candidates: list[list[dict]]) -> list[Candidate]:
     flattened.sort(key=lambda item: item["start"])
 
     return [
-        Candidate(id=index + 1, start=item["start"], end=item["end"], reason=item["reason"])
+        Candidate(
+            id=index + 1,
+            start=item["start"],
+            end=item["end"],
+            reason=item["reason"],
+            coherence=item.get("coherence"),
+        )
         for index, item in enumerate(flattened)
     ]
 
@@ -50,7 +59,10 @@ def render_candidates_markdown(candidates: list[Candidate]) -> str:
     for candidate in candidates:
         start_tc = format_timecode(candidate.start)
         end_tc = format_timecode(candidate.end)
-        lines.append(f"{candidate.id}. `{start_tc}` - `{end_tc}` — {candidate.reason}")
+        line = f"{candidate.id}. `{start_tc}` - `{end_tc}` — {candidate.reason}"
+        if candidate.coherence is not None:
+            line += f" (целостность: {candidate.coherence}/5)"
+        lines.append(line)
     return "\n".join(lines) + "\n"
 
 

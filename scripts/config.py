@@ -75,6 +75,17 @@ class ContentConfig:
 
 
 @dataclasses.dataclass
+class DiarizationConfig:
+    enabled: bool = False
+    # Fixed speaker count takes priority over min/max when set - use it when
+    # the cast is stable (e.g. always exactly 2 mics). Leave num_speakers
+    # unset and use min/max to let pyannote infer count within a range.
+    num_speakers: int | None = None
+    min_speakers: int | None = None
+    max_speakers: int | None = None
+
+
+@dataclasses.dataclass
 class AudioConfig:
     denoise: bool = True
     # FFmpeg afftdn's own default (12) treats the whole mixed track as noise
@@ -130,6 +141,7 @@ class Config:
     facecam: FacecamConfig = dataclasses.field(default_factory=FacecamConfig)
     subtitles: SubtitlesConfig = dataclasses.field(default_factory=SubtitlesConfig)
     content: ContentConfig = dataclasses.field(default_factory=ContentConfig)
+    diarization: DiarizationConfig = dataclasses.field(default_factory=DiarizationConfig)
     metadata: MetadataConfig = dataclasses.field(default_factory=MetadataConfig)
     audio: AudioConfig = dataclasses.field(default_factory=AudioConfig)
     effects: EffectsConfig = dataclasses.field(default_factory=EffectsConfig)
@@ -163,6 +175,7 @@ def load_config(path: str) -> Config:
         facecam=_build(FacecamConfig, data.get("facecam", {}), "facecam"),
         subtitles=_build(SubtitlesConfig, data.get("subtitles", {}), "subtitles"),
         content=_build(ContentConfig, data.get("content", {}), "content"),
+        diarization=_build(DiarizationConfig, data.get("diarization", {}), "diarization"),
         metadata=_build(MetadataConfig, data.get("metadata", {}), "metadata"),
         audio=_build(AudioConfig, data.get("audio", {}), "audio"),
         effects=_build(EffectsConfig, data.get("effects", {}), "effects"),
@@ -239,3 +252,21 @@ def _validate(config: Config) -> None:
                 f"metadata.platforms contains unknown values {sorted(unknown)}; "
                 f"must be a subset of {sorted(METADATA_PLATFORMS)}"
             )
+    if config.diarization.num_speakers is not None and config.diarization.num_speakers <= 0:
+        raise ConfigError(
+            f"diarization.num_speakers must be > 0, got {config.diarization.num_speakers}"
+        )
+    if config.diarization.min_speakers is not None and config.diarization.min_speakers <= 0:
+        raise ConfigError(
+            f"diarization.min_speakers must be > 0, got {config.diarization.min_speakers}"
+        )
+    if config.diarization.max_speakers is not None and config.diarization.max_speakers <= 0:
+        raise ConfigError(
+            f"diarization.max_speakers must be > 0, got {config.diarization.max_speakers}"
+        )
+    if (
+        config.diarization.min_speakers is not None
+        and config.diarization.max_speakers is not None
+        and config.diarization.min_speakers > config.diarization.max_speakers
+    ):
+        raise ConfigError("diarization.min_speakers must be <= diarization.max_speakers")
