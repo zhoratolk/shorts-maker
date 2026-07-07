@@ -31,7 +31,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Monetization flags never block or fail export — a clip with flags still renders and exports normally, flags are advisory-only in the output
   3. Running the style-profile step against the creator's real upload history (via existing `scripts/youtube_analytics.py`) produces a structured, gitignored style-profile artifact containing concrete few-shot naming/moment-selection examples (not prose summaries)
   4. No raw per-channel titles/stats/history ever appear in a committed file — the style-profile cache lives only in the existing gitignored cache location
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 01-01-PLAN.md — Deterministic per-platform keyword/topic monetization-risk scorer (rule-table YAML, advisory flags with confidence + last-checked date, rendered into metadata) [MONET-02, MONET-03, MONET-04] (wave 1)
+- [ ] 01-02-PLAN.md — Local Chromaprint/pyacoustid audio fingerprinting → copyrighted-audio flag merged into the risk dict, fail-open on missing binary [MONET-01, MONET-03] (wave 2)
+- [ ] 01-03-PLAN.md — Creator style profile: structured few-shot naming/moment examples derived from the youtube_analytics.py cache into a gitignored artifact [STYLE-01, STYLE-02, STYLE-03] (wave 1)
 
 ### Phase 2: LLM Title/Tag Generation
 **Goal**: Pipeline proposes ready-to-use titles and tags per clip, grounded in the creator's own voice via few-shot style-profile examples
@@ -93,7 +96,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Monetization-Risk Flagging & Creator Style Profile | 0/TBD | Not started | - |
+| 1. Monetization-Risk Flagging & Creator Style Profile | 0/3 | Not started | - |
 | 2. LLM Title/Tag Generation | 0/TBD | Not started | - |
 | 3. YouTube Scheduled Auto-Publish | 0/TBD | Not started | - |
 | 4. Context-Driven Transitions | 0/TBD | Not started | - |
