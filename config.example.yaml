@@ -108,6 +108,18 @@ monetization:
   # categories, keywords, severities, or per-platform coverage - no code
   # change needed.
   rules_path: data/monetization_rules.yaml
+  # Local Chromaprint audio fingerprinting (scripts/monetization_audio.py),
+  # flagging likely-licensed music as an advisory "copyrighted_audio" flag
+  # merged into the same risk block above. Needs the separate `fpcalc`
+  # binary (Chromaprint) on PATH - NOT a pip package; setup.py reports
+  # whether it's installed. Off by default so the base install works
+  # without it (fail-open).
+  audio_fingerprint_enabled: false
+  # Optional AcoustID network lookup to confirm a fingerprint match - the
+  # only network egress this feature can add. Off by default to preserve
+  # local-first behavior; only a derived fingerprint (not raw audio) would
+  # ever be sent if enabled.
+  enable_lookup: false
 
 facecam:
   # Set true if the recording has a webcam or VTuber avatar overlay.

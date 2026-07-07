@@ -19,6 +19,10 @@ def check_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
+def check_fpcalc() -> bool:
+    return shutil.which("fpcalc") is not None
+
+
 def check_gpu(runner=subprocess.run) -> str:
     try:
         runner(["nvidia-smi"], capture_output=True, check=True)
@@ -56,6 +60,15 @@ def main() -> None:
             install_ffmpeg()
         else:
             print("[skip] ffmpeg not installed — rendering will fail until it is")
+
+    if check_fpcalc():
+        print("[ok] fpcalc (Chromaprint) found")
+    else:
+        print(
+            "[skip] fpcalc not found — audio-fingerprint monetization flagging will stay "
+            "disabled until Chromaprint is installed (e.g. `winget install -e --id Chromaprint.Chromaprint`); "
+            "everything else works without it"
+        )
 
     missing_deps = check_python_deps()
     if not missing_deps:

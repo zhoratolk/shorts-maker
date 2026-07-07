@@ -151,6 +151,13 @@ class MetadataConfig:
 class MonetizationConfig:
     enabled: bool = True
     rules_path: str = "data/monetization_rules.yaml"
+    # Audio fingerprinting needs the external fpcalc/Chromaprint binary, so it
+    # is opt-in (disabled by default) like diarization/audio_energy - the
+    # base install must work without it (fail-open).
+    audio_fingerprint_enabled: bool = False
+    # AcoustID network lookup is the only network egress this feature can
+    # add; off by default to preserve the project's local-first default.
+    enable_lookup: bool = False
 
 
 @dataclasses.dataclass
