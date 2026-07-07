@@ -14,9 +14,9 @@
 
 ### STYLE — Creator Style/Naming Profile
 
-- [ ] **STYLE-01**: Pipeline reads creator's historical uploads via existing `scripts/youtube_analytics.py`
-- [ ] **STYLE-02**: Derives few-shot naming/moment-selection examples from that history (no fine-tuning — dataset too small, and fine-tuning would violate the project's no-persistent-service architecture)
-- [ ] **STYLE-03**: Style profile output stored in gitignored cache; never committed with raw titles/stats (same discipline as existing `youtube_analytics.py` cache)
+- [x] **STYLE-01**: Pipeline reads creator's historical uploads via existing `scripts/youtube_analytics.py`
+- [x] **STYLE-02**: Derives few-shot naming/moment-selection examples from that history (no fine-tuning — dataset too small, and fine-tuning would violate the project's no-persistent-service architecture)
+- [x] **STYLE-03**: Style profile output stored in gitignored cache; never committed with raw titles/stats (same discipline as existing `youtube_analytics.py` cache)
 
 ### TAGS — LLM Title/Tag Generation
 
@@ -75,9 +75,9 @@
 | MONET-02 | Phase 1 | Complete |
 | MONET-03 | Phase 1 | Complete |
 | MONET-04 | Phase 1 | Complete |
-| STYLE-01 | Phase 1 | Pending |
-| STYLE-02 | Phase 1 | Pending |
-| STYLE-03 | Phase 1 | Pending |
+| STYLE-01 | Phase 1 | Complete |
+| STYLE-02 | Phase 1 | Complete |
+| STYLE-03 | Phase 1 | Complete |
 | TAGS-01 | Phase 2 | Pending |
 | TAGS-02 | Phase 2 | Pending |
 | TAGS-03 | Phase 2 | Pending |
