@@ -1,0 +1,59 @@
+# Per-platform monetization-risk ruleset (advisory only — never a publish gate).
+#
+# This file is the single source of truth for keyword/topic risk scoring in
+# scripts/monetization_risk.py. Edit it freely when a platform's ad-suitability
+# or community-guidelines wording changes — the scorer never hardcodes these
+# categories/keywords in Python.
+#
+# `updated` is a manual date stamp: bump it whenever you actually re-check the
+# categories/keywords below against the platform's current guidelines. The
+# scorer copies this date verbatim into every flag's `last_checked` field so a
+# stale ruleset is visible to the creator, not silently presented as current.
+updated: "2026-07-07"
+
+# Each platform lists its own category -> {keywords, severity, confidence}
+# table. Coverage deliberately differs per platform (a topic YouTube treats as
+# ad-unfriendly may not be a TikTok Community Guidelines concern, and vice
+# versa) so the same transcript can score differently per platform.
+#
+# severity: none | low | medium | high (used to pick the overall risk_level)
+# confidence: how sure this heuristic keyword match is a real signal, not a
+#             guarantee the platform will act on it — always advisory.
+
+youtube:
+  gambling:
+    keywords: ["ставки на спорт", "казино", "рулетка на деньги", "промокод на ставки"]
+    severity: medium
+    confidence: medium
+  regulated_goods:
+    keywords: ["продажа алкоголя", "продажа сигарет", "рецептурные препараты"]
+    severity: medium
+    confidence: medium
+  hate_speech:
+    keywords: ["разжигание ненависти"]
+    severity: high
+    confidence: low
+
+tiktok:
+  gambling:
+    keywords: ["ставки на спорт", "казино", "рулетка на деньги", "промокод на ставки"]
+    severity: high
+    confidence: medium
+  hate_speech:
+    keywords: ["разжигание ненависти"]
+    severity: high
+    confidence: low
+  dangerous_acts:
+    keywords: ["опасный трюк без страховки"]
+    severity: medium
+    confidence: low
+
+instagram:
+  regulated_goods:
+    keywords: ["продажа алкоголя", "продажа сигарет", "рецептурные препараты"]
+    severity: medium
+    confidence: medium
+  hate_speech:
+    keywords: ["разжигание ненависти"]
+    severity: high
+    confidence: low
