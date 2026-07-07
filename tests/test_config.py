@@ -724,3 +724,30 @@ def test_load_config_monetization_custom_values_round_trip(tmp_path):
 
     assert config.monetization.enabled is False
     assert config.monetization.rules_path == "data/custom_rules.yaml"
+
+
+def test_load_config_monetization_audio_fingerprint_defaults_disabled(tmp_path):
+    path = write_config(tmp_path, 'input_dir: "F:/in"\noutput_dir: "F:/out"\n')
+
+    config = load_config(path)
+
+    assert config.monetization.audio_fingerprint_enabled is False
+    assert config.monetization.enable_lookup is False
+
+
+def test_load_config_monetization_audio_fingerprint_custom_values_round_trip(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        monetization:
+          audio_fingerprint_enabled: true
+          enable_lookup: true
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.monetization.audio_fingerprint_enabled is True
+    assert config.monetization.enable_lookup is True

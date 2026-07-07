@@ -2,6 +2,7 @@ import subprocess
 
 from scripts.setup import (
     check_ffmpeg,
+    check_fpcalc,
     check_gpu,
     check_python_deps,
     install_ffmpeg,
@@ -17,6 +18,16 @@ def test_check_ffmpeg_found(monkeypatch):
 def test_check_ffmpeg_missing(monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: None)
     assert check_ffmpeg() is False
+
+
+def test_check_fpcalc_found(monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda name: "C:/chromaprint/fpcalc.exe")
+    assert check_fpcalc() is True
+
+
+def test_check_fpcalc_missing(monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    assert check_fpcalc() is False
 
 
 def test_check_gpu_returns_cuda_when_nvidia_smi_succeeds():
