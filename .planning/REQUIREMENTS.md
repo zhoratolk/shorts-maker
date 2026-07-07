@@ -7,7 +7,7 @@
 
 ### MONET — Monetization-Risk Flagging
 
-- [ ] **MONET-01**: Pipeline flags known-copyrighted audio in a clip via local fingerprinting (Chromaprint/pyacoustid) in clip metadata
+- [x] **MONET-01**: Pipeline flags known-copyrighted audio in a clip via local fingerprinting (Chromaprint/pyacoustid) in clip metadata
 - [x] **MONET-02**: Pipeline flags known demonetization-risk topics/keywords per platform (gambling, hate speech, etc.) as advisory metadata, deterministic rule-tier only — no LLM-nuance tier in v1
 - [x] **MONET-03**: Every flag carries a confidence level and last-checked-date; flags are advisory only, never block export
 - [x] **MONET-04**: Ruleset covers YouTube Shorts, TikTok, and Instagram Reels separately (rules differ per platform)
@@ -71,7 +71,7 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MONET-01 | Phase 1 | Pending |
+| MONET-01 | Phase 1 | Complete |
 | MONET-02 | Phase 1 | Complete |
 | MONET-03 | Phase 1 | Complete |
 | MONET-04 | Phase 1 | Complete |

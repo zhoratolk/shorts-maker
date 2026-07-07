@@ -13,7 +13,7 @@ This milestone adds six capabilities on top of the existing local shorts-cutting
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Monetization-Risk Flagging & Creator Style Profile** - Clips carry advisory per-platform monetization-risk flags, and a style profile learned from the creator's own upload history is ready for later phases to consume
+- [x] **Phase 1: Monetization-Risk Flagging & Creator Style Profile** - Clips carry advisory per-platform monetization-risk flags, and a style profile learned from the creator's own upload history is ready for later phases to consume (completed 2026-07-07)
 - [ ] **Phase 2: LLM Title/Tag Generation** - Pipeline proposes ready-to-use titles and tags per clip, grounded in the creator's own voice via few-shot style-profile examples
 - [ ] **Phase 3: YouTube Scheduled Auto-Publish** - Finished shorts can be queued and auto-published to YouTube on a schedule, safely (dry-run default, pause/kill, no duplicate posts)
 - [ ] **Phase 4: Context-Driven Transitions** - Clip boundaries get a transition chosen from scene/audio context (not just a fixed cut/punch-zoom) when stitching multiple segments together
@@ -35,7 +35,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Running the style-profile step against the creator's real upload history (via existing `scripts/youtube_analytics.py`) produces a structured, gitignored style-profile artifact containing concrete few-shot naming/moment-selection examples (not prose summaries)
   4. No raw per-channel titles/stats/history ever appear in a committed file — the style-profile cache lives only in the existing gitignored cache location
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 **Wave 1**
 
 - [x] 01-01-PLAN.md — Deterministic per-platform keyword/topic monetization-risk scorer (rule-table YAML, advisory flags with confidence + last-checked date, rendered into metadata) [MONET-02, MONET-03, MONET-04] (wave 1)
@@ -43,7 +43,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-02-PLAN.md — Local Chromaprint/pyacoustid audio fingerprinting → copyrighted-audio flag merged into the risk dict, fail-open on missing binary [MONET-01, MONET-03] (wave 2)
+- [x] 01-02-PLAN.md — Local Chromaprint/pyacoustid audio fingerprinting → copyrighted-audio flag merged into the risk dict, fail-open on missing binary [MONET-01, MONET-03] (wave 2)
 
 ### Phase 2: LLM Title/Tag Generation
 
@@ -120,7 +120,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Monetization-Risk Flagging & Creator Style Profile | 2/3 | In Progress|  |
+| 1. Monetization-Risk Flagging & Creator Style Profile | 3/3 | Complete   | 2026-07-07 |
 | 2. LLM Title/Tag Generation | 0/TBD | Not started | - |
 | 3. YouTube Scheduled Auto-Publish | 0/TBD | Not started | - |
 | 4. Context-Driven Transitions | 0/TBD | Not started | - |
