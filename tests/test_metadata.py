@@ -44,3 +44,58 @@ def test_write_metadata_file_writes_rendered_text(tmp_path):
     content = path.read_text(encoding="utf-8")
     assert "=== INSTAGRAM ===" in content
     assert "caption text" in content
+
+
+def test_render_metadata_text_renders_advisory_risk_subblock_when_present():
+    text = render_metadata_text({
+        "youtube": {
+            "title": "Boss Rage Quit",
+            "description": "He lost it.",
+            "tags": ["gaming", "funny"],
+            "risk": {
+                "platform": "youtube",
+                "risk_level": "medium",
+                "flags": ["gambling"],
+                "flagged_spans": [{"start": 1, "end": 2, "reason": "gambling", "matched_text": "казино"}],
+                "confidence": "medium",
+                "last_checked": "2026-07-07",
+            },
+        },
+    })
+
+    assert "Monetization risk (advisory)" in text
+    assert "medium" in text
+    assert "gambling" in text
+    assert "2026-07-07" in text
+    # Never framed as a certainty / gate.
+    assert "will be demonetized" not in text.lower()
+
+
+def test_render_metadata_text_unchanged_when_risk_absent():
+    with_risk_fields = {
+        "tiktok": {"caption": "He rage quit! #gaming #funny"},
+    }
+    text = render_metadata_text(with_risk_fields)
+
+    assert "Monetization risk" not in text
+    assert "=== TIKTOK ===" in text
+    assert "He rage quit! #gaming #funny" in text
+
+
+def test_render_metadata_text_risk_subblock_none_level_still_renders():
+    text = render_metadata_text({
+        "instagram": {
+            "caption": "caption text",
+            "risk": {
+                "platform": "instagram",
+                "risk_level": "none",
+                "flags": [],
+                "flagged_spans": [],
+                "confidence": "low",
+                "last_checked": "2026-07-07",
+            },
+        },
+    })
+
+    assert "Monetization risk (advisory)" in text
+    assert "none" in text

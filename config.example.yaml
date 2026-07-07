@@ -96,6 +96,19 @@ metadata:
   platforms: [youtube, tiktok, instagram]   # youtube | tiktok | instagram
   language: auto        # auto = same language as the transcript
 
+monetization:
+  # Per-platform monetization-risk flagging (scripts/monetization_risk.py),
+  # scored from the transcript against data/monetization_rules.yaml (an
+  # editable, date-stamped ruleset - never hardcoded in Python). Flags are
+  # ADVISORY ONLY: a heuristic keyword/topic hint for the creator to review
+  # before publishing, never a gate that blocks or auto-edits a clip, and
+  # never a guarantee of what a platform will actually do with the clip.
+  enabled: true
+  # Path to the ruleset YAML. Edit that file directly to add/adjust
+  # categories, keywords, severities, or per-platform coverage - no code
+  # change needed.
+  rules_path: data/monetization_rules.yaml
+
 facecam:
   # Set true if the recording has a webcam or VTuber avatar overlay.
   enabled: false

@@ -697,3 +697,30 @@ def test_load_config_analysis_hype_phrases_overridable(tmp_path):
     config = load_config(path)
 
     assert config.analysis.hype_phrases == ["кастом"]
+
+
+def test_load_config_monetization_defaults(tmp_path):
+    path = write_config(tmp_path, 'input_dir: "F:/in"\noutput_dir: "F:/out"\n')
+
+    config = load_config(path)
+
+    assert config.monetization.enabled is True
+    assert config.monetization.rules_path == "data/monetization_rules.yaml"
+
+
+def test_load_config_monetization_custom_values_round_trip(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        monetization:
+          enabled: false
+          rules_path: "data/custom_rules.yaml"
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.monetization.enabled is False
+    assert config.monetization.rules_path == "data/custom_rules.yaml"

@@ -9,6 +9,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scripts.config import METADATA_PLATFORMS
 
 
+def render_risk_subblock(risk: dict) -> str:
+    """Renders the advisory monetization-risk sub-block for one platform.
+
+    Framed explicitly as advisory ("possible risk factors detected"), never
+    as a certainty like "will be demonetized" - the ruleset can be wrong in
+    either direction (see .planning/research/PITFALLS.md Pitfall 2). The
+    last-checked date makes ruleset staleness visible to the creator.
+    """
+    flags = ", ".join(risk.get("flags") or []) or "none"
+    return (
+        "Monetization risk (advisory):\n"
+        f"  Level: {risk.get('risk_level', 'none')}\n"
+        f"  Flags: {flags}\n"
+        f"  Last checked: {risk.get('last_checked', 'unknown')}"
+    )
+
+
 def render_metadata_text(platforms_data: dict) -> str:
     unknown = set(platforms_data) - METADATA_PLATFORMS
     if unknown:
@@ -26,6 +43,8 @@ def render_metadata_text(platforms_data: dict) -> str:
             )
         else:
             body = fields["caption"]
+        if "risk" in fields:
+            body = f"{body}\n\n{render_risk_subblock(fields['risk'])}"
         sections.append(f"{header}\n{body}")
 
     return "\n\n".join(sections) + "\n"

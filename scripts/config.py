@@ -148,6 +148,12 @@ class MetadataConfig:
 
 
 @dataclasses.dataclass
+class MonetizationConfig:
+    enabled: bool = True
+    rules_path: str = "data/monetization_rules.yaml"
+
+
+@dataclasses.dataclass
 class Config:
     input_dir: str
     output_dir: str
@@ -161,6 +167,7 @@ class Config:
     diarization: DiarizationConfig = dataclasses.field(default_factory=DiarizationConfig)
     audio_energy: AudioEnergyConfig = dataclasses.field(default_factory=AudioEnergyConfig)
     metadata: MetadataConfig = dataclasses.field(default_factory=MetadataConfig)
+    monetization: MonetizationConfig = dataclasses.field(default_factory=MonetizationConfig)
     audio: AudioConfig = dataclasses.field(default_factory=AudioConfig)
     effects: EffectsConfig = dataclasses.field(default_factory=EffectsConfig)
     jumpcuts: JumpcutsConfig = dataclasses.field(default_factory=JumpcutsConfig)
@@ -196,6 +203,7 @@ def load_config(path: str) -> Config:
         diarization=_build(DiarizationConfig, data.get("diarization", {}), "diarization"),
         audio_energy=_build(AudioEnergyConfig, data.get("audio_energy", {}), "audio_energy"),
         metadata=_build(MetadataConfig, data.get("metadata", {}), "metadata"),
+        monetization=_build(MonetizationConfig, data.get("monetization", {}), "monetization"),
         audio=_build(AudioConfig, data.get("audio", {}), "audio"),
         effects=_build(EffectsConfig, data.get("effects", {}), "effects"),
         jumpcuts=_build(JumpcutsConfig, data.get("jumpcuts", {}), "jumpcuts"),
