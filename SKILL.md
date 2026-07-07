@@ -1,6 +1,6 @@
 ---
 name: make-shorts
-description: Turn a long gameplay/stream recording into vertical (9:16) short clips using local Whisper transcription and semantic moment-finding. No watermarks, no time limits. Invoke as /make-shorts <path-to-video>.
+description: Turn a long gameplay/stream recording into vertical (9:16) short clips using local Whisper transcription and semantic moment-finding. No watermarks, no time limits. Use when the user asks to cut/clip a video or stream recording into shorts, make vertical clips from footage, find viral/highlight moments in a recording, or references this repo's clip pipeline — not just on literal "/make-shorts". Invoke as /make-shorts <path-to-video>.
 ---
 
 # make-shorts
