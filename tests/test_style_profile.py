@@ -87,7 +87,7 @@ def test_derive_profile_empty_input_fails_open():
     assert profile["moment_examples"] == []
 
 
-def test_write_profile_default_target_is_under_gitignored_work_dir():
+def test_privacy_write_profile_default_target_is_under_gitignored_work_dir():
     from pathlib import Path
 
     from scripts.style_profile import write_profile

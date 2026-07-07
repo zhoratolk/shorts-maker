@@ -1,4 +1,7 @@
 work/
+# work/_profile/ specifically holds style_profile.py's output, derived from
+# real per-channel titles/stats (youtube_analytics.py cache) - never track it,
+# even though work/ above already covers it (explicit privacy boundary).
 __pycache__/
 *.pyc
 .venv/
