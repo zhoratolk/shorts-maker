@@ -66,6 +66,23 @@ def derive_profile(records: list[dict]) -> dict:
     }
 
 
+def format_naming_examples_block(profile: dict, limit: int = TOP_N) -> str:
+    """Renders a profile's naming_examples as a fixed, ranked few-shot text
+    block for prompt injection (TAGS-03) - one numbered line per example,
+    highest performance signal first, in the shape `{i}. "{title}" (signal:
+    {signal})`. Fails open to the empty string when naming_examples is
+    missing or empty - the caller (SKILL.md step 5) checks for an empty
+    string, it must never raise on a missing key or empty list."""
+    examples = profile.get("naming_examples") or []
+    if not examples:
+        return ""
+    lines = [
+        f'{i}. "{example["title"]}" (signal: {example["signal"]})'
+        for i, example in enumerate(examples[:limit], start=1)
+    ]
+    return "\n".join(lines)
+
+
 def write_profile(profile: dict, out_path: str | None = None) -> str:
     """Writes the profile as JSON to a gitignored cache location, defaulting
     to work/_profile/style_profile.json (STYLE-03) - this artifact contains
