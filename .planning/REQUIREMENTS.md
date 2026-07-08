@@ -78,8 +78,8 @@
 | STYLE-01 | Phase 1 | Complete |
 | STYLE-02 | Phase 1 | Complete |
 | STYLE-03 | Phase 1 | Complete |
-| TAGS-01 | Phase 2 | Pending |
-| TAGS-02 | Phase 2 | Pending |
+| TAGS-01 | Phase 2 | Reframed — satisfied via orchestrator session, no separate API call (D-01/D-02) |
+| TAGS-02 | Phase 2 | Deferred to Phase 6 (D-03) — not applicable to Phase 2's no-separate-API architecture |
 | TAGS-03 | Phase 2 | Complete |
 | PUB-01 | Phase 3 | Pending |
 | PUB-02 | Phase 3 | Pending |
@@ -94,6 +94,8 @@
 | COMP-03 | Phase 5 | Pending |
 | PUB-06 | Phase 6 | Pending |
 | PUB-07 | Phase 6 | Pending |
+
+> TAGS-01/TAGS-02 status reflects a deliberate architectural reframe confirmed during `/gsd-discuss-phase 2` (human sign-off) — see `.planning/phases/02-llm-title-tag-generation/02-CONTEXT.md` D-01/D-02/D-03 for the full rationale. This is not an oversight or a silently dropped requirement.
 
 **Coverage:**
 
