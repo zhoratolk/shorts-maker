@@ -5,16 +5,16 @@ milestone_name: milestone
 current_phase: 3
 current_phase_name: YouTube Scheduled Auto-Publish
 status: executing
-stopped_at: "03-03 Task 3 checkpoint: awaiting human-check live kill-body verification (Assumption A1). Tasks 1-2 (PUB-04/PUB-05 code) complete and committed."
-last_updated: "2026-07-08T15:49:23.396Z"
+stopped_at: Completed 03-04-PLAN.md
+last_updated: "2026-07-08T15:58:54.937Z"
 last_activity: 2026-07-08
 last_activity_desc: Plan 03-02 complete (upload+schedule path, PUB-02/PUB-03/PUB-05)
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 9
-  completed_plans: 8
-  percent: 33
+  completed_plans: 9
+  percent: 50
 ---
 
 # Project State
@@ -63,6 +63,7 @@ Progress: [███░░░░░░░] 17% (1/6 phases)
 | Phase 03 P01 | 120min | 3 tasks | 4 files |
 | Phase 03 P02 | 1h | 3 tasks | 3 files |
 | Phase 03-youtube-scheduled-auto-publish P03 | 35min | 3 tasks | 3 files |
+| Phase 03-youtube-scheduled-auto-publish P04 | 40min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -94,6 +95,8 @@ Recent decisions affecting current work:
 - [Phase ?]: kill_item treats UPLOADING-with-no-video_id as not-yet-uploaded (local-only KILLED flip), same as QUEUED/PAUSED — An in-flight upload that hasn't produced a video_id yet has nothing on YouTube to revert
 - [Phase 03-03]: reconcile_uploading fetches descriptions via a dedicated videos.list(part=snippet) call rather than modifying youtube_analytics.py's list_uploaded_videos — Keeps youtube_analytics.py read-only-reuse scope untouched; that helper's playlistItems response doesn't carry description
 - [Phase 03-03]: reconcile_all_uploading skips an UPLOADING entry that already has a video_id recorded — That is not the stuck-mid-upload-no-record case PUB-05 targets; touching it risks clobbering a legitimate in-progress multi-chunk upload
+- [Phase 03-youtube-scheduled-auto-publish]: Notification-log marker is a persisted line-count in a sibling .read file, not a byte offset — Simpler to reason about with splitlines, no multi-byte UTF-8 boundary risk; log is always read in full and re-diffed, never seeked into
+- [Phase 03-youtube-scheduled-auto-publish]: check and now both call one shared upload_one helper wrapping upload_and_schedule — Structurally guarantees the two trigger paths can never diverge onto separate publish logic (D-05)
 
 ### Pending Todos
 
@@ -123,6 +126,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-08T15:49:23.386Z
-Stopped at: 03-03 Task 3 checkpoint: awaiting human-check live kill-body verification (Assumption A1). Tasks 1-2 (PUB-04/PUB-05 code) complete and committed.
-Resume file: .planning/phases/03-youtube-scheduled-auto-publish/03-03-SUMMARY.md
+Last session: 2026-07-08T15:58:54.927Z
+Stopped at: Completed 03-04-PLAN.md
+Resume file: None
