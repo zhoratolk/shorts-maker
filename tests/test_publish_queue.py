@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +11,7 @@ from scripts.publish_queue import (
     UPLOADING,
     UPLOAD_SCOPE,
     VALID_STATUSES,
+    append_notification,
     build_insert_body,
     cancel_scheduled_release,
     collect_scheduled_slots,
@@ -18,6 +20,7 @@ from scripts.publish_queue import (
     load_queue,
     next_free_slot,
     pause_item,
+    read_unread_notifications,
     reconcile_all_uploading,
     reconcile_uploading,
     resume_item,
@@ -800,3 +803,89 @@ def test_select_next_due_reconciles_uploading_entries_before_selecting_new_item(
     assert queue["entries"][0]["video_id"] == "vid_match"
     assert next_entry["clip_id"] == "clip-2"
     assert service.insert_calls == []
+
+
+# --- Task 1: notification log - append + read-unread with a marker (D-06) --
+
+
+def test_append_notification_creates_parent_dirs_and_writes_a_line(tmp_path):
+    log_path = str(tmp_path / "_publish" / "notifications.log")
+
+    append_notification("залил 1, выйдет в 09:00 UTC", log_path)
+
+    assert Path(log_path).exists()
+    content = Path(log_path).read_text(encoding="utf-8")
+    assert "залил 1, выйдет в 09:00 UTC" in content
+
+
+def test_append_notification_is_append_only_never_rewrites_existing_lines(tmp_path):
+    log_path = str(tmp_path / "notifications.log")
+
+    append_notification("first line", log_path)
+    append_notification("second line", log_path)
+
+    content = Path(log_path).read_text(encoding="utf-8")
+    lines = [line for line in content.splitlines() if line.strip()]
+    assert len(lines) == 2
+    assert "first line" in lines[0]
+    assert "second line" in lines[1]
+
+
+def test_read_unread_notifications_returns_new_lines_and_advances_marker(tmp_path):
+    log_path = str(tmp_path / "notifications.log")
+    marker_path = str(tmp_path / "notifications.read")
+
+    append_notification("залил 1, выйдет в 09:00 UTC", log_path)
+    append_notification("залил 2, выйдет в 15:00 UTC", log_path)
+
+    unread = read_unread_notifications(log_path, marker_path)
+
+    assert len(unread) == 2
+    assert "залил 1, выйдет в 09:00 UTC" in unread[0]
+    assert "залил 2, выйдет в 15:00 UTC" in unread[1]
+
+
+def test_read_unread_notifications_second_read_returns_empty_no_double_report(tmp_path):
+    log_path = str(tmp_path / "notifications.log")
+    marker_path = str(tmp_path / "notifications.read")
+
+    append_notification("залил 1, выйдет в 09:00 UTC", log_path)
+
+    first_read = read_unread_notifications(log_path, marker_path)
+    second_read = read_unread_notifications(log_path, marker_path)
+
+    assert len(first_read) == 1
+    assert second_read == []
+
+
+def test_read_unread_notifications_only_returns_lines_appended_since_last_read(tmp_path):
+    log_path = str(tmp_path / "notifications.log")
+    marker_path = str(tmp_path / "notifications.read")
+
+    append_notification("залил 1, выйдет в 09:00 UTC", log_path)
+    read_unread_notifications(log_path, marker_path)
+
+    append_notification("залил 2, выйдет в 15:00 UTC", log_path)
+    second_unread = read_unread_notifications(log_path, marker_path)
+
+    assert len(second_unread) == 1
+    assert "залил 2, выйдет в 15:00 UTC" in second_unread[0]
+
+
+def test_read_unread_notifications_missing_log_returns_empty(tmp_path):
+    log_path = str(tmp_path / "does_not_exist.log")
+    marker_path = str(tmp_path / "notifications.read")
+
+    assert read_unread_notifications(log_path, marker_path) == []
+
+
+def test_append_notification_success_line_contains_seq_and_hhmm(tmp_path):
+    log_path = str(tmp_path / "notifications.log")
+
+    append_notification("залил 3, выйдет в 20:00 UTC", log_path)
+
+    unread = read_unread_notifications(log_path, str(tmp_path / "notifications.read"))
+    assert len(unread) == 1
+    line = unread[0]
+    assert "3" in line
+    assert "20:00" in line
