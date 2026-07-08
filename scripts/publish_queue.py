@@ -471,6 +471,67 @@ def reconcile_uploading(
     return entry
 
 
+# --- Notification log (D-06 session-bridge) --------------------------------
+
+# The marker is a line-count, not a byte offset. A byte offset would be
+# equally valid, but a line-count is simpler to reason about when reading the
+# log back with .readlines() (no need to worry about encoding-dependent byte
+# boundaries splitting a multi-byte UTF-8 character), and this log is always
+# read in full then re-diffed rather than seeked-into, so there's no
+# performance reason to prefer a byte offset here. Persisted alongside the
+# log (not embedded in it) so re-reading the log file itself is never
+# ambiguous about what "already read" means (D-06: this is the durable
+# handoff between a session-less Task Scheduler run and the next interactive
+# Claude Code session).
+DEFAULT_NOTIFICATIONS_MARKER_PATH = "work/_publish/notifications.read"
+
+
+def append_notification(text: str, path: str = DEFAULT_NOTIFICATIONS_PATH) -> None:
+    """Appends one UTC-timestamped line to the notification log, creating
+    parent directories as needed. Append-only - never truncates or rewrites
+    existing lines, so a session-less Task Scheduler run's record survives
+    even if nobody reads it right away (D-06).
+    """
+    log_file = Path(path)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).isoformat()
+    with log_file.open("a", encoding="utf-8") as handle:
+        handle.write(f"{timestamp} {text}\n")
+
+
+def read_unread_notifications(
+    path: str = DEFAULT_NOTIFICATIONS_PATH,
+    marker_path: str = DEFAULT_NOTIFICATIONS_MARKER_PATH,
+) -> list[str]:
+    """Returns the notification lines appended since the last read, then
+    advances the last-read marker (a persisted line count) so a second call
+    in a row returns [] (no double-report, D-06).
+
+    Robust to the log being appended between reads: the marker only ever
+    records "how many lines had been read as of the last call", so lines
+    appended after that point are always picked up on the next read,
+    regardless of how much time passed in between.
+    """
+    log_file = Path(path)
+    if not log_file.exists():
+        return []
+
+    lines = log_file.read_text(encoding="utf-8").splitlines()
+
+    marker_file = Path(marker_path)
+    already_read = 0
+    if marker_file.exists():
+        marker_text = marker_file.read_text(encoding="utf-8").strip()
+        already_read = int(marker_text) if marker_text else 0
+
+    unread = lines[already_read:]
+
+    marker_file.parent.mkdir(parents=True, exist_ok=True)
+    marker_file.write_text(str(len(lines)), encoding="utf-8")
+
+    return unread
+
+
 def reconcile_all_uploading(queue: dict[str, Any], service_factory) -> None:
     """Reconciles every UPLOADING entry in the queue before any new
     selection happens. Wired as the mandatory first step of the
