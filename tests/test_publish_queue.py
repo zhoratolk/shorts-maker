@@ -334,9 +334,13 @@ def test_dry_run_makes_zero_calls_and_does_not_advance_status(tmp_path):
 
 def test_upload_and_schedule_enabled_drives_status_transitions_and_body(tmp_path):
     queue_path = str(tmp_path / "queue.json")
+    # MediaFileUpload opens the file at construction time, so this must be a
+    # real (if empty) file on disk rather than a bare string path.
+    video_path = tmp_path / "clip1.mp4"
+    video_path.write_bytes(b"")
     queue = load_queue(queue_path)
     entry = enqueue(
-        queue, clip_id="clip-1", video_path="clip1.mp4", metadata_path="clip1.txt",
+        queue, clip_id="clip-1", video_path=str(video_path), metadata_path="clip1.txt",
         title="Title 1", description="Desc 1", tags=["a"],
     )
     config = FakePublishConfig(enabled=True)

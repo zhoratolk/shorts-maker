@@ -30,6 +30,19 @@ VALID_STATUSES = frozenset({QUEUED, UPLOADING, SCHEDULED, PUBLISHED, KILLED, PAU
 DEFAULT_QUEUE_PATH = "work/_publish/queue.json"
 DEFAULT_NOTIFICATIONS_PATH = "work/_publish/notifications.log"
 
+# Narrowest scope that permits videos.insert/videos.update - deliberately
+# NOT the broader plain `youtube` or `youtubepartner` scopes (D-08/D-09:
+# smaller blast radius if this token leaks, separate from the read-only
+# token.json used by youtube_analytics.py).
+UPLOAD_SCOPE = "https://www.googleapis.com/auth/youtube.upload"
+
+# YouTube's own field-length limits (V5 input validation, 03-RESEARCH
+# Security Domain) - a violation fails this one queue item, not the whole
+# run.
+MAX_TITLE_LENGTH = 100
+MAX_DESCRIPTION_LENGTH = 5000
+MAX_TAGS_TOTAL_LENGTH = 500
+
 
 def load_queue(path: str = DEFAULT_QUEUE_PATH) -> dict[str, Any]:
     """Loads the queue manifest, fail-open: a missing file yields an empty
@@ -139,3 +152,131 @@ def next_free_slot(
             if candidate > now and candidate_iso not in already_scheduled:
                 return candidate_iso
         candidate_day += timedelta(days=1)
+
+
+def build_insert_body(
+    title: str, description: str, tags: list[str], publish_at: str, seq: int
+) -> dict[str, Any]:
+    """Builds the exact videos.insert request body: snippet{title,
+    description, tags} + status{privacyStatus:"private", publishAt,
+    selfDeclaredMadeForKids:False}. privacyStatus is hardcoded, never
+    derived from mutable input, so a bad manifest field can't force an
+    immediate public post (T-03-06).
+
+    Embeds a stable machine-readable marker for the local seq into the
+    description (a trailing queue-id tag line) so Plan 03's reconciliation
+    can match a YouTube video back to a local queue entry (Pitfall 3).
+
+    Raises ValueError if title/description/tags exceed YouTube's field
+    limits - a violation must fail only this item, not the whole run
+    (V5 input validation, 03-RESEARCH Security Domain).
+    """
+    if len(title) > MAX_TITLE_LENGTH:
+        raise ValueError(
+            f"title exceeds YouTube's {MAX_TITLE_LENGTH}-char limit ({len(title)} chars)"
+        )
+    if len(description) > MAX_DESCRIPTION_LENGTH:
+        raise ValueError(
+            f"description exceeds YouTube's {MAX_DESCRIPTION_LENGTH}-char limit ({len(description)} chars)"
+        )
+    tags_total_length = sum(len(tag) for tag in tags)
+    if tags_total_length > MAX_TAGS_TOTAL_LENGTH:
+        raise ValueError(
+            f"combined tags length exceeds YouTube's {MAX_TAGS_TOTAL_LENGTH}-char limit "
+            f"({tags_total_length} chars)"
+        )
+
+    marker = f"[queue-id: {seq}]"
+    full_description = f"{description}\n\n{marker}"
+
+    return {
+        "snippet": {
+            "title": title,
+            "description": full_description,
+            "tags": tags,
+        },
+        "status": {
+            "privacyStatus": "private",
+            "publishAt": publish_at,
+            "selfDeclaredMadeForKids": False,
+        },
+    }
+
+
+def upload_and_schedule(
+    queue: dict[str, Any],
+    entry: dict[str, Any],
+    service_factory,
+    config,
+    now: datetime | None = None,
+    queue_path: str = DEFAULT_QUEUE_PATH,
+) -> dict[str, Any] | str:
+    """Orchestrates the dry-run gate -> write-ahead uploading -> insert ->
+    record scheduled flow for one queue entry.
+
+    If config.publish.enabled is False, this is the VERY FIRST thing
+    checked - before service_factory is ever called - so dry-run makes NO
+    credential load and NO network call (PUB-03, T-03-05). Returns a
+    sentinel {"dry_run": True} and leaves entry["status"] untouched.
+
+    If enabled, drives: (a) computes next_free_slot from the fixed daily
+    grid against already-scheduled entries in `queue`, (b) sets
+    entry["status"]=UPLOADING + entry["publish_at"] and persists via
+    save_queue BEFORE any insert call (write-ahead - PUB-05, T-03-07: a
+    crash mid-upload leaves a durable trace instead of a silent duplicate),
+    (c) builds the media upload and drives videos().insert(...).next_chunk()
+    to completion, (d) on a returned video_id sets status=SCHEDULED +
+    video_id and persists again, returning the video_id.
+
+    service_factory is an injected callable returning an authenticated
+    youtube service - tests pass a fake without OAuth. The real factory
+    (used by the CLI) calls
+    load_credentials(client_secret_path, upload_token_path, [UPLOAD_SCOPE])
+    then build("youtube", "v3", ...).
+
+    NOTE: Assumption A1 (kill-body semantics for videos.update) is
+    empirically verified in Plan 03, not here - this function only ever
+    inserts, never updates/cancels.
+    """
+    if not config.enabled:
+        return {"dry_run": True}
+
+    # Deferred import - keeps the module import-safe with stdlib only when
+    # dry-run/disabled (project's optional-dependency convention); only
+    # reached once we're committed to a live upload.
+    from googleapiclient.http import MediaFileUpload
+
+    already_scheduled = collect_scheduled_slots(queue)
+    publish_at = next_free_slot(config.daily_slots_utc, already_scheduled, now=now)
+
+    # Write-ahead: persist UPLOADING before any network call, so a crash
+    # between this save and .execute() returning leaves a durable trace
+    # (PUB-05) instead of a silent re-upload on the next check.
+    entry["status"] = UPLOADING
+    entry["publish_at"] = publish_at
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    save_queue(queue, queue_path)
+
+    body = build_insert_body(
+        title=entry["title"],
+        description=entry["description"],
+        tags=entry["tags"],
+        publish_at=publish_at,
+        seq=entry["seq"],
+    )
+
+    service = service_factory()
+    media = MediaFileUpload(entry["video_path"], chunksize=-1, resumable=True)
+    request = service.videos().insert(part="snippet,status", body=body, media_body=media)
+
+    response = None
+    while response is None:
+        _status, response = request.next_chunk()
+
+    video_id = response["id"]
+    entry["status"] = SCHEDULED
+    entry["video_id"] = video_id
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    save_queue(queue, queue_path)
+
+    return video_id
