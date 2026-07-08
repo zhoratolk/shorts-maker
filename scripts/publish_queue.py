@@ -280,3 +280,114 @@ def upload_and_schedule(
     save_queue(queue, queue_path)
 
     return video_id
+
+
+# --- Pause/kill (PUB-04) ----------------------------------------------------
+
+# Statuses a kill treats as "not yet uploaded" - no video exists on YouTube
+# yet (or, for UPLOADING, no video_id has been recorded yet either), so a
+# kill of these is purely local: no API call, just flip the manifest.
+_NOT_YET_UPLOADED_STATUSES = frozenset({QUEUED, PAUSED, UPLOADING})
+
+
+def _find_entry(queue: dict[str, Any], clip_id: str) -> dict[str, Any]:
+    for entry in queue["entries"]:
+        if entry["clip_id"] == clip_id:
+            return entry
+    raise KeyError(f"no queue entry with clip_id={clip_id!r}")
+
+
+def pause_item(queue: dict[str, Any], clip_id: str) -> dict[str, Any]:
+    """Flips a QUEUED entry to PAUSED so the next check/select_next_due
+    skips it. Only touches status/updated_at - everything else about the
+    entry (seq, video_path, etc.) is unchanged.
+    """
+    entry = _find_entry(queue, clip_id)
+    entry["status"] = PAUSED
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return entry
+
+
+def resume_item(queue: dict[str, Any], clip_id: str) -> dict[str, Any]:
+    """Flips a PAUSED entry back to QUEUED so it becomes eligible again."""
+    entry = _find_entry(queue, clip_id)
+    entry["status"] = QUEUED
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return entry
+
+
+def select_next_due(queue: dict[str, Any]) -> dict[str, Any] | None:
+    """Returns the lowest-seq QUEUED entry, or None if nothing is eligible.
+    PAUSED and KILLED entries are never returned - a paused item is never
+    picked by the periodic-check "next due item" selection (PUB-04).
+    """
+    eligible = [entry for entry in queue["entries"] if entry["status"] == QUEUED]
+    if not eligible:
+        return None
+    return min(eligible, key=lambda entry: entry["seq"])
+
+
+def cancel_scheduled_release(service, video_id: str) -> None:
+    """Reverts a scheduled-but-not-yet-public video back to plain private,
+    cancelling its pending auto-publish (D-04 API half).
+
+    Per 03-RESEARCH.md Pitfall 2: omitting publishAt from this update body
+    does NOT clear an existing schedule - the field's write path is
+    one-directional (unset -> set), not a general clear/reset toggle via
+    omission. The correct kill mechanism is to re-send privacyStatus as
+    "private" (required even though the video is already private) and
+    deliberately NOT include publishAt at all - a private video with any
+    stale publishAt simply never auto-publishes once it's confirmed private.
+    """
+    service.videos().update(
+        part="status",
+        body={"id": video_id, "status": {"privacyStatus": "private"}},
+    ).execute()
+
+
+def verify_killed(service, video_id: str) -> bool:
+    """Re-fetches videos().list(part="status", id=video_id) and returns True
+    only if privacyStatus == "private". This is the mandatory post-kill
+    check (Pitfall 2 / Assumption A1) - a kill that didn't take must be
+    caught here, not trusted from the update() call alone.
+    """
+    response = service.videos().list(part="status", id=video_id).execute()
+    items = response.get("items", [])
+    if not items:
+        return False
+    return items[0]["status"]["privacyStatus"] == "private"
+
+
+def kill_item(queue: dict[str, Any], clip_id: str, service_factory) -> dict[str, Any]:
+    """Kills a queue entry regardless of where it is in its lifecycle
+    (PUB-04):
+
+    - Not yet uploaded (status in QUEUED/PAUSED, or UPLOADING with no
+      video_id yet): local-only - flips status to KILLED, no API call,
+      service_factory is never invoked.
+    - Already SCHEDULED (has a video_id): calls cancel_scheduled_release,
+      then verify_killed, and marks KILLED ONLY when verify_killed returns
+      True. A failed verify raises RuntimeError and leaves the entry's
+      status untouched (still SCHEDULED) so a kill that didn't take is
+      surfaced loudly rather than silently trusted (Pitfall 2 / T-03-08).
+    """
+    entry = _find_entry(queue, clip_id)
+
+    if entry["status"] in _NOT_YET_UPLOADED_STATUSES and not entry.get("video_id"):
+        entry["status"] = KILLED
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return entry
+
+    service = service_factory()
+    cancel_scheduled_release(service, entry["video_id"])
+
+    if not verify_killed(service, entry["video_id"]):
+        raise RuntimeError(
+            f"kill_item: verify_killed returned False for clip_id={clip_id!r} "
+            f"video_id={entry['video_id']!r} - the revert did not take, refusing "
+            "to mark KILLED (Pitfall 2 / Assumption A1)"
+        )
+
+    entry["status"] = KILLED
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return entry
