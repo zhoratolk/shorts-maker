@@ -32,11 +32,14 @@ VALID_STATUSES = frozenset({QUEUED, UPLOADING, SCHEDULED, PUBLISHED, KILLED, PAU
 DEFAULT_QUEUE_PATH = "work/_publish/queue.json"
 DEFAULT_NOTIFICATIONS_PATH = "work/_publish/notifications.log"
 
-# Narrowest scope that permits videos.insert/videos.update - deliberately
-# NOT the broader plain `youtube` or `youtubepartner` scopes (D-08/D-09:
-# smaller blast radius if this token leaks, separate from the read-only
-# token.json used by youtube_analytics.py).
-UPLOAD_SCOPE = "https://www.googleapis.com/auth/youtube.upload"
+# D-08/D-09 originally picked the narrower `youtube.upload` scope for smaller
+# blast radius if this token leaks (separate from the read-only token.json
+# used by youtube_analytics.py). A live kill-path test (2026-07-08) proved
+# that scope insufficient: videos.update (used by cancel_scheduled_release/
+# kill_item) returns 403 insufficientPermissions under `youtube.upload` alone.
+# Without videos.update, the pause/kill safety mechanism cannot function, so
+# the scope was deliberately widened to cover it.
+UPLOAD_SCOPE = "https://www.googleapis.com/auth/youtube"
 
 # YouTube's own field-length limits (V5 input validation, 03-RESEARCH
 # Security Domain) - a violation fails this one queue item, not the whole

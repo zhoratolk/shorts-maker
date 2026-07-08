@@ -282,7 +282,7 @@ def make_entry(**overrides):
 
 
 def test_upload_scope_is_exactly_the_upload_scope_constant():
-    assert UPLOAD_SCOPE == "https://www.googleapis.com/auth/youtube.upload"
+    assert UPLOAD_SCOPE == "https://www.googleapis.com/auth/youtube"
 
 
 def test_build_insert_body_shapes_snippet_and_status():
