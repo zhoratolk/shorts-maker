@@ -94,6 +94,7 @@ def test_build_ffmpeg_command_without_subtitles():
 
     assert command == [
         "ffmpeg", "-y",
+        "-loglevel", "error",
         "-ss", "10.0",
         "-i", "in.mp4",
         "-t", "30.0",
@@ -111,7 +112,7 @@ def test_build_ffmpeg_command_with_subtitles():
         subtitles_path="work/x/subs.srt",
     )
 
-    assert command[9] == "scale=1080:608,pad=1080:1920:0:394:black,subtitles='work/x/subs.srt'"
+    assert command[11] == "scale=1080:608,pad=1080:1920:0:394:black,subtitles='work/x/subs.srt'"
 
 
 def test_ass_color_named():
@@ -148,7 +149,7 @@ def test_build_ffmpeg_command_with_subtitle_style():
         subtitle_style={"font": "Arial Black", "size": 72, "color": "white", "outline_color": "black", "position": "bottom"},
     )
 
-    assert command[9] == (
+    assert command[11] == (
         "scale=1080:608,pad=1080:1920:0:394:black,subtitles='work/x/subs.srt':"
         "force_style='FontName=Arial Black,FontSize=72,PrimaryColour=&H00FFFFFF,"
         "OutlineColour=&H00000000,BorderStyle=1,Outline=4,Shadow=2,Bold=1,"
@@ -163,9 +164,9 @@ def test_build_ffmpeg_command_with_fade_out():
         fade_seconds=0.5,
     )
 
-    assert command[9] == "crop=608:1080:656:0,scale=1080:1920,fade=t=out:st=29.5:d=0.5"
-    assert command[10] == "-af"
-    assert command[11] == "afade=t=out:st=29.5:d=0.5"
+    assert command[11] == "crop=608:1080:656:0,scale=1080:1920,fade=t=out:st=29.5:d=0.5"
+    assert command[12] == "-af"
+    assert command[13] == "afade=t=out:st=29.5:d=0.5"
     assert command[-1] == "out.mp4"
 
 
@@ -176,7 +177,7 @@ def test_build_ffmpeg_command_fade_out_clamped_to_half_clip_duration():
         fade_seconds=0.5,
     )
 
-    assert "fade=t=out:st=0.3:d=0.3" in command[9]
+    assert "fade=t=out:st=0.3:d=0.3" in command[11]
 
 
 def test_build_ffmpeg_command_fade_starts_after_last_word_when_tail_available():
@@ -190,7 +191,7 @@ def test_build_ffmpeg_command_fade_starts_after_last_word_when_tail_available():
     )
 
     assert command[command.index("-t") + 1] == "30.5"
-    assert "fade=t=out:st=30.0:d=0.5" in command[9]
+    assert "fade=t=out:st=30.0:d=0.5" in command[11]
     assert "afade=t=out:st=30.0:d=0.5" in command
 
 
@@ -204,7 +205,7 @@ def test_build_ffmpeg_command_fade_extend_clamped_to_available_tail():
     )
 
     assert command[command.index("-t") + 1] == "30.2"
-    assert "fade=t=out:st=30.0:d=0.2" in command[9]
+    assert "fade=t=out:st=30.0:d=0.2" in command[11]
 
 
 def test_build_ffmpeg_command_fade_falls_back_to_overlap_when_no_tail():
@@ -216,7 +217,7 @@ def test_build_ffmpeg_command_fade_falls_back_to_overlap_when_no_tail():
     )
 
     assert command[command.index("-t") + 1] == "30.0"
-    assert "fade=t=out:st=29.5:d=0.5" in command[9]
+    assert "fade=t=out:st=29.5:d=0.5" in command[11]
 
 
 def test_build_ffmpeg_command_without_fade_has_no_audio_filter():
@@ -281,7 +282,7 @@ def test_build_ffmpeg_command_vignette_applies_after_crop_before_subtitles():
         vignette=True,
     )
 
-    assert command[9] == (
+    assert command[11] == (
         "crop=608:1080:656:0,scale=1080:1920,vignette,subtitles='work/x/subs.srt'"
     )
 
@@ -293,7 +294,7 @@ def test_build_ffmpeg_command_grain_strength_applies():
         grain_strength=25,
     )
 
-    assert command[9] == "crop=608:1080:656:0,scale=1080:1920,noise=alls=25:allf=t"
+    assert command[11] == "crop=608:1080:656:0,scale=1080:1920,noise=alls=25:allf=t"
 
 
 def test_build_ffmpeg_command_vignette_and_grain_chain_together():
@@ -304,7 +305,7 @@ def test_build_ffmpeg_command_vignette_and_grain_chain_together():
         grain_strength=25,
     )
 
-    assert command[9] == (
+    assert command[11] == (
         "crop=608:1080:656:0,scale=1080:1920,vignette,noise=alls=25:allf=t"
     )
 
@@ -352,7 +353,7 @@ def test_build_ffmpeg_command_punch_zoom_at_applies_before_effects_and_subtitles
         punch_zoom_at=5.0,
     )
 
-    assert command[9] == (
+    assert command[11] == (
         "crop=608:1080:656:0,scale=1080:1920,"
         + build_punch_zoom_filter(5.0)
         + ",vignette,subtitles='work/x/subs.srt'"
@@ -365,7 +366,7 @@ def test_build_ffmpeg_command_no_punch_zoom_by_default():
         crop_filter="crop=608:1080:656:0,scale=1080:1920",
     )
 
-    assert "crop=w=" not in command[9]
+    assert "crop=w=" not in command[11]
 
 
 def test_build_jumpcut_command_single_segment_matches_plain_trim_concat():
@@ -375,7 +376,7 @@ def test_build_jumpcut_command_single_segment_matches_plain_trim_concat():
         crop_filter="crop=608:1080:656:0,scale=1080:1920",
     )
 
-    assert command[:4] == ["ffmpeg", "-y", "-ss", "10.0"]
+    assert command[:6] == ["ffmpeg", "-y", "-loglevel", "error", "-ss", "10.0"]
     assert command[command.index("-i") + 1] == "in.mp4"
     assert command[command.index("-t") + 1] == "30.0"
 
@@ -596,7 +597,7 @@ def test_render_clip_threads_fade_seconds_into_command():
     )
 
     assert command == captured["command"]
-    assert "fade=t=out:st=30.0:d=0.5" in command[9]
+    assert "fade=t=out:st=30.0:d=0.5" in command[11]
 
 
 def test_build_ass_content_sets_play_res_to_canvas_size():
