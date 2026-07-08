@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 2
-current_phase_name: LLM Title & Tag Generation
+current_phase: 3
+current_phase_name: YouTube Scheduled Auto-Publish
 status: executing
-stopped_at: Phase 3 planned, plan-checker passed
-last_updated: "2026-07-08T01:15:33.073Z"
+stopped_at: Plan 03-01 complete (publish queue core + dry-run config)
+last_updated: "2026-07-08T03:15:43.000Z"
 last_activity: 2026-07-08
-last_activity_desc: Plan 02-01 complete (few-shot voice grounding, TAGS-03)
+last_activity_desc: Plan 03-01 complete (publish queue core + dry-run config, PUB-01/PUB-03)
 progress:
   total_phases: 6
   completed_phases: 2
-  total_plans: 9
-  completed_plans: 5
+  total_plans: 10
+  completed_plans: 6
   percent: 33
 ---
 
@@ -24,14 +24,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-07)
 
 **Core value:** Из сырой записи стрима автоматически получить готовый к публикации вертикальный клип — без ручной нарезки и без потери самых залипательных моментов.
-**Current focus:** Phase 2 — LLM Title & Tag Generation
+**Current focus:** Phase 3 — YouTube Scheduled Auto-Publish
 
 ## Current Position
 
-Phase: 2 of 6 (LLM Title & Tag Generation) — IN PROGRESS
-Plan: 2 of 2 in current phase (02-01 complete, 02-02 pending)
-Status: Ready to execute 02-02
-Last activity: 2026-07-08 — Plan 02-01 complete (few-shot voice grounding, TAGS-03)
+Phase: 3 of 6 (YouTube Scheduled Auto-Publish) — IN PROGRESS
+Plan: 1 of 4 in current phase (03-01 complete, 03-02/03/04 pending)
+Status: Ready to execute 03-02
+Last activity: 2026-07-08 — Plan 03-01 complete (publish queue core + dry-run config, PUB-01/PUB-03)
+
+Note: Phase 2 (LLM Title & Tag Generation) has plan 02-02 still pending — Phase 3 planning/execution proceeded per project workflow while 02-02 remains open; see Pending Todos.
 
 Progress: [███░░░░░░░] 17% (1/6 phases)
 
@@ -39,9 +41,9 @@ Progress: [███░░░░░░░] 17% (1/6 phases)
 
 **Velocity:**
 
-- Total plans completed: 3
-- Average duration: 33 min
-- Total execution time: 1.7 hours
+- Total plans completed: 4
+- Average duration: 30 min
+- Total execution time: 3.7 hours
 
 **By Phase:**
 
@@ -49,14 +51,16 @@ Progress: [███░░░░░░░] 17% (1/6 phases)
 |-------|-------|-------|----------|
 | 01 | 3/3 | 100 min | 33 min |
 | 02 | 1/2 | 4 min | 4 min |
+| 03 | 1/4 | 120 min | 120 min |
 
 **Recent Trend:**
 
-- Last 5 plans: 35 min, ~25 min, ~40 min, 4 min
+- Last 5 plans: 35 min, ~25 min, ~40 min, 4 min, 120 min
 - Trend: -
 
 *Updated after each plan completion*
 | Phase 02 P02 | 5min | 2 tasks | 2 files |
+| Phase 03 P01 | 120min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -80,6 +84,9 @@ Recent decisions affecting current work:
 - Plan 02-01: `.claude/` is gitignored project-wide, so the SKILL.md edit lives on disk only, not in git history — this is a pre-existing repo convention, not a regression (see 02-01-SUMMARY.md Deviations)
 - [Phase 02]: Plan 02-02: REQUIREMENTS.md Traceability table TAGS-01/TAGS-02 rows reworded from bare Pending to deliberate reframed/deferred phrasing citing 02-CONTEXT.md D-01/D-02/D-03
 - [Phase 02]: Plan 02-02: ROADMAP.md Phase 2 detail block gained a reconciliation note aligning literal Success Criteria 1/2 wording with the orchestrator-session architecture (TAGS-01) and Phase 6 deferral (TAGS-02)
+- [Phase 03]: Plan 03-01: enqueue() reads title/description/tags verbatim from already-finished per-clip metadata (D-01/D-02) — no metadata regeneration logic in this plan
+- [Phase 03]: Plan 03-01: daily_slots_utc default set to ["09:00","15:00","20:00"] (Claude's discretion per D-07), aligned with the ~3h periodic-check cadence for later plans to consume
+- [Phase 03]: Plan 03-01: publish.enabled hard-defaults to False both on the dataclass and when the `publish:` config section is entirely absent — PUB-03 dry-run guarantee at the config layer
 
 ### Pending Todos
 
@@ -90,6 +97,7 @@ None yet.
 - Phase 6 (TikTok/Instagram): external app-audit/review lead times are days-to-weeks and outside developer control — start the audit application early (in parallel with Phase 1), per research SUMMARY.md
 - Phase 6 (TikTok): unaudited clients are restricted to SELF_ONLY (private) uploads; upload calls return success even when nothing is actually public — needs a post-publish visibility-verification check
 - OAuth credentials for 3 platforms raise the stakes of this project's prior real leaked-data incident — credential storage location/discipline must be finalized before Phase 3/6 upload code is written
+- Environment quirk (not a code bug): default pytest temp dir (`AppData/Local/Temp/pytest-of-<user>`) is permission-locked on this machine, breaking plain `pytest -x` runs that rely on `tmp_path`; verified with `--basetemp` override during Plan 03-01. Unrelated to any code change — informational for future sessions.
 
 ### Quick Tasks Completed
 
@@ -107,6 +115,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-08T01:15:33.062Z
-Stopped at: Phase 3 planned, plan-checker passed
-Resume file: .planning/phases/03-youtube-scheduled-auto-publish/03-01-PLAN.md
+Last session: 2026-07-08T03:15:43.000Z
+Stopped at: Plan 03-01 complete (publish queue core + dry-run config)
+Resume file: .planning/phases/03-youtube-scheduled-auto-publish/03-02-PLAN.md
