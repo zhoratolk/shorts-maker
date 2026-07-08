@@ -20,8 +20,8 @@
 
 ### TAGS — LLM Title/Tag Generation
 
-- [ ] **TAGS-01**: Pipeline generates title + tag candidates per clip via Claude API — **reframed 2026-07-07** (`/gsd-discuss-phase 2`, D-01/D-02): satisfied via the existing orchestrator session itself acting as the generator, not a separate Claude API script/call. No new billing path or SDK import exists or is planned for this requirement.
-- [ ] **TAGS-02**: Falls back to local Ollama model if Claude API is unavailable (fail-open, matches existing diarization/audio-energy/analytics pattern) — **deferred, not applicable to Phase 2's architecture**: there is no separate API call to fail over from once the orchestrator itself is the generator (see TAGS-01 reframe). Tracked for Phase 6 (auto-publish/headless runner), where a standalone invocation path would exist to justify a real fallback.
+- [x] **TAGS-01**: Pipeline generates title + tag candidates per clip via Claude API — **reframed 2026-07-07** (`/gsd-discuss-phase 2`, D-01/D-02): satisfied via the existing orchestrator session itself acting as the generator, not a separate Claude API script/call. No new billing path or SDK import exists or is planned for this requirement.
+- [x] **TAGS-02**: Falls back to local Ollama model if Claude API is unavailable (fail-open, matches existing diarization/audio-energy/analytics pattern) — **deferred, not applicable to Phase 2's architecture**: there is no separate API call to fail over from once the orchestrator itself is the generator (see TAGS-01 reframe). Tracked for Phase 6 (auto-publish/headless runner), where a standalone invocation path would exist to justify a real fallback.
 - [x] **TAGS-03**: Uses STYLE profile few-shot examples as concrete grounding (not prose description) so generated titles match the creator's own voice, not generic AI phrasing
 
 ### TRANS — Context-Driven Transitions

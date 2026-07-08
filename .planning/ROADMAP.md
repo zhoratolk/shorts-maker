@@ -14,7 +14,7 @@ This milestone adds six capabilities on top of the existing local shorts-cutting
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Monetization-Risk Flagging & Creator Style Profile** - Clips carry advisory per-platform monetization-risk flags, and a style profile learned from the creator's own upload history is ready for later phases to consume (completed 2026-07-07)
-- [ ] **Phase 2: LLM Title/Tag Generation** - Pipeline proposes ready-to-use titles and tags per clip, grounded in the creator's own voice via few-shot style-profile examples
+- [x] **Phase 2: LLM Title/Tag Generation** - Pipeline proposes ready-to-use titles and tags per clip, grounded in the creator's own voice via few-shot style-profile examples (completed 2026-07-08)
 - [ ] **Phase 3: YouTube Scheduled Auto-Publish** - Finished shorts can be queued and auto-published to YouTube on a schedule, safely (dry-run default, pause/kill, no duplicate posts)
 - [ ] **Phase 4: Context-Driven Transitions** - Clip boundaries get a transition chosen from scene/audio context (not just a fixed cut/punch-zoom) when stitching multiple segments together
 - [ ] **Phase 5: Sub-Threshold Highlight Compilation** - Moments too short to stand alone are grouped by similarity and stitched into one coherent full-length short instead of being discarded
@@ -59,10 +59,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 > **Reconciliation note (added post-`/gsd-discuss-phase 2`, human-confirmed):** Success Criterion 1's "via the Claude API" is satisfied by the existing Claude Code orchestrator session itself acting as the generator — no separate Claude API script/SDK/billing path, per 02-CONTEXT.md D-01/D-02. Success Criterion 2's Ollama fallback (TAGS-02) is deferred to Phase 6 (headless/non-interactive runner), not delivered in Phase 2, since there is no "Claude API unavailable" state to fall back from once the orchestrator itself is the generator, per D-03. These criteria's literal wording predates that architectural decision and should not be read as unmet after Phase 2 closes.
 
-**Plans**: 1/2 plans executed
+**Plans**: 2/2 plans complete
 
 - [x] 02-01-PLAN.md
-- [ ] 02-02-PLAN.md
+- [x] 02-02-PLAN.md
 
 ### Phase 3: YouTube Scheduled Auto-Publish
 
@@ -126,7 +126,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Monetization-Risk Flagging & Creator Style Profile | 3/3 | Complete   | 2026-07-07 |
-| 2. LLM Title/Tag Generation | 1/2 | In Progress|  |
+| 2. LLM Title/Tag Generation | 2/2 | Complete   | 2026-07-08 |
 | 3. YouTube Scheduled Auto-Publish | 0/TBD | Not started | - |
 | 4. Context-Driven Transitions | 0/TBD | Not started | - |
 | 5. Sub-Threshold Highlight Compilation | 0/TBD | Not started | - |
