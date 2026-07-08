@@ -10,7 +10,9 @@ import (that arrives as a deferred, inside-function import once the upload
 path is added).
 """
 
+import argparse
 import json
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -546,3 +548,170 @@ def reconcile_all_uploading(queue: dict[str, Any], service_factory) -> None:
             continue
         if entry["status"] == UPLOADING:
             reconcile_uploading(queue, entry, service_factory)
+
+
+# --- CLI (D-05: --check / --now / --pause / --kill / --resume / --list) ----
+
+
+def _success_notification_text(entry: dict[str, Any]) -> str:
+    """The D-05 wording: 'залил {seq}, выйдет в {HH:MM} UTC', HH:MM derived
+    from the entry's publish_at (an RFC3339 Z-suffixed UTC timestamp)."""
+    hh_mm = entry["publish_at"][11:16]
+    return f"залил {entry['seq']}, выйдет в {hh_mm} UTC"
+
+
+def _error_notification_text(entry: dict[str, Any], reason: str) -> str:
+    return f"[error] {entry['seq']}: {reason}"
+
+
+def _upload_one(entry: dict[str, Any], queue: dict[str, Any], service_factory, config) -> None:
+    """Shared upload step for both --check and --now: calls the exact same
+    upload_and_schedule() (Plan 02) and appends the matching notification
+    line - the two trigger paths never diverge (D-05, T-03-14 key link).
+    Errors are caught here (not re-raised) so a single bad item doesn't
+    crash the whole periodic check; an error line is appended instead.
+    """
+    try:
+        result = upload_and_schedule(
+            queue, entry, service_factory, config, queue_path=config.queue_path
+        )
+    except Exception as error:
+        append_notification(
+            _error_notification_text(entry, str(error)), config.notifications_path
+        )
+        raise
+
+    if isinstance(result, dict) and result.get("dry_run"):
+        print("dry-run: skipped (opt-in disabled)")
+        return
+
+    append_notification(_success_notification_text(entry), config.notifications_path)
+    print(_success_notification_text(entry))
+
+
+def build_argument_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Local publish-queue CLI: periodic --check, manual --now override, "
+        "--pause/--kill/--resume, and --list - both --check and --now route through the "
+        "same upload_and_schedule path (D-05)"
+    )
+    parser.add_argument("--check", action="store_true", help="Periodic check: reconcile stuck uploads, then upload+schedule the single next due item (or log a dry-run skip)")
+    parser.add_argument("--now", metavar="CLIP_ID", help="Force-publish one specific queued clip_id out of band, via the same upload path")
+    parser.add_argument("--pause", metavar="CLIP_ID", help="Pause a not-yet-uploaded queued clip_id")
+    parser.add_argument("--kill", metavar="CLIP_ID", help="Kill a clip_id (local-only if not yet uploaded, API revert+verify if already scheduled)")
+    parser.add_argument("--resume", metavar="CLIP_ID", help="Resume a paused clip_id back to queued")
+    parser.add_argument("--list", action="store_true", help="Print the queue's seq/status/title so numbering is visible")
+    parser.add_argument("--client-secret", default="client_secret.json", help="OAuth client secret JSON path")
+    parser.add_argument("--token", default="upload_token.json", help="Cached upload-scoped OAuth token JSON path")
+    parser.add_argument("--config", default="config.yaml", help="Path to config.yaml")
+    return parser
+
+
+def run_command(args: argparse.Namespace, service_factory, config) -> None:
+    """Dispatches one CLI invocation. Factored out from main() so tests can
+    drive it with a fake service_factory + a config carrying tmp-path
+    queue/notifications paths, without ever touching real OAuth (main()'s
+    only job is parsing args, building the real service_factory + config,
+    and calling this).
+
+    --check and --now both call _upload_one, which calls the identical
+    upload_and_schedule - no second/divergent publish code path (D-05).
+    --check enforces "at most one item per invocation" by construction:
+    select_next_due (after reconcile_all_uploading resolves anything stuck)
+    returns at most one entry, and only that one entry is ever passed to
+    _upload_one per call.
+    """
+    queue_path = config.queue_path
+
+    if args.list:
+        queue = load_queue(queue_path)
+        for entry in sorted(queue["entries"], key=lambda e: e["seq"]):
+            print(f"{entry['seq']}\t{entry['status']}\t{entry['title']}")
+        return
+
+    if args.pause:
+        queue = load_queue(queue_path)
+        try:
+            pause_item(queue, args.pause)
+        except KeyError:
+            print(f"error: no queue entry with clip_id={args.pause!r}", file=sys.stderr)
+            raise SystemExit(2)
+        save_queue(queue, queue_path)
+        print(f"paused {args.pause}")
+        return
+
+    if args.resume:
+        queue = load_queue(queue_path)
+        try:
+            resume_item(queue, args.resume)
+        except KeyError:
+            print(f"error: no queue entry with clip_id={args.resume!r}", file=sys.stderr)
+            raise SystemExit(2)
+        save_queue(queue, queue_path)
+        print(f"resumed {args.resume}")
+        return
+
+    if args.kill:
+        queue = load_queue(queue_path)
+        try:
+            kill_item(queue, args.kill, service_factory)
+        except KeyError:
+            print(f"error: no queue entry with clip_id={args.kill!r}", file=sys.stderr)
+            raise SystemExit(2)
+        save_queue(queue, queue_path)
+        print(f"killed {args.kill}")
+        return
+
+    if args.now:
+        queue = load_queue(queue_path)
+        try:
+            entry = _find_entry(queue, args.now)
+        except KeyError:
+            print(f"error: no queue entry with clip_id={args.now!r}", file=sys.stderr)
+            raise SystemExit(2)
+        _upload_one(entry, queue, service_factory, config)
+        return
+
+    if args.check:
+        queue = load_queue(queue_path)
+        # Reconcile-first (PUB-05): any crash-mid-upload entry must be
+        # resolved before a fresh item is ever selected.
+        reconcile_all_uploading(queue, service_factory)
+        save_queue(queue, queue_path)
+
+        if not config.enabled:
+            print("dry-run: skipped (opt-in disabled)")
+            return
+
+        entry = select_next_due(queue)
+        if entry is None:
+            print("check: nothing due")
+            return
+
+        # --check uploads AT MOST ONE item per invocation (D-05 "one at a
+        # time") - this is also the natural quota debounce (Pitfall 4).
+        _upload_one(entry, queue, service_factory, config)
+        return
+
+    print("no action given - use --check/--now/--pause/--kill/--resume/--list")
+
+
+def main() -> None:
+    parser = build_argument_parser()
+    args = parser.parse_args()
+
+    from scripts.config import load_config
+    from scripts.youtube_analytics import load_credentials
+    from googleapiclient.discovery import build
+
+    config = load_config(args.config).publish
+
+    def service_factory():
+        credentials = load_credentials(args.client_secret, args.token, [UPLOAD_SCOPE])
+        return build("youtube", "v3", credentials=credentials)
+
+    run_command(args, service_factory, config)
+
+
+if __name__ == "__main__":
+    main()
