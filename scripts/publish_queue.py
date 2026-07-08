@@ -391,3 +391,97 @@ def kill_item(queue: dict[str, Any], clip_id: str, service_factory) -> dict[str,
     entry["status"] = KILLED
     entry["updated_at"] = datetime.now(timezone.utc).isoformat()
     return entry
+
+
+# --- Reconciliation of a stuck UPLOADING entry (PUB-05) --------------------
+
+
+def _seq_marker(seq: int) -> str:
+    """The exact marker substring build_insert_body embeds in a video's
+    description - kept as a single source of truth so reconciliation's
+    match and the original embed can never silently drift apart.
+    """
+    return f"[queue-id: {seq}]"
+
+
+def _fetch_descriptions(data_service, video_ids: list[str]) -> dict[str, str]:
+    """videos.list(part="snippet") for the given ids, chunked to respect the
+    Data API's 50-ids-per-request limit (same constraint list_uploaded_videos's
+    sibling calls in youtube_analytics.py already respect for statistics).
+    Returns {video_id: description}. Reused instead of hand-rolled because
+    list_uploaded_videos's playlistItems response doesn't carry description.
+    """
+    descriptions: dict[str, str] = {}
+    for i in range(0, len(video_ids), 50):
+        chunk = video_ids[i : i + 50]
+        response = data_service.videos().list(part="snippet", id=",".join(chunk)).execute()
+        for item in response.get("items", []):
+            descriptions[item["id"]] = item["snippet"].get("description", "")
+    return descriptions
+
+
+def reconcile_uploading(
+    queue: dict[str, Any], entry: dict[str, Any], service_factory
+) -> dict[str, Any]:
+    """Resolves a manifest entry stuck in UPLOADING (from a crash between
+    the write-ahead persist and the insert().next_chunk() loop returning) by
+    checking YouTube's actual channel uploads BEFORE ever considering a
+    retry (PUB-05, Pitfall 3, T-03-09).
+
+    Reuses scripts.youtube_analytics.get_own_channel + list_uploaded_videos
+    to enumerate the channel's own recent uploads, then fetches each
+    candidate's description (videos.list part=snippet) and looks for this
+    entry's embedded seq marker (the exact substring build_insert_body
+    wrote, "[queue-id: {seq}]") - specific enough that it can't false-match
+    another video's unrelated description.
+
+    - Match found: the upload actually DID reach YouTube before the crash -
+      adopt the matched video_id, set status=SCHEDULED, and do NOT call
+      videos().insert (this is the exact duplicate PUB-05 exists to
+      prevent).
+    - No match found: the upload did not complete - reset status to QUEUED
+      (and clear any partial video_id) so a subsequent check re-attempts it
+      cleanly, since nothing was actually created on YouTube.
+    """
+    from scripts.youtube_analytics import get_own_channel, list_uploaded_videos
+
+    service = service_factory()
+    channel = get_own_channel(service)
+    uploaded = list_uploaded_videos(service, channel["uploads_playlist_id"])
+    video_ids = [video["video_id"] for video in uploaded]
+
+    descriptions = _fetch_descriptions(service, video_ids)
+    marker = _seq_marker(entry["seq"])
+
+    matched_video_id = None
+    for video_id, description in descriptions.items():
+        if marker in description:
+            matched_video_id = video_id
+            break
+
+    if matched_video_id is not None:
+        entry["status"] = SCHEDULED
+        entry["video_id"] = matched_video_id
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    else:
+        entry["status"] = QUEUED
+        entry["video_id"] = None
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    return entry
+
+
+def reconcile_all_uploading(queue: dict[str, Any], service_factory) -> None:
+    """Reconciles every UPLOADING entry in the queue before any new
+    selection happens. Wired as the mandatory first step of the
+    periodic-check path so a stuck entry can never be silently bypassed and
+    re-uploaded as a fresh QUEUED item (PUB-05) - select_next_due only ever
+    sees entries that have already been resolved one way or the other.
+    """
+    for entry in queue["entries"]:
+        if entry["status"] == UPLOADING and entry.get("video_id"):
+            # Already has a video_id recorded - not the "stuck mid-upload"
+            # case this reconciliation targets; leave it alone.
+            continue
+        if entry["status"] == UPLOADING:
+            reconcile_uploading(queue, entry, service_factory)
