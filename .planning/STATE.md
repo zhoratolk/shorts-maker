@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 1
-current_phase_name: Monetization-Risk Flagging & Creator Style Profile
+current_phase: 2
+current_phase_name: LLM Title & Tag Generation
 status: executing
-stopped_at: Phase 2 context gathered
-last_updated: "2026-07-08T00:09:21.894Z"
-last_activity: 2026-07-07
-last_activity_desc: Plan 01-02 complete (audio fingerprint, MONET-01)
+stopped_at: Plan 02-01 complete
+last_updated: "2026-07-08T00:16:14.755Z"
+last_activity: 2026-07-08
+last_activity_desc: Plan 02-01 complete (few-shot voice grounding, TAGS-03)
 progress:
   total_phases: 6
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
+  total_plans: 5
+  completed_plans: 4
   percent: 17
 ---
 
@@ -24,16 +24,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-07)
 
 **Core value:** Из сырой записи стрима автоматически получить готовый к публикации вертикальный клип — без ручной нарезки и без потери самых залипательных моментов.
-**Current focus:** Phase 1 — Monetization-Risk Flagging & Creator Style Profile
+**Current focus:** Phase 2 — LLM Title & Tag Generation
 
 ## Current Position
 
-Phase: 1 of 6 (Monetization-Risk Flagging & Creator Style Profile) — COMPLETE
-Plan: 3 of 3 in current phase (01-01, 01-02, 01-03 all complete)
-Status: Ready to execute
-Last activity: 2026-07-07 — Plan 01-02 complete (audio fingerprint, MONET-01)
+Phase: 2 of 6 (LLM Title & Tag Generation) — IN PROGRESS
+Plan: 1 of 2 in current phase (02-01 complete, 02-02 pending)
+Status: Ready to execute 02-02
+Last activity: 2026-07-08 — Plan 02-01 complete (few-shot voice grounding, TAGS-03)
 
-Progress: [██░░░░░░░░] 17% (1/6 phases)
+Progress: [███░░░░░░░] 17% (1/6 phases)
 
 ## Performance Metrics
 
@@ -48,10 +48,11 @@ Progress: [██░░░░░░░░] 17% (1/6 phases)
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01 | 3/3 | 100 min | 33 min |
+| 02 | 1/2 | 4 min | 4 min |
 
 **Recent Trend:**
 
-- Last 5 plans: 35 min, ~25 min, ~40 min
+- Last 5 plans: 35 min, ~25 min, ~40 min, 4 min
 - Trend: -
 
 *Updated after each plan completion*
@@ -73,6 +74,9 @@ Recent decisions affecting current work:
 - Plan 01-03: performance signal prefers average_view_percentage, falls back to view_count when Analytics API retention data is unavailable
 - Plan 01-02: audio-fingerprint copyright flag merges into Plan 01's exact risk-dict shape via a pure merge_audio_flag function, reusing its severity ordering — no second risk-dict schema
 - Plan 01-02: audio fingerprinting is opt-in (audio_fingerprint_enabled: false default) since it needs the external fpcalc/Chromaprint binary; AcoustID network lookup is a further opt-in layer on top (enable_lookup)
+- Plan 02-01: added a small pure Python helper (format_naming_examples_block) rather than a SKILL.md-only Read+format instruction — unit-testable, zero new imports, matches D-01's intent (excludes only a new API-calling script)
+- Plan 02-01: few-shot voice-grounding instruction placed immediately before the existing 'load docs/metadata-writing-ru.md' sentence in SKILL.md step 5 — prominent placement per Pitfall 5 (buried/passive framing risks generic output)
+- Plan 02-01: `.claude/` is gitignored project-wide, so the SKILL.md edit lives on disk only, not in git history — this is a pre-existing repo convention, not a regression (see 02-01-SUMMARY.md Deviations)
 
 ### Pending Todos
 
@@ -94,6 +98,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-07T20:56:29.733Z
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-llm-title-tag-generation/02-CONTEXT.md
+Last session: 2026-07-08T00:15:38.876Z
+Stopped at: Completed 02-01-PLAN.md
+Resume file: .planning/phases/02-llm-title-tag-generation/02-02-PLAN.md

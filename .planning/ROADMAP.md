@@ -57,7 +57,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. If the Claude API is unavailable, title/tag generation falls back to a local Ollama model automatically rather than aborting the run (matches existing fail-open pattern for diarization/audio-energy/analytics)
   3. Generated titles visibly reflect the creator's own historical phrasing/style (verified by comparing against real few-shot examples from the Phase 1 style profile), not generic AI-sounding phrasing
 
-**Plans**: TBD
+**Plans**: 1/2 plans executed
+
+- [x] 02-01-PLAN.md
+- [ ] 02-02-PLAN.md
 
 ### Phase 3: YouTube Scheduled Auto-Publish
 
@@ -121,7 +124,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Monetization-Risk Flagging & Creator Style Profile | 3/3 | Complete   | 2026-07-07 |
-| 2. LLM Title/Tag Generation | 0/TBD | Not started | - |
+| 2. LLM Title/Tag Generation | 1/2 | In Progress|  |
 | 3. YouTube Scheduled Auto-Publish | 0/TBD | Not started | - |
 | 4. Context-Driven Transitions | 0/TBD | Not started | - |
 | 5. Sub-Threshold Highlight Compilation | 0/TBD | Not started | - |
