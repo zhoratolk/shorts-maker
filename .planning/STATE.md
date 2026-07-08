@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 3
 current_phase_name: YouTube Scheduled Auto-Publish
 status: executing
-stopped_at: Plan 03-01 complete (publish queue core + dry-run config)
-last_updated: "2026-07-08T03:15:43.000Z"
+stopped_at: Plan 03-02 complete (upload+schedule path, PUB-02/PUB-03/PUB-05)
+last_updated: "2026-07-08T15:40:19.320Z"
 last_activity: 2026-07-08
 last_activity_desc: Plan 03-01 complete (publish queue core + dry-run config, PUB-01/PUB-03)
 progress:
   total_phases: 6
   completed_phases: 2
-  total_plans: 10
-  completed_plans: 6
+  total_plans: 9
+  completed_plans: 7
   percent: 33
 ---
 
@@ -29,9 +29,9 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 ## Current Position
 
 Phase: 3 of 6 (YouTube Scheduled Auto-Publish) — IN PROGRESS
-Plan: 1 of 4 in current phase (03-01 complete, 03-02/03/04 pending)
-Status: Ready to execute 03-02
-Last activity: 2026-07-08 — Plan 03-01 complete (publish queue core + dry-run config, PUB-01/PUB-03)
+Plan: 3 of 4 in current phase (03-01/03-02 complete, 03-03/03-04 pending)
+Status: Ready to execute 03-03
+Last activity: 2026-07-08 — Plan 03-02 complete (upload+schedule path, PUB-02/PUB-03/PUB-05)
 
 Note: Phase 2 (LLM Title & Tag Generation) has plan 02-02 still pending — Phase 3 planning/execution proceeded per project workflow while 02-02 remains open; see Pending Todos.
 
@@ -61,6 +61,7 @@ Progress: [███░░░░░░░] 17% (1/6 phases)
 *Updated after each plan completion*
 | Phase 02 P02 | 5min | 2 tasks | 2 files |
 | Phase 03 P01 | 120min | 3 tasks | 4 files |
+| Phase 03 P02 | 1h | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -87,6 +88,8 @@ Recent decisions affecting current work:
 - [Phase 03]: Plan 03-01: enqueue() reads title/description/tags verbatim from already-finished per-clip metadata (D-01/D-02) — no metadata regeneration logic in this plan
 - [Phase 03]: Plan 03-01: daily_slots_utc default set to ["09:00","15:00","20:00"] (Claude's discretion per D-07), aligned with the ~3h periodic-check cadence for later plans to consume
 - [Phase 03]: Plan 03-01: publish.enabled hard-defaults to False both on the dataclass and when the `publish:` config section is entirely absent — PUB-03 dry-run guarantee at the config layer
+- [Phase 03]: Plan 03-02: Seq marker for reconciliation embedded as trailing [queue-id: N] line in description (no dedicated custom-metadata field on videos.insert)
+- [Phase 03]: Plan 03-02: Field-limit validation lives in build_insert_body (raises ValueError), keeping the pure body-builder independently testable
 
 ### Pending Todos
 
@@ -115,6 +118,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-08T03:15:43.000Z
-Stopped at: Plan 03-01 complete (publish queue core + dry-run config)
-Resume file: .planning/phases/03-youtube-scheduled-auto-publish/03-02-PLAN.md
+Last session: 2026-07-08T15:40:19.310Z
+Stopped at: Plan 03-02 complete (upload+schedule path, PUB-02/PUB-03/PUB-05)
+Resume file: .planning/phases/03-youtube-scheduled-auto-publish/03-03-PLAN.md

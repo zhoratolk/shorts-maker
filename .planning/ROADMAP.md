@@ -77,7 +77,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. The user can pause or kill scheduled publishing at any time and no further uploads occur until resumed
   5. Re-running the publish step after a retry/crash does not create duplicate posts — an idempotency/already-published manifest prevents re-upload of the same clip
 
-**Plans**: 1/4 plans executed
+**Plans**: 2/4 plans executed
 
 **Wave 1**
 
@@ -85,7 +85,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 03-02-PLAN.md — Upload+schedule path: fixed-grid slot math (future-guard), videos.insert private+publishAt body, dry-run gate, write-ahead uploading state, upload_token.json gitignored [PUB-02, PUB-03, PUB-05] (wave 2)
+- [x] 03-02-PLAN.md — Upload+schedule path: fixed-grid slot math (future-guard), videos.insert private+publishAt body, dry-run gate, write-ahead uploading state, upload_token.json gitignored [PUB-02, PUB-03, PUB-05] (wave 2)
 
 **Wave 3** *(blocked on Wave 2)*
 
@@ -143,7 +143,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 |-------|----------------|--------|-----------|
 | 1. Monetization-Risk Flagging & Creator Style Profile | 3/3 | Complete   | 2026-07-07 |
 | 2. LLM Title/Tag Generation | 2/2 | Complete   | 2026-07-08 |
-| 3. YouTube Scheduled Auto-Publish | 1/4 | In Progress|  |
+| 3. YouTube Scheduled Auto-Publish | 2/4 | In Progress|  |
 | 4. Context-Driven Transitions | 0/TBD | Not started | - |
 | 5. Sub-Threshold Highlight Compilation | 0/TBD | Not started | - |
 | 6. TikTok & Instagram Auto-Publish | 0/TBD | Not started | - |
