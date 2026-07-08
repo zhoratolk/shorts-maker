@@ -11,7 +11,7 @@ path is added).
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -97,3 +97,45 @@ def enqueue(
     }
     queue["entries"].append(entry)
     return entry
+
+
+def collect_scheduled_slots(queue: dict[str, Any]) -> list[str]:
+    """Returns the publish_at values of every entry currently in SCHEDULED
+    status - the set of grid slots already spoken for, so next_free_slot
+    never double-books two clips onto the same slot.
+    """
+    return [
+        entry["publish_at"]
+        for entry in queue["entries"]
+        if entry["status"] == SCHEDULED and entry["publish_at"] is not None
+    ]
+
+
+def next_free_slot(
+    daily_slots_utc: list[str],
+    already_scheduled: list[str],
+    now: datetime | None = None,
+) -> str:
+    """Returns the next RFC3339 UTC timestamp (Z-suffixed) from the fixed
+    daily grid such that the slot is STRICTLY in the future relative to
+    `now` and not already present in `already_scheduled`.
+
+    All math is UTC-only (no local-time ambiguity) - candidates are built
+    from each HH:MM in daily_slots_utc across the current day, then
+    subsequent days, until a free future slot is found. A slot equal to or
+    earlier than `now` is always skipped (Pitfall 1: a past/near-past
+    publishAt makes YouTube publish immediately instead of scheduling).
+    """
+    now = now or datetime.now(timezone.utc)
+    candidate_day = now.date()
+    while True:
+        for hhmm in daily_slots_utc:
+            hour, minute = map(int, hhmm.split(":"))
+            candidate = datetime(
+                candidate_day.year, candidate_day.month, candidate_day.day,
+                hour, minute, tzinfo=timezone.utc,
+            )
+            candidate_iso = candidate.isoformat().replace("+00:00", "Z")
+            if candidate > now and candidate_iso not in already_scheduled:
+                return candidate_iso
+        candidate_day += timedelta(days=1)
