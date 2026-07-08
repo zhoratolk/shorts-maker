@@ -3,18 +3,26 @@ from datetime import datetime, timezone
 import pytest
 
 from scripts.publish_queue import (
+    KILLED,
+    PAUSED,
     QUEUED,
     SCHEDULED,
     UPLOADING,
     UPLOAD_SCOPE,
     VALID_STATUSES,
     build_insert_body,
+    cancel_scheduled_release,
     collect_scheduled_slots,
     enqueue,
+    kill_item,
     load_queue,
     next_free_slot,
+    pause_item,
+    resume_item,
     save_queue,
+    select_next_due,
     upload_and_schedule,
+    verify_killed,
 )
 
 
@@ -386,3 +394,195 @@ def test_upload_and_schedule_enabled_drives_status_transitions_and_body(tmp_path
     persisted = load_queue(queue_path)
     assert persisted["entries"][0]["status"] == SCHEDULED
     assert persisted["entries"][0]["video_id"] == "vid_fake"
+
+
+# --- Task 1: pause/resume/kill/revert/verify (PUB-04) -----------------------
+
+
+class FakeVideosUpdateService:
+    """Fake youtube service exposing videos().update(...) and
+    videos().list(...) - records the update body, and returns a
+    pre-configured status for the post-kill verify re-fetch. House style per
+    tests/test_youtube_analytics.py's FakeVideosService."""
+
+    def __init__(self, list_privacy_status="private"):
+        self.update_calls = []
+        self.list_calls = []
+        self._list_privacy_status = list_privacy_status
+        self._mode = None
+
+    def videos(self):
+        return self
+
+    def update(self, **kwargs):
+        self.update_calls.append(kwargs)
+        self._mode = "update"
+        return self
+
+    def list(self, **kwargs):
+        self.list_calls.append(kwargs)
+        self._mode = "list"
+        return self
+
+    def execute(self):
+        if self._mode == "update":
+            return {"id": "vid_fake", "status": {"privacyStatus": self._list_privacy_status}}
+        return {
+            "items": [
+                {"id": "vid_fake", "status": {"privacyStatus": self._list_privacy_status}}
+            ]
+        }
+
+
+def test_pause_item_flips_queued_to_paused():
+    queue = {"entries": [make_entry(clip_id="clip-1", status=QUEUED)]}
+
+    pause_item(queue, "clip-1")
+
+    assert queue["entries"][0]["status"] == PAUSED
+
+
+def test_resume_item_flips_paused_back_to_queued():
+    queue = {"entries": [make_entry(clip_id="clip-1", status=PAUSED)]}
+
+    resume_item(queue, "clip-1")
+
+    assert queue["entries"][0]["status"] == QUEUED
+
+
+def test_select_next_due_skips_paused_items():
+    queue = {
+        "entries": [
+            make_entry(clip_id="clip-1", seq=1, status=PAUSED),
+            make_entry(clip_id="clip-2", seq=2, status=QUEUED),
+        ]
+    }
+
+    next_entry = select_next_due(queue)
+
+    assert next_entry["clip_id"] == "clip-2"
+
+
+def test_select_next_due_skips_killed_items():
+    queue = {
+        "entries": [
+            make_entry(clip_id="clip-1", seq=1, status=KILLED),
+            make_entry(clip_id="clip-2", seq=2, status=QUEUED),
+        ]
+    }
+
+    next_entry = select_next_due(queue)
+
+    assert next_entry["clip_id"] == "clip-2"
+
+
+def test_select_next_due_returns_none_when_nothing_eligible():
+    queue = {
+        "entries": [
+            make_entry(clip_id="clip-1", seq=1, status=PAUSED),
+            make_entry(clip_id="clip-2", seq=2, status=KILLED),
+        ]
+    }
+
+    assert select_next_due(queue) is None
+
+
+def test_kill_item_not_yet_uploaded_is_local_only_no_service_call():
+    queue = {"entries": [make_entry(clip_id="clip-1", status=QUEUED, video_id=None)]}
+
+    def service_factory_should_not_be_called():
+        raise AssertionError("service_factory must not be called for a not-yet-uploaded kill")
+
+    kill_item(queue, "clip-1", service_factory_should_not_be_called)
+
+    assert queue["entries"][0]["status"] == KILLED
+
+
+def test_kill_item_paused_not_yet_uploaded_is_also_local_only():
+    queue = {"entries": [make_entry(clip_id="clip-1", status=PAUSED, video_id=None)]}
+
+    def service_factory_should_not_be_called():
+        raise AssertionError("service_factory must not be called for a not-yet-uploaded kill")
+
+    kill_item(queue, "clip-1", service_factory_should_not_be_called)
+
+    assert queue["entries"][0]["status"] == KILLED
+
+
+def test_kill_item_uploading_with_no_video_id_is_local_only():
+    # Simulates a kill request racing an in-flight upload that hasn't yet
+    # produced a video_id - still safe to treat as local-only.
+    queue = {"entries": [make_entry(clip_id="clip-1", status=UPLOADING, video_id=None)]}
+
+    def service_factory_should_not_be_called():
+        raise AssertionError("service_factory must not be called when there is no video_id yet")
+
+    kill_item(queue, "clip-1", service_factory_should_not_be_called)
+
+    assert queue["entries"][0]["status"] == KILLED
+
+
+def test_cancel_scheduled_release_sends_exact_revert_body_no_publish_at():
+    service = FakeVideosUpdateService()
+
+    cancel_scheduled_release(service, "vid_fake")
+
+    assert len(service.update_calls) == 1
+    call = service.update_calls[0]
+    assert call["part"] == "status"
+    assert call["body"]["id"] == "vid_fake"
+    assert call["body"]["status"]["privacyStatus"] == "private"
+    assert "publishAt" not in call["body"]["status"]
+
+
+def test_verify_killed_returns_true_when_private():
+    service = FakeVideosUpdateService(list_privacy_status="private")
+
+    assert verify_killed(service, "vid_fake") is True
+    assert service.list_calls[0]["part"] == "status"
+    assert service.list_calls[0]["id"] == "vid_fake"
+
+
+def test_verify_killed_returns_false_when_not_private():
+    service = FakeVideosUpdateService(list_privacy_status="public")
+
+    assert verify_killed(service, "vid_fake") is False
+
+
+def test_kill_item_scheduled_calls_revert_then_verify_then_marks_killed():
+    queue = {
+        "entries": [
+            make_entry(clip_id="clip-1", status=SCHEDULED, video_id="vid_fake")
+        ]
+    }
+    service = FakeVideosUpdateService(list_privacy_status="private")
+
+    def service_factory():
+        return service
+
+    kill_item(queue, "clip-1", service_factory)
+
+    assert len(service.update_calls) == 1
+    assert len(service.list_calls) == 1
+    assert queue["entries"][0]["status"] == KILLED
+
+
+def test_kill_item_scheduled_failed_verify_blocks_killed_mark_and_raises():
+    queue = {
+        "entries": [
+            make_entry(clip_id="clip-1", status=SCHEDULED, video_id="vid_fake")
+        ]
+    }
+    # Verify re-fetch reports the video did NOT actually go private - the
+    # kill did not take (Pitfall 2 warning sign).
+    service = FakeVideosUpdateService(list_privacy_status="public")
+
+    def service_factory():
+        return service
+
+    with pytest.raises(RuntimeError):
+        kill_item(queue, "clip-1", service_factory)
+
+    # A failed verify must NOT let the manifest trust the kill.
+    assert queue["entries"][0]["status"] != KILLED
+    assert queue["entries"][0]["status"] == SCHEDULED
