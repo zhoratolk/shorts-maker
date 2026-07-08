@@ -18,6 +18,8 @@ from scripts.publish_queue import (
     load_queue,
     next_free_slot,
     pause_item,
+    reconcile_all_uploading,
+    reconcile_uploading,
     resume_item,
     save_queue,
     select_next_due,
@@ -586,3 +588,215 @@ def test_kill_item_scheduled_failed_verify_blocks_killed_mark_and_raises():
     # A failed verify must NOT let the manifest trust the kill.
     assert queue["entries"][0]["status"] != KILLED
     assert queue["entries"][0]["status"] == SCHEDULED
+
+
+# --- Task 2: reconcile_uploading - crash-mid-upload safety (PUB-05) --------
+
+
+class FakeChannelsServiceForReconcile:
+    def __init__(self):
+        self.calls = []
+
+    def channels(self):
+        return self
+
+    def list(self, **kwargs):
+        self.calls.append(kwargs)
+        return self
+
+    def execute(self):
+        return {
+            "items": [
+                {"id": "UC1", "contentDetails": {"relatedPlaylists": {"uploads": "UU1"}}}
+            ]
+        }
+
+
+class FakePlaylistItemsServiceForReconcile:
+    def __init__(self, videos):
+        # videos: list of {"video_id", "title", "published_at"}
+        self._videos = videos
+        self.calls = []
+
+    def playlistItems(self):
+        return self
+
+    def list(self, **kwargs):
+        self.calls.append(kwargs)
+        return self
+
+    def execute(self):
+        return {
+            "items": [
+                {
+                    "snippet": {
+                        "resourceId": {"videoId": v["video_id"]},
+                        "title": v["title"],
+                        "publishedAt": v["published_at"],
+                    }
+                }
+                for v in self._videos
+            ]
+        }
+
+
+class FakeVideosSnippetService:
+    """Fake videos().list(part="snippet", id=...) - returns description per
+    video_id so reconcile_uploading can match the seq marker."""
+
+    def __init__(self, descriptions_by_id):
+        self.descriptions_by_id = descriptions_by_id
+        self.calls = []
+
+    def videos(self):
+        return self
+
+    def list(self, **kwargs):
+        self.calls.append(kwargs)
+        return self
+
+    def execute(self):
+        requested_ids = self.calls[-1]["id"].split(",")
+        return {
+            "items": [
+                {"id": vid, "snippet": {"description": self.descriptions_by_id[vid]}}
+                for vid in requested_ids
+                if vid in self.descriptions_by_id
+            ]
+        }
+
+
+class FakeReconcileService:
+    """Combines channels/playlistItems/videos resources on one object -
+    reconcile_uploading calls get_own_channel + list_uploaded_videos (both
+    reused from youtube_analytics.py) then videos().list(part=snippet) for
+    descriptions, all against the same service object."""
+
+    def __init__(self, uploaded_videos, descriptions_by_id):
+        self._channels = FakeChannelsServiceForReconcile()
+        self._playlist = FakePlaylistItemsServiceForReconcile(uploaded_videos)
+        self._snippets = FakeVideosSnippetService(descriptions_by_id)
+        self.insert_calls = []
+
+    def channels(self):
+        return self._channels
+
+    def playlistItems(self):
+        return self._playlist
+
+    def videos(self):
+        return self
+
+
+    def insert(self, **kwargs):
+        self.insert_calls.append(kwargs)
+        raise AssertionError("videos().insert must never be called during reconciliation")
+
+    def list(self, **kwargs):
+        return self._snippets.list(**kwargs)
+
+
+def test_reconcile_uploading_adopts_video_id_when_marker_matches():
+    queue = {
+        "entries": [
+            make_entry(clip_id="clip-1", seq=7, status=UPLOADING, video_id=None)
+        ]
+    }
+    entry = queue["entries"][0]
+    service = FakeReconcileService(
+        uploaded_videos=[
+            {"video_id": "vid_match", "title": "My Clip", "published_at": "2026-07-08T09:00:00Z"},
+            {"video_id": "vid_other", "title": "Unrelated", "published_at": "2026-07-07T09:00:00Z"},
+        ],
+        descriptions_by_id={
+            "vid_match": "A description\n\n[queue-id: 7]",
+            "vid_other": "Something else entirely",
+        },
+    )
+
+    def service_factory():
+        return service
+
+    reconcile_uploading(queue, entry, service_factory)
+
+    assert entry["status"] == SCHEDULED
+    assert entry["video_id"] == "vid_match"
+    assert service.insert_calls == []
+
+
+def test_reconcile_uploading_resets_to_queued_when_no_match():
+    queue = {
+        "entries": [
+            make_entry(clip_id="clip-1", seq=7, status=UPLOADING, video_id=None)
+        ]
+    }
+    entry = queue["entries"][0]
+    service = FakeReconcileService(
+        uploaded_videos=[
+            {"video_id": "vid_other", "title": "Unrelated", "published_at": "2026-07-07T09:00:00Z"},
+        ],
+        descriptions_by_id={"vid_other": "Something else entirely, no marker here"},
+    )
+
+    def service_factory():
+        return service
+
+    reconcile_uploading(queue, entry, service_factory)
+
+    assert entry["status"] == QUEUED
+    assert entry["video_id"] is None
+    assert service.insert_calls == []
+
+
+def test_reconcile_uploading_never_calls_insert():
+    queue = {
+        "entries": [
+            make_entry(clip_id="clip-1", seq=3, status=UPLOADING, video_id=None)
+        ]
+    }
+    entry = queue["entries"][0]
+    service = FakeReconcileService(
+        uploaded_videos=[
+            {"video_id": "vid_match", "title": "My Clip", "published_at": "2026-07-08T09:00:00Z"},
+        ],
+        descriptions_by_id={"vid_match": "desc\n\n[queue-id: 3]"},
+    )
+
+    def service_factory():
+        return service
+
+    reconcile_uploading(queue, entry, service_factory)
+
+    assert service.insert_calls == []
+
+
+def test_select_next_due_reconciles_uploading_entries_before_selecting_new_item():
+    # A stuck UPLOADING entry must be resolved BEFORE the selector would ever
+    # consider a fresh QUEUED item - it can't be silently passed over and
+    # re-uploaded as a new item (PUB-05).
+    queue = {
+        "entries": [
+            make_entry(clip_id="clip-stuck", seq=1, status=UPLOADING, video_id=None),
+            make_entry(clip_id="clip-2", seq=2, status=QUEUED),
+        ]
+    }
+    service = FakeReconcileService(
+        uploaded_videos=[
+            {"video_id": "vid_match", "title": "Stuck Clip", "published_at": "2026-07-08T09:00:00Z"},
+        ],
+        descriptions_by_id={"vid_match": "desc\n\n[queue-id: 1]"},
+    )
+
+    def service_factory():
+        return service
+
+    reconcile_all_uploading(queue, service_factory)
+    next_entry = select_next_due(queue)
+
+    # The stuck entry adopted vid_match and moved to SCHEDULED, so it is no
+    # longer QUEUED/UPLOADING - the selector now correctly picks clip-2, the
+    # genuinely next-due item, having safely resolved the stuck one first.
+    assert queue["entries"][0]["status"] == SCHEDULED
+    assert queue["entries"][0]["video_id"] == "vid_match"
+    assert next_entry["clip_id"] == "clip-2"
+    assert service.insert_calls == []
