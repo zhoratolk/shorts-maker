@@ -9,3 +9,4 @@ config.yaml
 .claude/
 client_secret.json
 token.json
+upload_token.json
