@@ -48,7 +48,7 @@
     "security_block_on": "high",
     "tdd_mode": false,
     "ui_review": true,
-    "use_worktrees": true
+    "use_worktrees": false
   },
   "ship": {
     "pr_body_sections": [
@@ -97,5 +97,10 @@
     "auto_update": false
   },
   "mode": "yolo",
-  "granularity": "standard"
+  "granularity": "standard",
+  "effort": {
+    "agent_overrides": {
+      "gsd-planner": "high"
+    }
+  }
 }
