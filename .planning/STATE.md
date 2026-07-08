@@ -88,6 +88,12 @@ None yet.
 - Phase 6 (TikTok): unaudited clients are restricted to SELF_ONLY (private) uploads; upload calls return success even when nothing is actually public — needs a post-publish visibility-verification check
 - OAuth credentials for 3 platforms raise the stakes of this project's prior real leaked-data incident — credential storage location/discipline must be finalized before Phase 3/6 upload code is written
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260708-4h4 | Add -loglevel error to ffmpeg commands in render.py to suppress noisy failure output | 2026-07-08 | e0739cf | [260708-4h4-add-loglevel-error-to-ffmpeg-commands-in](./quick/260708-4h4-add-loglevel-error-to-ffmpeg-commands-in/) |
+
 ## Deferred Items
 
 Items acknowledged and carried forward from previous milestone close:
