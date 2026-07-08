@@ -57,6 +57,8 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. If the Claude API is unavailable, title/tag generation falls back to a local Ollama model automatically rather than aborting the run (matches existing fail-open pattern for diarization/audio-energy/analytics)
   3. Generated titles visibly reflect the creator's own historical phrasing/style (verified by comparing against real few-shot examples from the Phase 1 style profile), not generic AI-sounding phrasing
 
+> **Reconciliation note (added post-`/gsd-discuss-phase 2`, human-confirmed):** Success Criterion 1's "via the Claude API" is satisfied by the existing Claude Code orchestrator session itself acting as the generator — no separate Claude API script/SDK/billing path, per 02-CONTEXT.md D-01/D-02. Success Criterion 2's Ollama fallback (TAGS-02) is deferred to Phase 6 (headless/non-interactive runner), not delivered in Phase 2, since there is no "Claude API unavailable" state to fall back from once the orchestrator itself is the generator, per D-03. These criteria's literal wording predates that architectural decision and should not be read as unmet after Phase 2 closes.
+
 **Plans**: 1/2 plans executed
 
 - [x] 02-01-PLAN.md
