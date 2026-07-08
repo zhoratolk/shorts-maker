@@ -1,6 +1,6 @@
 import pytest
 
-from scripts.style_profile import derive_profile
+from scripts.style_profile import derive_profile, format_naming_examples_block
 
 
 def _record(video_id, title, view_count, average_view_percentage, published_at="2026-01-01T00:00:00Z"):
@@ -112,3 +112,45 @@ def test_privacy_write_profile_default_target_is_under_gitignored_work_dir():
             text=True,
         )
         assert result.returncode == 0, f"expected {written_path} to be git-ignored"
+
+
+def test_format_naming_examples_block_renders_ranked_titles():
+    profile = {
+        "naming_examples": [
+            {"title": "Boss Rage Quit Moment", "signal": 62.0},
+            {"title": "Clutch 1v5 Ace", "signal": 30.0},
+        ]
+    }
+
+    block = format_naming_examples_block(profile)
+
+    lines = block.split("\n")
+    assert len(lines) == 2
+    assert lines[0].startswith("1.")
+    assert "Boss Rage Quit Moment" in lines[0]
+    assert "62.0" in lines[0]
+    assert lines[1].startswith("2.")
+    assert "Clutch 1v5 Ace" in lines[1]
+
+
+def test_format_naming_examples_block_empty_when_no_examples():
+    assert format_naming_examples_block({"naming_examples": []}) == ""
+    assert format_naming_examples_block({}) == ""
+
+
+def test_format_naming_examples_block_respects_limit():
+    profile = {
+        "naming_examples": [
+            {"title": "High Performer", "signal": 90.0},
+            {"title": "Low Performer", "signal": 5.0},
+            {"title": "Boss Rage Quit Moment", "signal": 3.0},
+        ]
+    }
+
+    block = format_naming_examples_block(profile, limit=2)
+
+    lines = block.split("\n")
+    assert len(lines) == 2
+    assert "High Performer" in lines[0]
+    assert "Low Performer" in lines[1]
+    assert "Boss Rage Quit Moment" not in block
