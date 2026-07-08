@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 3
 current_phase_name: YouTube Scheduled Auto-Publish
 status: executing
-stopped_at: Plan 03-02 complete (upload+schedule path, PUB-02/PUB-03/PUB-05)
-last_updated: "2026-07-08T15:40:19.320Z"
+stopped_at: "03-03 Task 3 checkpoint: awaiting human-check live kill-body verification (Assumption A1). Tasks 1-2 (PUB-04/PUB-05 code) complete and committed."
+last_updated: "2026-07-08T15:49:23.396Z"
 last_activity: 2026-07-08
-last_activity_desc: Plan 03-01 complete (publish queue core + dry-run config, PUB-01/PUB-03)
+last_activity_desc: Plan 03-02 complete (upload+schedule path, PUB-02/PUB-03/PUB-05)
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 9
-  completed_plans: 7
+  completed_plans: 8
   percent: 33
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 ## Current Position
 
 Phase: 3 of 6 (YouTube Scheduled Auto-Publish) — IN PROGRESS
-Plan: 3 of 4 in current phase (03-01/03-02 complete, 03-03/03-04 pending)
+Plan: 4 of 4 in current phase (03-01/03-02 complete, 03-03/03-04 pending)
 Status: Ready to execute 03-03
 Last activity: 2026-07-08 — Plan 03-02 complete (upload+schedule path, PUB-02/PUB-03/PUB-05)
 
@@ -62,6 +62,7 @@ Progress: [███░░░░░░░] 17% (1/6 phases)
 | Phase 02 P02 | 5min | 2 tasks | 2 files |
 | Phase 03 P01 | 120min | 3 tasks | 4 files |
 | Phase 03 P02 | 1h | 3 tasks | 3 files |
+| Phase 03-youtube-scheduled-auto-publish P03 | 35min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -90,6 +91,9 @@ Recent decisions affecting current work:
 - [Phase 03]: Plan 03-01: publish.enabled hard-defaults to False both on the dataclass and when the `publish:` config section is entirely absent — PUB-03 dry-run guarantee at the config layer
 - [Phase 03]: Plan 03-02: Seq marker for reconciliation embedded as trailing [queue-id: N] line in description (no dedicated custom-metadata field on videos.insert)
 - [Phase 03]: Plan 03-02: Field-limit validation lives in build_insert_body (raises ValueError), keeping the pure body-builder independently testable
+- [Phase ?]: kill_item treats UPLOADING-with-no-video_id as not-yet-uploaded (local-only KILLED flip), same as QUEUED/PAUSED — An in-flight upload that hasn't produced a video_id yet has nothing on YouTube to revert
+- [Phase 03-03]: reconcile_uploading fetches descriptions via a dedicated videos.list(part=snippet) call rather than modifying youtube_analytics.py's list_uploaded_videos — Keeps youtube_analytics.py read-only-reuse scope untouched; that helper's playlistItems response doesn't carry description
+- [Phase 03-03]: reconcile_all_uploading skips an UPLOADING entry that already has a video_id recorded — That is not the stuck-mid-upload-no-record case PUB-05 targets; touching it risks clobbering a legitimate in-progress multi-chunk upload
 
 ### Pending Todos
 
@@ -101,6 +105,7 @@ None yet.
 - Phase 6 (TikTok): unaudited clients are restricted to SELF_ONLY (private) uploads; upload calls return success even when nothing is actually public — needs a post-publish visibility-verification check
 - OAuth credentials for 3 platforms raise the stakes of this project's prior real leaked-data incident — credential storage location/discipline must be finalized before Phase 3/6 upload code is written
 - Environment quirk (not a code bug): default pytest temp dir (`AppData/Local/Temp/pytest-of-<user>`) is permission-locked on this machine, breaking plain `pytest -x` runs that rely on `tmp_path`; verified with `--basetemp` override during Plan 03-01. Unrelated to any code change — informational for future sessions.
+- 03-03 Task 3 (Assumption A1 kill-body live verification) is an outstanding human-check: requires OAuth consent for upload_token.json (does not exist yet), a real throwaway private test upload, and waiting past a real publishAt to confirm the kill actually cancels the scheduled release. See docs/publish-queue.md 'Kill-path verification' section and 03-03-SUMMARY.md Checkpoint section for exact steps. Do not trust kill_item live until this is performed.
 
 ### Quick Tasks Completed
 
@@ -118,6 +123,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-08T15:40:19.310Z
-Stopped at: Plan 03-02 complete (upload+schedule path, PUB-02/PUB-03/PUB-05)
-Resume file: .planning/phases/03-youtube-scheduled-auto-publish/03-03-PLAN.md
+Last session: 2026-07-08T15:49:23.386Z
+Stopped at: 03-03 Task 3 checkpoint: awaiting human-check live kill-body verification (Assumption A1). Tasks 1-2 (PUB-04/PUB-05 code) complete and committed.
+Resume file: .planning/phases/03-youtube-scheduled-auto-publish/03-03-SUMMARY.md

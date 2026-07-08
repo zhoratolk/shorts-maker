@@ -41,7 +41,7 @@
 - [x] **PUB-01**: Finished shorts are queued with sequential local numbering
 - [x] **PUB-02**: Scheduled auto-publish to YouTube via YouTube Data API, reusing the existing OAuth client pattern
 - [x] **PUB-03**: Dry-run mode is the default; explicit opt-in required before any platform goes live
-- [ ] **PUB-04**: Pause/kill mechanism to halt scheduled publishing at any time
+- [x] **PUB-04**: Pause/kill mechanism to halt scheduled publishing at any time
 - [x] **PUB-05**: Idempotency/already-published manifest prevents duplicate posts on retry
 - [ ] **PUB-06**: TikTok Content Posting API integration — built and shipped as its own gated sub-phase, after YouTube, since unaudited clients are restricted to private-only posting until TikTok's app audit completes (start the audit application early, in parallel with Phase 1)
 - [ ] **PUB-07**: Instagram Graph API Reels integration — requires a Business account + Meta app review; same gated-sub-phase treatment as TikTok
@@ -84,7 +84,7 @@
 | PUB-01 | Phase 3 | Complete |
 | PUB-02 | Phase 3 | Complete |
 | PUB-03 | Phase 3 | Complete |
-| PUB-04 | Phase 3 | Pending |
+| PUB-04 | Phase 3 | Complete |
 | PUB-05 | Phase 3 | Complete |
 | TRANS-01 | Phase 4 | Pending |
 | TRANS-02 | Phase 4 | Pending |
