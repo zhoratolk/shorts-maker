@@ -1,14 +1,20 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from scripts.publish_queue import (
     QUEUED,
     SCHEDULED,
+    UPLOADING,
+    UPLOAD_SCOPE,
     VALID_STATUSES,
+    build_insert_body,
     collect_scheduled_slots,
     enqueue,
     load_queue,
     next_free_slot,
     save_queue,
+    upload_and_schedule,
 )
 
 
@@ -190,3 +196,189 @@ def test_collect_scheduled_slots_returns_publish_at_of_scheduled_entries():
         "2026-07-08T15:00:00Z",
         "2026-07-08T20:00:00Z",
     ]
+
+
+# --- Task 2: build_insert_body + upload_and_schedule -----------------------
+
+
+class FakePublishConfig:
+    """Minimal stand-in for scripts.config.PublishConfig - only the fields
+    upload_and_schedule actually reads."""
+
+    def __init__(self, enabled, daily_slots_utc=None, client_secret_path="client_secret.json",
+                 upload_token_path="upload_token.json"):
+        self.enabled = enabled
+        self.daily_slots_utc = daily_slots_utc or DAILY_SLOTS_UTC
+        self.client_secret_path = client_secret_path
+        self.upload_token_path = upload_token_path
+
+
+class FakeNextChunkRequest:
+    """Records the insert() call's kwargs and yields a single next_chunk()
+    call returning (None, {"id": ...}) - mirrors the resumable-upload
+    protocol shape without a real network call."""
+
+    def __init__(self, video_id, **kwargs):
+        self.kwargs = kwargs
+        self._video_id = video_id
+        self._done = False
+
+    def next_chunk(self):
+        if self._done:
+            raise AssertionError("next_chunk called again after completion")
+        self._done = True
+        return None, {"id": self._video_id}
+
+
+class FakeVideosInsertService:
+    """Fake youtube service exposing only videos().insert(...) - records the
+    body passed so tests can assert on it, house style per
+    tests/test_youtube_analytics.py's FakeVideosService."""
+
+    def __init__(self, video_id="vid_fake"):
+        self.video_id = video_id
+        self.insert_calls = []
+
+    def videos(self):
+        return self
+
+    def insert(self, **kwargs):
+        self.insert_calls.append(kwargs)
+        return FakeNextChunkRequest(self.video_id, **kwargs)
+
+
+def make_entry(**overrides):
+    entry = {
+        "seq": 1,
+        "clip_id": "clip-1",
+        "video_path": "clip1.mp4",
+        "metadata_path": "clip1.txt",
+        "title": "Title 1",
+        "description": "Desc 1",
+        "tags": ["a", "b"],
+        "status": QUEUED,
+        "video_id": None,
+        "publish_at": None,
+        "enqueued_at": "2026-07-08T00:00:00Z",
+        "updated_at": "2026-07-08T00:00:00Z",
+    }
+    entry.update(overrides)
+    return entry
+
+
+def test_upload_scope_is_exactly_the_upload_scope_constant():
+    assert UPLOAD_SCOPE == "https://www.googleapis.com/auth/youtube.upload"
+
+
+def test_build_insert_body_shapes_snippet_and_status():
+    now = datetime(2026, 7, 8, 10, 0, tzinfo=timezone.utc)
+    publish_at = next_free_slot(DAILY_SLOTS_UTC, [], now=now)
+
+    body = build_insert_body(
+        title="My Clip", description="A description", tags=["a", "b"],
+        publish_at=publish_at, seq=7,
+    )
+
+    assert body["snippet"]["title"] == "My Clip"
+    assert body["snippet"]["tags"] == ["a", "b"]
+    assert body["status"]["privacyStatus"] == "private"
+    assert body["status"]["publishAt"] == publish_at
+    assert body["status"]["selfDeclaredMadeForKids"] is False
+    # Stable machine-readable marker for local seq, for Plan 03 reconciliation.
+    assert "7" in body["snippet"]["description"]
+    assert "A description" in body["snippet"]["description"]
+
+
+def test_build_insert_body_rejects_oversized_title():
+    with pytest.raises(ValueError):
+        build_insert_body(
+            title="x" * 101, description="d", tags=[], publish_at="2026-07-08T15:00:00Z", seq=1,
+        )
+
+
+def test_build_insert_body_rejects_oversized_description():
+    with pytest.raises(ValueError):
+        build_insert_body(
+            title="t", description="x" * 5001, tags=[], publish_at="2026-07-08T15:00:00Z", seq=1,
+        )
+
+
+def test_build_insert_body_rejects_oversized_combined_tags():
+    with pytest.raises(ValueError):
+        build_insert_body(
+            title="t", description="d", tags=["x" * 500 for _ in range(2)],
+            publish_at="2026-07-08T15:00:00Z", seq=1,
+        )
+
+
+def test_dry_run_makes_zero_calls_and_does_not_advance_status(tmp_path):
+    queue_path = str(tmp_path / "queue.json")
+    queue = load_queue(queue_path)
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path="clip1.mp4", metadata_path="clip1.txt",
+        title="Title 1", description="Desc 1", tags=["a"],
+    )
+    config = FakePublishConfig(enabled=False)
+
+    def service_factory_should_not_be_called():
+        raise AssertionError("service_factory must not be called in dry-run mode")
+
+    now = datetime(2026, 7, 8, 10, 0, tzinfo=timezone.utc)
+    result = upload_and_schedule(
+        queue, entry, service_factory_should_not_be_called, config, now=now,
+    )
+
+    assert result == {"dry_run": True}
+    assert entry["status"] == QUEUED
+
+
+def test_upload_and_schedule_enabled_drives_status_transitions_and_body(tmp_path):
+    queue_path = str(tmp_path / "queue.json")
+    queue = load_queue(queue_path)
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path="clip1.mp4", metadata_path="clip1.txt",
+        title="Title 1", description="Desc 1", tags=["a"],
+    )
+    config = FakePublishConfig(enabled=True)
+    fake_service = FakeVideosInsertService(video_id="vid_fake")
+    save_calls = []
+
+    def service_factory():
+        return fake_service
+
+    now = datetime(2026, 7, 8, 10, 0, tzinfo=timezone.utc)
+
+    # Monkeypatch-free save-order check: wrap save_queue via a local closure
+    # by passing queue_path so upload_and_schedule's own internal save_queue
+    # calls are inspectable through the persisted file after the fact, and
+    # by asserting status was UPLOADING at the moment insert() was called.
+    original_insert = fake_service.insert
+
+    def spying_insert(**kwargs):
+        # At the moment insert() fires, the write-ahead status must already
+        # be UPLOADING and already persisted to disk (PUB-05 write-ahead).
+        assert entry["status"] == UPLOADING
+        persisted = load_queue(queue_path)
+        assert persisted["entries"][0]["status"] == UPLOADING
+        return original_insert(**kwargs)
+
+    fake_service.insert = spying_insert
+
+    video_id = upload_and_schedule(
+        queue, entry, service_factory, config, now=now, queue_path=queue_path,
+    )
+
+    assert video_id == "vid_fake"
+    assert entry["status"] == SCHEDULED
+    assert entry["video_id"] == "vid_fake"
+    assert entry["publish_at"] == "2026-07-08T15:00:00Z"
+
+    call_kwargs = fake_service.insert_calls[0]
+    body = call_kwargs["body"]
+    assert body["status"]["privacyStatus"] == "private"
+    assert body["status"]["publishAt"] == "2026-07-08T15:00:00Z"
+    assert "1" in body["snippet"]["description"]
+
+    persisted = load_queue(queue_path)
+    assert persisted["entries"][0]["status"] == SCHEDULED
+    assert persisted["entries"][0]["video_id"] == "vid_fake"
