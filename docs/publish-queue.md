@@ -177,7 +177,7 @@ error and exits non-zero rather than silently acting on the wrong item.
 
 ## Kill-path verification (Assumption A1)
 
-**Status: PERFORMED 2026-07-08 — kill path FAILED live, root cause found and fixed.**
+**Status: PERFORMED 2026-07-08 — first attempt FAILED live (root cause found, fixed), re-test with the fix PASSED.**
 
 `03-RESEARCH.md` Assumption A1 flagged that the exact API acceptance of a bare
 re-send-private update body —
@@ -235,29 +235,27 @@ deleted so the next run re-triggers OAuth consent under the new scope
 request a scope upgrade on its own).
 
 The `kill_item()`/`cancel_scheduled_release()`/`verify_killed()` code path
-itself was not changed — the bare `{"privacyStatus": "private"}` re-send body
-was never actually tested end-to-end (the 403 happened one layer before it),
-so whether that specific body is sufficient to cancel a pending `publishAt`
-is **still not empirically confirmed**. Re-run the live test below after
-re-authenticating with the wider scope before trusting the kill path in
-production.
+itself was not changed by the scope fix — but it has now been exercised
+end-to-end against a real scheduled video under the widened scope (see
+Outcome below), which is the first time the bare
+`{"privacyStatus": "private"}` re-send body was actually confirmed sufficient
+to cancel a pending `publishAt`.
 
-### Required re-test (human-in-the-loop, once, with the new scope)
+### Re-test performed (2026-07-08, widened scope)
 
-1. Delete the existing `upload_token.json` (narrow-scope token).
-2. Temporarily set `publish.enabled: true` in `config.yaml` (revert after).
-3. Enqueue and upload one throwaway test clip via `upload_and_schedule()`
-   (this will trigger a fresh OAuth consent under the new full scope), with
-   `publishAt` set only a few minutes in the future.
-4. Confirm the video appears in YouTube Studio as **Private / Scheduled**.
-5. Before `publishAt` passes, call `kill_item()` (or directly
-   `cancel_scheduled_release()` + `verify_killed()`) against that video's id.
-6. Confirm `verify_killed()` returned `True` and the manifest entry is
-   `KILLED`.
-7. Wait past the original `publishAt` timestamp and re-check the video's
-   status. Confirm `privacyStatus` is still `"private"` and the video did
-   **not** flip public.
-8. Record the outcome below.
+1. Deleted the old narrow-scope `upload_token.json`.
+2. Ran a fresh OAuth consent (foreground, browser-based) — new
+   `upload_token.json` minted with `https://www.googleapis.com/auth/youtube`.
+3. Enqueued and uploaded one throwaway test clip via `upload_and_schedule()`,
+   `publishAt` ~2 minutes out.
+4. Called `kill_item()` before `publishAt`.
+5. `kill_item()` returned `status="killed"`; independent post-kill
+   `verify_killed()` call also returned `True`.
+6. Independently re-fetched `videos.list(part="status")` after `publishAt`
+   had passed — confirmed `privacyStatus: "private"`, video never went
+   public.
+7. Deleted the disposable test video via `videos.delete()` and confirmed via
+   a follow-up `videos.list()` that it no longer exists on the channel.
 
 ### Outcome
 
@@ -265,8 +263,12 @@ production.
   `insufficientPermissions` on `videos.update`; video went public briefly;
   manually deleted by operator. Root cause: insufficient OAuth scope, fixed
   by widening `UPLOAD_SCOPE` to `https://www.googleapis.com/auth/youtube`.
-- Re-test with the widened scope: _not yet performed — pending the steps
-  above._
+- 2026-07-08 (widened `youtube` scope, re-test): **PASSED** —
+  `cancel_scheduled_release()`'s bare `{"privacyStatus": "private"}` body
+  successfully cancelled the pending `publishAt`; `verify_killed()` confirmed
+  `private` both internally and via an independent API re-fetch after the
+  original `publishAt` timestamp passed. Assumption A1 is now empirically
+  confirmed under the current (widened) scope.
 
 ---
 
