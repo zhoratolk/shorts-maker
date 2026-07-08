@@ -12,6 +12,7 @@ from scripts.publish_queue import (
     UPLOAD_SCOPE,
     VALID_STATUSES,
     append_notification,
+    build_argument_parser,
     build_insert_body,
     cancel_scheduled_release,
     collect_scheduled_slots,
@@ -24,6 +25,7 @@ from scripts.publish_queue import (
     reconcile_all_uploading,
     reconcile_uploading,
     resume_item,
+    run_command,
     save_queue,
     select_next_due,
     upload_and_schedule,
@@ -889,3 +891,180 @@ def test_append_notification_success_line_contains_seq_and_hhmm(tmp_path):
     line = unread[0]
     assert "3" in line
     assert "20:00" in line
+
+
+# --- Task 2: argparse CLI - --check/--now/--pause/--kill/--resume/--list ----
+
+
+class FakeCliPublishConfig:
+    """Minimal stand-in for scripts.config.PublishConfig used by run_command
+    tests - mirrors FakePublishConfig's fields plus paths run_command needs.
+    """
+
+    def __init__(
+        self,
+        enabled,
+        daily_slots_utc=None,
+        queue_path="work/_publish/queue.json",
+        notifications_path="work/_publish/notifications.log",
+        client_secret_path="client_secret.json",
+        upload_token_path="upload_token.json",
+    ):
+        self.enabled = enabled
+        self.daily_slots_utc = daily_slots_utc or DAILY_SLOTS_UTC
+        self.queue_path = queue_path
+        self.notifications_path = notifications_path
+        self.client_secret_path = client_secret_path
+        self.upload_token_path = upload_token_path
+
+
+def make_cli_queue(tmp_path, entries):
+    queue_path = str(tmp_path / "queue.json")
+    save_queue({"entries": entries}, queue_path)
+    return queue_path
+
+
+def test_list_prints_seq_numbers(tmp_path, capsys):
+    queue_path = make_cli_queue(
+        tmp_path,
+        [
+            make_entry(clip_id="clip-1", seq=1, status=QUEUED, title="First"),
+            make_entry(clip_id="clip-2", seq=2, status=SCHEDULED, title="Second"),
+        ],
+    )
+    config = FakeCliPublishConfig(enabled=False, queue_path=queue_path)
+
+    args = build_argument_parser().parse_args(["--list"])
+    run_command(args, service_factory=lambda: None, config=config)
+
+    out = capsys.readouterr().out
+    assert "1" in out
+    assert "2" in out
+    assert "First" in out
+    assert "Second" in out
+
+
+def test_check_dry_run_makes_zero_service_calls(tmp_path, capsys):
+    queue_path = make_cli_queue(
+        tmp_path, [make_entry(clip_id="clip-1", seq=1, status=QUEUED)]
+    )
+    config = FakeCliPublishConfig(enabled=False, queue_path=queue_path)
+
+    calls = []
+
+    def service_factory():
+        calls.append("called")
+        raise AssertionError("service_factory must never be called in dry-run")
+
+    args = build_argument_parser().parse_args(["--check"])
+    run_command(args, service_factory=service_factory, config=config)
+
+    assert calls == []
+    queue = load_queue(queue_path)
+    assert queue["entries"][0]["status"] == QUEUED
+    out = capsys.readouterr().out
+    assert "dry-run" in out.lower()
+
+
+def test_check_enabled_uploads_exactly_one_item_and_appends_one_notification(tmp_path):
+    video_path = tmp_path / "clip1.mp4"
+    video_path.write_bytes(b"fake video bytes")
+    queue_path = make_cli_queue(
+        tmp_path,
+        [
+            make_entry(clip_id="clip-1", seq=1, status=QUEUED, video_path=str(video_path)),
+            make_entry(clip_id="clip-2", seq=2, status=QUEUED, video_path=str(video_path)),
+        ],
+    )
+    notifications_path = str(tmp_path / "notifications.log")
+    marker_path = str(tmp_path / "notifications.read")
+    config = FakeCliPublishConfig(
+        enabled=True, queue_path=queue_path, notifications_path=notifications_path
+    )
+
+    service = FakeVideosInsertService(video_id="vid_checked")
+
+    def service_factory():
+        return service
+
+    args = build_argument_parser().parse_args(["--check"])
+    run_command(args, service_factory=service_factory, config=config)
+
+    queue = load_queue(queue_path)
+    scheduled = [e for e in queue["entries"] if e["status"] == SCHEDULED]
+    still_queued = [e for e in queue["entries"] if e["status"] == QUEUED]
+    assert len(scheduled) == 1
+    assert len(still_queued) == 1
+    assert len(service.insert_calls) == 1
+
+    unread = read_unread_notifications(notifications_path, marker_path)
+    assert len(unread) == 1
+    assert "1" in unread[0]
+
+
+def test_now_targets_the_named_clip_via_same_upload_path(tmp_path):
+    video_path = tmp_path / "clip2.mp4"
+    video_path.write_bytes(b"fake video bytes")
+    queue_path = make_cli_queue(
+        tmp_path,
+        [
+            make_entry(clip_id="clip-1", seq=1, status=QUEUED, video_path=str(video_path)),
+            make_entry(clip_id="clip-2", seq=2, status=QUEUED, video_path=str(video_path)),
+        ],
+    )
+    notifications_path = str(tmp_path / "notifications.log")
+    config = FakeCliPublishConfig(
+        enabled=True, queue_path=queue_path, notifications_path=notifications_path
+    )
+
+    service = FakeVideosInsertService(video_id="vid_now")
+
+    def service_factory():
+        return service
+
+    args = build_argument_parser().parse_args(["--now", "clip-2"])
+    run_command(args, service_factory=service_factory, config=config)
+
+    queue = load_queue(queue_path)
+    entry_1 = next(e for e in queue["entries"] if e["clip_id"] == "clip-1")
+    entry_2 = next(e for e in queue["entries"] if e["clip_id"] == "clip-2")
+    assert entry_1["status"] == QUEUED
+    assert entry_2["status"] == SCHEDULED
+    assert len(service.insert_calls) == 1
+
+
+def test_now_unknown_clip_id_errors_cleanly_not_crash(tmp_path, capsys):
+    queue_path = make_cli_queue(
+        tmp_path, [make_entry(clip_id="clip-1", seq=1, status=QUEUED)]
+    )
+    config = FakeCliPublishConfig(enabled=True, queue_path=queue_path)
+
+    args = build_argument_parser().parse_args(["--now", "does-not-exist"])
+    with pytest.raises(SystemExit):
+        run_command(args, service_factory=lambda: None, config=config)
+
+
+def test_kill_unknown_clip_id_errors_cleanly_not_crash(tmp_path):
+    queue_path = make_cli_queue(
+        tmp_path, [make_entry(clip_id="clip-1", seq=1, status=QUEUED)]
+    )
+    config = FakeCliPublishConfig(enabled=True, queue_path=queue_path)
+
+    args = build_argument_parser().parse_args(["--kill", "does-not-exist"])
+    with pytest.raises(SystemExit):
+        run_command(args, service_factory=lambda: None, config=config)
+
+
+def test_pause_and_resume_via_cli_dispatch(tmp_path):
+    queue_path = make_cli_queue(
+        tmp_path, [make_entry(clip_id="clip-1", seq=1, status=QUEUED)]
+    )
+    config = FakeCliPublishConfig(enabled=True, queue_path=queue_path)
+
+    pause_args = build_argument_parser().parse_args(["--pause", "clip-1"])
+    run_command(pause_args, service_factory=lambda: None, config=config)
+    assert load_queue(queue_path)["entries"][0]["status"] == PAUSED
+
+    resume_args = build_argument_parser().parse_args(["--resume", "clip-1"])
+    run_command(resume_args, service_factory=lambda: None, config=config)
+    assert load_queue(queue_path)["entries"][0]["status"] == QUEUED
