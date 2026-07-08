@@ -161,6 +161,21 @@ class MonetizationConfig:
 
 
 @dataclasses.dataclass
+class PublishConfig:
+    # Dry-run is the default - going live requires an explicit opt-in
+    # (PUB-03). A missing `publish` section in config.yaml also resolves to
+    # this default via load_config's data.get("publish", {}) below.
+    enabled: bool = False
+    daily_slots_utc: list[str] = dataclasses.field(
+        default_factory=lambda: ["09:00", "15:00", "20:00"]
+    )
+    queue_path: str = "work/_publish/queue.json"
+    notifications_path: str = "work/_publish/notifications.log"
+    client_secret_path: str = "client_secret.json"
+    upload_token_path: str = "upload_token.json"
+
+
+@dataclasses.dataclass
 class Config:
     input_dir: str
     output_dir: str
@@ -179,6 +194,7 @@ class Config:
     effects: EffectsConfig = dataclasses.field(default_factory=EffectsConfig)
     jumpcuts: JumpcutsConfig = dataclasses.field(default_factory=JumpcutsConfig)
     visual: VisualConfig = dataclasses.field(default_factory=VisualConfig)
+    publish: PublishConfig = dataclasses.field(default_factory=PublishConfig)
 
 
 def _build(section_cls, data: dict, section_name: str):
@@ -215,6 +231,7 @@ def load_config(path: str) -> Config:
         effects=_build(EffectsConfig, data.get("effects", {}), "effects"),
         jumpcuts=_build(JumpcutsConfig, data.get("jumpcuts", {}), "jumpcuts"),
         visual=_build(VisualConfig, data.get("visual", {}), "visual"),
+        publish=_build(PublishConfig, data.get("publish", {}), "publish"),
     )
     _validate(config)
     return config
@@ -320,4 +337,21 @@ def _validate(config: Config) -> None:
     if config.audio_energy.merge_gap_seconds < 0:
         raise ConfigError(
             f"audio_energy.merge_gap_seconds must be >= 0, got {config.audio_energy.merge_gap_seconds}"
+        )
+    for slot in config.publish.daily_slots_utc:
+        parts = slot.split(":")
+        valid = False
+        if len(parts) == 2:
+            try:
+                hour, minute = int(parts[0]), int(parts[1])
+                valid = 0 <= hour <= 23 and 0 <= minute <= 59
+            except ValueError:
+                valid = False
+        if not valid:
+            raise ConfigError(
+                f"publish.daily_slots_utc contains an invalid HH:MM 24-hour entry: {slot!r}"
+            )
+    if config.publish.enabled and not config.publish.daily_slots_utc:
+        raise ConfigError(
+            "publish.daily_slots_utc must be non-empty when publish.enabled is true"
         )

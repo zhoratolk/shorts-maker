@@ -751,3 +751,88 @@ def test_load_config_monetization_audio_fingerprint_custom_values_round_trip(tmp
 
     assert config.monetization.audio_fingerprint_enabled is True
     assert config.monetization.enable_lookup is True
+
+
+def test_default_config_publish_enabled_is_false():
+    from scripts.config import Config
+
+    config = Config(input_dir="F:/in", output_dir="F:/out")
+
+    assert config.publish.enabled is False
+
+
+def test_load_config_publish_defaults_when_section_missing(tmp_path):
+    path = write_config(tmp_path, 'input_dir: "F:/in"\noutput_dir: "F:/out"\n')
+
+    config = load_config(path)
+
+    assert config.publish.enabled is False
+    assert config.publish.daily_slots_utc == ["09:00", "15:00", "20:00"]
+    assert config.publish.queue_path == "work/_publish/queue.json"
+    assert config.publish.notifications_path == "work/_publish/notifications.log"
+    assert config.publish.client_secret_path == "client_secret.json"
+    assert config.publish.upload_token_path == "upload_token.json"
+
+
+def test_load_config_publish_custom_values_round_trip(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        publish:
+          enabled: true
+          daily_slots_utc: ["10:30", "22:00"]
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.publish.enabled is True
+    assert config.publish.daily_slots_utc == ["10:30", "22:00"]
+
+
+def test_load_config_publish_invalid_slot_format_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        publish:
+          daily_slots_utc: ["9am"]
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="daily_slots_utc"):
+        load_config(path)
+
+
+def test_load_config_publish_invalid_slot_hour_out_of_range_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        publish:
+          daily_slots_utc: ["25:00"]
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="daily_slots_utc"):
+        load_config(path)
+
+
+def test_load_config_publish_empty_slots_when_enabled_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        publish:
+          enabled: true
+          daily_slots_utc: []
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="daily_slots_utc"):
+        load_config(path)
