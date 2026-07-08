@@ -311,6 +311,7 @@ def build_ffmpeg_command(
 
     return [
         "ffmpeg", "-y",
+        "-loglevel", "error",
         "-ss", str(start),
         "-i", input_path,
         "-t", str(total_duration),
@@ -400,6 +401,7 @@ def build_jumpcut_command(
 
     return [
         "ffmpeg", "-y",
+        "-loglevel", "error",
         "-ss", str(clip_start),
         "-i", input_path,
         "-t", str(round(clip_end - clip_start, 3)),
