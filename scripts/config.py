@@ -131,6 +131,31 @@ class JumpcutsConfig:
 
 
 @dataclasses.dataclass
+class TransitionsConfig:
+    # Context-driven transitions (crossfade/whip pan/mask-wipe/glitch/match cut)
+    # at jumpcut boundaries. Off by default - conservative/opt-in like every
+    # other optional feature (D-01, Fail-open).
+    enabled: bool = False
+    # xfade/borrowed-overlap window length. Short so a transition reads
+    # snappy, not drawn-out - empirical starting point, tune after watching
+    # real renders (D-02).
+    transition_duration: float = 0.35
+    # Below this much borrowed overlap at a boundary, a transition would be
+    # imperceptible, so the boundary falls back to a plain cut (TRANS-03).
+    # Empirical starting point, tune after watching real renders (D-02).
+    min_overlap_seconds: float = 0.12
+    # A boundary's motion/audio score must exceed this percentile of THIS
+    # video's own boundary-score distribution before a non-cut transition is
+    # chosen - adaptive, not a fixed magic number (RESEARCH.md Pitfall 4,
+    # D-01/D-02). Empirical starting point, tune after watching real renders.
+    strong_signal_percentile: float = 85.0
+    # Histogram correlation at/above this reads as visually continuous,
+    # selecting match_cut over another transition type. Empirical starting
+    # point, tune after watching real renders (D-02).
+    match_cut_similarity: float = 0.90
+
+
+@dataclasses.dataclass
 class EffectsConfig:
     vignette: bool = False
     grain_strength: int = 0
@@ -195,6 +220,7 @@ class Config:
     jumpcuts: JumpcutsConfig = dataclasses.field(default_factory=JumpcutsConfig)
     visual: VisualConfig = dataclasses.field(default_factory=VisualConfig)
     publish: PublishConfig = dataclasses.field(default_factory=PublishConfig)
+    transitions: TransitionsConfig = dataclasses.field(default_factory=TransitionsConfig)
 
 
 def _build(section_cls, data: dict, section_name: str):
@@ -232,6 +258,7 @@ def load_config(path: str) -> Config:
         jumpcuts=_build(JumpcutsConfig, data.get("jumpcuts", {}), "jumpcuts"),
         visual=_build(VisualConfig, data.get("visual", {}), "visual"),
         publish=_build(PublishConfig, data.get("publish", {}), "publish"),
+        transitions=_build(TransitionsConfig, data.get("transitions", {}), "transitions"),
     )
     _validate(config)
     return config
@@ -354,4 +381,26 @@ def _validate(config: Config) -> None:
     if config.publish.enabled and not config.publish.daily_slots_utc:
         raise ConfigError(
             "publish.daily_slots_utc must be non-empty when publish.enabled is true"
+        )
+    if config.transitions.transition_duration <= 0:
+        raise ConfigError(
+            f"transitions.transition_duration must be > 0, got {config.transitions.transition_duration}"
+        )
+    if config.transitions.min_overlap_seconds <= 0:
+        raise ConfigError(
+            f"transitions.min_overlap_seconds must be > 0, got {config.transitions.min_overlap_seconds}"
+        )
+    if config.transitions.min_overlap_seconds > config.transitions.transition_duration:
+        raise ConfigError(
+            "transitions.min_overlap_seconds must be <= transitions.transition_duration"
+        )
+    if not (0 < config.transitions.strong_signal_percentile < 100):
+        raise ConfigError(
+            f"transitions.strong_signal_percentile must be between 0 and 100 (exclusive), "
+            f"got {config.transitions.strong_signal_percentile}"
+        )
+    if not (0 <= config.transitions.match_cut_similarity <= 1):
+        raise ConfigError(
+            f"transitions.match_cut_similarity must be between 0 and 1, "
+            f"got {config.transitions.match_cut_similarity}"
         )

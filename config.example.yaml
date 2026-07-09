@@ -214,3 +214,24 @@ visual:
   # Also let frames surface candidates the transcript text alone would
   # miss (a death screen, a clutch play, a visual gag).
   detect_visual_candidates: true
+
+transitions:
+  # Context-driven transitions (crossfade/whip pan/mask-wipe/glitch/match cut)
+  # at jumpcut boundaries instead of always a plain cut. Off by default -
+  # conservative bias, a plain cut is always the fallback (D-01).
+  enabled: false
+  # xfade/borrowed-overlap window length, seconds. Empirical starting point -
+  # tune after watching real renders.
+  transition_duration: 0.35
+  # Below this much borrowed overlap at a boundary, a transition would be
+  # imperceptible and the boundary falls back to a plain cut. Empirical
+  # starting point - tune after watching real renders.
+  min_overlap_seconds: 0.12
+  # A boundary's motion/audio score must exceed this percentile of the
+  # video's own boundary-score distribution before a non-cut transition is
+  # chosen. Empirical starting point - tune after watching real renders.
+  strong_signal_percentile: 85.0
+  # Histogram correlation at/above this reads as visually continuous,
+  # selecting match_cut. Empirical starting point - tune after watching real
+  # renders.
+  match_cut_similarity: 0.90
