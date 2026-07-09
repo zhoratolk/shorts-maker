@@ -10,3 +10,9 @@ config.yaml
 client_secret.json
 token.json
 upload_token.json
+.pytest_cache/
+# .pytest-tmp/ is this machine's --basetemp override for pytest's tmp_path
+# fixture - the default OS temp dir is permission-locked here (see
+# STATE.md Blockers/Concerns), so tests are run with --basetemp pointing
+# at this repo-local scratch dir instead. Runtime output only, never tracked.
+.pytest-tmp/
