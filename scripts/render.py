@@ -381,6 +381,95 @@ def build_ffmpeg_command(
     ]
 
 
+def _build_transition_fold(
+    relative_segments: list[tuple[float, float]],
+    boundary_transitions: list[str],
+    boundary_gaps: list[float] | None,
+    transition_duration: float,
+    min_overlap_seconds: float,
+) -> tuple[list[str], list[str], float]:
+    """Builds the sequential-fold trim/join stages for a jumpcut command that
+    has at least one non-cut boundary transition (04-RESEARCH.md Pitfall 2:
+    concat is N-ary, xfade is pairwise, so a mix of cut and fancy boundaries
+    can't be expressed by a single N-ary concat node).
+
+    Segment trims are extended into their adjacent boundary's pause gap
+    (Pitfall 1) only for boundaries that actually get a real transition, so
+    xfade/acrossfade overlap is always borrowed dead air, never real kept
+    content. Cut/match_cut boundaries, and non-cut boundaries whose gap is
+    below min_overlap_seconds (TRANS-03 render-layer fallback), join via a
+    plain 2-input concat instead - trims for those segments are left exactly
+    as computed by the caller.
+
+    Returns (trim_stages, fold_stages, total_output_duration) - fold_stages'
+    final node writes to [vcat]/[acat] so the caller's downstream video_ops/
+    audio_stage code is unchanged regardless of which path built the graph.
+    """
+    segment_count = len(relative_segments)
+    if boundary_gaps is None:
+        boundary_gaps = [0.0] * (segment_count - 1)
+
+    starts = [seg_start for seg_start, seg_end in relative_segments]
+    ends = [seg_end for seg_start, seg_end in relative_segments]
+
+    # Effective xfade duration per boundary - None means "downgrade to a
+    # plain cut join" (cut/match_cut requested, or gap too small to borrow).
+    effective_duration: list[float | None] = []
+    for boundary in range(segment_count - 1):
+        transition_type = boundary_transitions[boundary]
+        gap = boundary_gaps[boundary]
+        if transition_type in ("cut", "match_cut") or gap < min_overlap_seconds:
+            effective_duration.append(None)
+            continue
+        d_eff = min(transition_duration, gap)
+        d_eff = max(min_overlap_seconds, min(d_eff, transition_duration))
+        effective_duration.append(round(d_eff, 3))
+
+    # Extend trims into the borrowed gap - symmetric split, always <= gap
+    # (d_eff <= gap by construction above) so trims never cross into either
+    # side's real kept content.
+    for boundary, d_eff in enumerate(effective_duration):
+        if d_eff is None:
+            continue
+        extend_into_a = round(d_eff / 2, 3)
+        extend_into_b = round(d_eff - extend_into_a, 3)
+        ends[boundary] = round(ends[boundary] + extend_into_a, 3)
+        starts[boundary + 1] = round(starts[boundary + 1] - extend_into_b, 3)
+
+    trim_stages = []
+    for index in range(segment_count):
+        trim_stages.append(f"[0:v]trim=start={starts[index]}:end={ends[index]},setpts=PTS-STARTPTS[v{index}]")
+        trim_stages.append(f"[0:a]atrim=start={starts[index]}:end={ends[index]},asetpts=PTS-STARTPTS[a{index}]")
+
+    fold_stages = []
+    acc_v, acc_a = "v0", "a0"
+    acc_duration = round(ends[0] - starts[0], 3)
+    for index in range(1, segment_count):
+        seg_duration = round(ends[index] - starts[index], 3)
+        is_last = index == segment_count - 1
+        out_v = "vcat" if is_last else f"vfold{index}"
+        out_a = "acat" if is_last else f"afold{index}"
+        d_eff = effective_duration[index - 1]
+
+        if d_eff is None:
+            fold_stages.append(f"[{acc_v}][{acc_a}][v{index}][a{index}]concat=n=2:v=1:a=1[{out_v}][{out_a}]")
+            acc_duration = round(acc_duration + seg_duration, 3)
+        else:
+            # Pattern 3: xfade offset is where segment A's accumulated
+            # footage would end minus the overlap duration.
+            offset = round(acc_duration - d_eff, 3)
+            video_node = build_transition_filter(
+                boundary_transitions[index - 1], d_eff, offset, acc_v, f"v{index}", out_v
+            )
+            fold_stages.append(video_node)
+            fold_stages.append(f"[{acc_a}][a{index}]acrossfade=d={d_eff}[{out_a}]")
+            acc_duration = round(acc_duration + seg_duration - d_eff, 3)
+
+        acc_v, acc_a = out_v, out_a
+
+    return trim_stages, fold_stages, acc_duration
+
+
 def build_jumpcut_command(
     input_path: str,
     output_path: str,
@@ -399,6 +488,10 @@ def build_jumpcut_command(
     punch_zoom_amount: float = 1.15,
     punch_zoom_ramp: float = 0.25,
     denoise_strength: float = 6.0,
+    boundary_transitions: list[str] | None = None,
+    boundary_gaps: list[float] | None = None,
+    transition_duration: float = 0.35,
+    min_overlap_seconds: float = 0.12,
 ) -> list[str]:
     """Like build_ffmpeg_command, but keep_segments (absolute source-file
     seconds, from jumpcuts.compute_keep_segments) are trimmed out of the
@@ -410,23 +503,50 @@ def build_jumpcut_command(
     *spliced* output timeline (see jumpcuts.remap_timestamp), not the
     original source timeline - the concat above changes where anything
     after the first cut lands.
+
+    boundary_transitions (one entry per boundary, len == len(keep_segments)-1)
+    is optional; when it is None or every entry is cut/match_cut, this
+    produces the exact same flat trim + concat=n=N graph as today
+    (backward compatibility). When at least one boundary requests a real
+    transition, the graph is instead built as a sequential fold (see
+    _build_transition_fold) that borrows overlap from boundary_gaps -
+    04-RESEARCH.md Pitfall 1/2, Pattern 3.
     """
     if not keep_segments:
         raise RenderError("keep_segments must not be empty")
+
+    if boundary_transitions is not None:
+        for transition_type in boundary_transitions:
+            if transition_type not in VALID_TRANSITIONS:
+                raise RenderError(
+                    f"boundary_transitions entries must be one of {sorted(VALID_TRANSITIONS)}, "
+                    f"got {transition_type!r}"
+                )
 
     # -ss before -i seeks fast and resets the decoded timeline to 0, so every
     # segment boundary below must be expressed relative to clip_start.
     relative_segments = [(seg_start - clip_start, seg_end - clip_start) for seg_start, seg_end in keep_segments]
 
-    trim_stages = []
-    concat_refs = []
-    for index, (seg_start, seg_end) in enumerate(relative_segments):
-        trim_stages.append(f"[0:v]trim=start={seg_start}:end={seg_end},setpts=PTS-STARTPTS[v{index}]")
-        trim_stages.append(f"[0:a]atrim=start={seg_start}:end={seg_end},asetpts=PTS-STARTPTS[a{index}]")
-        concat_refs.append(f"[v{index}][a{index}]")
-    concat_stage = f"{''.join(concat_refs)}concat=n={len(relative_segments)}:v=1:a=1[vcat][acat]"
+    uses_fold = boundary_transitions is not None and any(
+        transition_type not in ("cut", "match_cut") for transition_type in boundary_transitions
+    )
 
-    total_duration = round(sum(seg_end - seg_start for seg_start, seg_end in relative_segments), 3)
+    if not uses_fold:
+        trim_stages = []
+        concat_refs = []
+        for index, (seg_start, seg_end) in enumerate(relative_segments):
+            trim_stages.append(f"[0:v]trim=start={seg_start}:end={seg_end},setpts=PTS-STARTPTS[v{index}]")
+            trim_stages.append(f"[0:a]atrim=start={seg_start}:end={seg_end},asetpts=PTS-STARTPTS[a{index}]")
+            concat_refs.append(f"[v{index}][a{index}]")
+        concat_stage = f"{''.join(concat_refs)}concat=n={len(relative_segments)}:v=1:a=1[vcat][acat]"
+        stages = trim_stages + [concat_stage]
+        total_duration = round(sum(seg_end - seg_start for seg_start, seg_end in relative_segments), 3)
+    else:
+        trim_stages, fold_stages, total_duration = _build_transition_fold(
+            relative_segments, boundary_transitions, boundary_gaps, transition_duration, min_overlap_seconds
+        )
+        stages = trim_stages + fold_stages
+
     _, fade_start, fade_duration = compute_fade_plan(total_duration, fade_seconds, tail_available=0.0)
 
     video_ops = [crop_filter]
@@ -455,7 +575,7 @@ def build_jumpcut_command(
 
     video_stage = f"[vcat]{','.join(video_ops)}[vout]"
     audio_stage = f"[acat]{audio_filter_chain}[aout]"
-    filter_complex = ";".join(trim_stages + [concat_stage, video_stage, audio_stage])
+    filter_complex = ";".join(stages + [video_stage, audio_stage])
 
     return [
         "ffmpeg", "-y",
