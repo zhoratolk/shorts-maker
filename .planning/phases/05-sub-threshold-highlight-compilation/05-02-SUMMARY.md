@@ -154,3 +154,13 @@ None - no external service configuration required.
 ---
 *Phase: 05-sub-threshold-highlight-compilation*
 *Completed: 2026-07-10*
+
+## Self-Check: PASSED
+
+- FOUND: scripts/config.py
+- FOUND: tests/test_config.py
+- FOUND: config.example.yaml
+- FOUND: scripts/compilation.py
+- FOUND: tests/test_compilation.py
+- FOUND: .planning/phases/05-sub-threshold-highlight-compilation/05-02-SUMMARY.md
+- FOUND: f105072, 8178e44, a0b320e, 2711f6c, b953dca
