@@ -164,3 +164,7 @@ None - no external service configuration required.
 ---
 *Phase: 04-context-driven-transitions*
 *Completed: 2026-07-09*
+
+## Self-Check: PASSED
+
+All key files (scripts/config.py, config.example.yaml, scripts/jumpcuts.py, tests/test_config.py, tests/test_jumpcuts.py, this SUMMARY.md) exist on disk. All commits (1d13d2b, 95d7af1, b6607ea, 8b55a6c, e32e626) verified present in `git log --oneline --all`.
