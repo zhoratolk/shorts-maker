@@ -736,6 +736,48 @@ def test_render_clip_uses_jumpcut_command_when_keep_segments_present():
     assert "concat=n=2:v=1:a=1" in filter_complex
 
 
+def test_render_clip_threads_boundary_transitions_into_jumpcut_command():
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "keep_segments": [[10.0, 20.0], [22.0, 40.0]],
+        "boundary_transitions": ["crossfade"],
+    }
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=lambda command, capture_output, text: FakeResult(),
+    )
+
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "xfade" in filter_complex
+
+
+def test_render_clip_rejects_boundary_transitions_wrong_length():
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "keep_segments": [[10.0, 20.0], [22.0, 40.0]],
+        "boundary_transitions": ["crossfade", "crossfade"],
+    }
+
+    with pytest.raises(RenderError, match="boundary_transitions"):
+        render_clip(
+            "in.mp4", "out.mp4", plan_entry,
+            video_duration=100.0, src_width=1920, src_height=1080,
+            runner=lambda command, capture_output, text: FakeResult(),
+        )
+
+
 def test_render_clip_threads_fade_seconds_into_command():
     captured = {}
 
