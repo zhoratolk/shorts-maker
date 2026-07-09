@@ -836,3 +836,160 @@ def test_load_config_publish_empty_slots_when_enabled_raises(tmp_path):
 
     with pytest.raises(ConfigError, match="daily_slots_utc"):
         load_config(path)
+
+
+def test_load_config_transitions_defaults_when_section_missing(tmp_path):
+    path = write_config(tmp_path, 'input_dir: "F:/in"\noutput_dir: "F:/out"\n')
+
+    config = load_config(path)
+
+    assert config.transitions.enabled is False
+    assert config.transitions.transition_duration == 0.35
+    assert config.transitions.min_overlap_seconds == 0.12
+    assert config.transitions.strong_signal_percentile == 85.0
+    assert config.transitions.match_cut_similarity == 0.90
+
+
+def test_load_config_transitions_custom_values_round_trip(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        transitions:
+          enabled: true
+          transition_duration: 0.35
+          min_overlap_seconds: 0.12
+          strong_signal_percentile: 85.0
+          match_cut_similarity: 0.90
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.transitions.enabled is True
+    assert config.transitions.transition_duration == 0.35
+    assert config.transitions.min_overlap_seconds == 0.12
+    assert config.transitions.strong_signal_percentile == 85.0
+    assert config.transitions.match_cut_similarity == 0.90
+
+
+def test_load_config_transitions_transition_duration_must_be_positive(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        transitions:
+          transition_duration: 0
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="transitions.transition_duration"):
+        load_config(path)
+
+
+def test_load_config_transitions_min_overlap_seconds_must_be_positive(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        transitions:
+          min_overlap_seconds: 0
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="transitions.min_overlap_seconds"):
+        load_config(path)
+
+
+def test_load_config_transitions_min_overlap_seconds_exceeding_duration_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        transitions:
+          transition_duration: 0.2
+          min_overlap_seconds: 0.5
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="transitions.min_overlap_seconds"):
+        load_config(path)
+
+
+def test_load_config_transitions_strong_signal_percentile_out_of_range_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        transitions:
+          strong_signal_percentile: 100
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="transitions.strong_signal_percentile"):
+        load_config(path)
+
+
+def test_load_config_transitions_strong_signal_percentile_zero_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        transitions:
+          strong_signal_percentile: 0
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="transitions.strong_signal_percentile"):
+        load_config(path)
+
+
+def test_load_config_transitions_match_cut_similarity_out_of_range_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        transitions:
+          match_cut_similarity: 1.5
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="transitions.match_cut_similarity"):
+        load_config(path)
+
+
+def test_load_config_transitions_match_cut_similarity_negative_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        transitions:
+          match_cut_similarity: -0.1
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="transitions.match_cut_similarity"):
+        load_config(path)
+
+
+def test_load_config_transitions_unknown_field_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        transitions:
+          not_a_real_field: 1
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="transitions"):
+        load_config(path)
