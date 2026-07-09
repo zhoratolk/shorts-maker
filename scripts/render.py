@@ -396,10 +396,16 @@ def _build_transition_fold(
     Segment trims are extended into their adjacent boundary's pause gap
     (Pitfall 1) only for boundaries that actually get a real transition, so
     xfade/acrossfade overlap is always borrowed dead air, never real kept
-    content. Cut/match_cut boundaries, and non-cut boundaries whose gap is
-    below min_overlap_seconds (TRANS-03 render-layer fallback), join via a
-    plain 2-input concat instead - trims for those segments are left exactly
-    as computed by the caller.
+    content. Cut/match_cut boundaries, and non-cut boundaries whose gap - or
+    whose adjacent kept-segment duration - is below min_overlap_seconds
+    (TRANS-03 render-layer fallback), join via a plain 2-input concat instead
+    - trims for those segments are left exactly as computed by the caller.
+    A short kept segment must never be asked to host more overlap than it
+    actually has, or the xfade offset computed below goes negative and
+    build_transition_filter raises - defeating the TRANS-03 fallback
+    guarantee. A second, last-resort guard right before the xfade call
+    downgrades to concat if the accumulated fold duration still can't cover
+    d_eff (e.g. a segment borrowed into from both sides).
 
     Returns (trim_stages, fold_stages, total_output_duration) - fold_stages'
     final node writes to [vcat]/[acat] so the caller's downstream video_ops/
@@ -418,11 +424,18 @@ def _build_transition_fold(
     for boundary in range(segment_count - 1):
         transition_type = boundary_transitions[boundary]
         gap = boundary_gaps[boundary]
-        if transition_type in ("cut", "match_cut") or gap < min_overlap_seconds:
+        # Cap the borrowable overlap by the adjacent kept segments' own
+        # durations too, not just the pause gap - a short kept segment
+        # (nothing in jumpcuts.py enforces a minimum) can't host more
+        # overlap than it actually contains without going negative below.
+        seg_a_duration = ends[boundary] - starts[boundary]
+        seg_b_duration = ends[boundary + 1] - starts[boundary + 1]
+        max_borrowable = min(gap, seg_a_duration, seg_b_duration)
+        if transition_type in ("cut", "match_cut") or max_borrowable < min_overlap_seconds:
             effective_duration.append(None)
             continue
-        d_eff = min(transition_duration, gap)
-        d_eff = max(min_overlap_seconds, min(d_eff, transition_duration))
+        d_eff = min(transition_duration, max_borrowable)
+        d_eff = max(min_overlap_seconds, min(d_eff, max_borrowable))
         effective_duration.append(round(d_eff, 3))
 
     # Extend trims into the borrowed gap - symmetric split, always <= gap
@@ -451,7 +464,12 @@ def _build_transition_fold(
         out_a = "acat" if is_last else f"afold{index}"
         d_eff = effective_duration[index - 1]
 
-        if d_eff is None:
+        # Last-resort safety net: even with the per-boundary cap above, a
+        # segment borrowed into from both sides (two adjacent transitions)
+        # could still leave less accumulated duration than d_eff wants to
+        # borrow. Downgrade to a plain concat rather than let offset go
+        # negative and raise out of build_transition_filter.
+        if d_eff is None or d_eff > acc_duration:
             fold_stages.append(f"[{acc_v}][{acc_a}][v{index}][a{index}]concat=n=2:v=1:a=1[{out_v}][{out_a}]")
             acc_duration = round(acc_duration + seg_duration, 3)
         else:
