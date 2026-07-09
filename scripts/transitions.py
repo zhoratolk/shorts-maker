@@ -304,12 +304,65 @@ def select_boundary_transitions(
     return transitions
 
 
+# TransitionsConfig defaults (scripts/config.py) - duplicated here rather
+# than imported, since scripts.*.py modules never import config.py at
+# runtime (this project's Anti-Patterns: scripts take resolved CLI flags,
+# decoupling script CLIs from the config schema).
+_DEFAULT_TRANSITION_DURATION = 0.35
+_DEFAULT_MIN_OVERLAP_SECONDS = 0.12
+_DEFAULT_STRONG_SIGNAL_PERCENTILE = 85.0
+_DEFAULT_MATCH_CUT_SIMILARITY = 0.90
+
+
+def _cmd_select_transitions(args: argparse.Namespace, runner=subprocess.run) -> None:
+    keep_segments_raw = json.loads(Path(args.keep_segments_json).read_text(encoding="utf-8"))
+    keep_segments = [(segment[0], segment[1]) for segment in keep_segments_raw]
+    config_fields = {
+        "transition_duration": args.transition_duration,
+        "min_overlap_seconds": args.min_overlap_seconds,
+        "strong_signal_percentile": args.strong_signal_percentile,
+        "match_cut_similarity": args.match_cut_similarity,
+    }
+    transitions = select_boundary_transitions(args.video_path, keep_segments, config_fields, runner=runner)
+    Path(args.out_json).write_text(json.dumps(transitions), encoding="utf-8")
+    print(args.out_json)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Analyze clip-boundary motion/audio/similarity signals for context-driven transitions"
     )
-    parser.parse_args()
-    print(json.dumps({"transition_types": sorted(TRANSITION_TYPES)}))
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    select_transitions_parser = subparsers.add_parser(
+        "select-transitions",
+        help="Choose a transition type per keep_segments boundary for a clip (boundary_transitions in PLAN.json)",
+    )
+    select_transitions_parser.add_argument("video_path", help="Path to the source video")
+    select_transitions_parser.add_argument(
+        "keep_segments_json", help="Path to the keep-segments JSON (jumpcuts.py keep-segments output shape)"
+    )
+    select_transitions_parser.add_argument("out_json", help="Path to write the boundary_transitions JSON list to")
+    select_transitions_parser.add_argument(
+        "--transition-duration", type=float, default=_DEFAULT_TRANSITION_DURATION,
+        help=f"xfade/borrowed-overlap window length (default: {_DEFAULT_TRANSITION_DURATION})",
+    )
+    select_transitions_parser.add_argument(
+        "--min-overlap-seconds", type=float, default=_DEFAULT_MIN_OVERLAP_SECONDS,
+        help=f"Below this borrowed overlap, a boundary falls back to cut (default: {_DEFAULT_MIN_OVERLAP_SECONDS})",
+    )
+    select_transitions_parser.add_argument(
+        "--strong-signal-percentile", type=float, default=_DEFAULT_STRONG_SIGNAL_PERCENTILE,
+        help=f"Adaptive per-video percentile a score must clear to be 'strong' (default: {_DEFAULT_STRONG_SIGNAL_PERCENTILE})",
+    )
+    select_transitions_parser.add_argument(
+        "--match-cut-similarity", type=float, default=_DEFAULT_MATCH_CUT_SIMILARITY,
+        help=f"Histogram correlation at/above this selects match_cut (default: {_DEFAULT_MATCH_CUT_SIMILARITY})",
+    )
+    select_transitions_parser.set_defaults(func=_cmd_select_transitions)
+
+    args = parser.parse_args()
+    args.func(args)
 
 
 if __name__ == "__main__":
