@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 04
-current_phase_name: context-driven-transitions
-status: verifying
+current_phase: 05
+current_phase_name: sub-threshold-highlight-compilation
+status: executing
 stopped_at: Phase 5 research done; Phase 6 context gathered
-last_updated: "2026-07-09T17:15:08.317Z"
+last_updated: "2026-07-09T21:50:55.317Z"
 last_activity: 2026-07-09
-last_activity_desc: Phase 04 execution started
+last_activity_desc: Phase 05 execution started
 progress:
-  total_phases: 6
+  total_phases: 7
   completed_phases: 4
-  total_plans: 15
-  completed_plans: 15
-  percent: 67
+  total_plans: 26
+  completed_plans: 16
+  percent: 57
 ---
 
 # Project State
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-07)
 
 **Core value:** Из сырой записи стрима автоматически получить готовый к публикации вертикальный клип — без ручной нарезки и без потери самых залипательных моментов.
-**Current focus:** Phase 04 — context-driven-transitions
+**Current focus:** Phase 05 — sub-threshold-highlight-compilation
 
 ## Current Position
 
-Phase: 04 (context-driven-transitions) — EXECUTING
-Plan: 6 of 6
-Status: Phase complete — ready for verification
-Last activity: 2026-07-09 — Phase 04 execution started
+Phase: 05 (sub-threshold-highlight-compilation) — EXECUTING
+Plan: 2 of 4
+Status: Ready to execute
+Last activity: 2026-07-09 — Phase 05 execution started
 
 Note: Phase 2 (LLM Title & Tag Generation) has plan 02-02 still pending — Phase 3 planning/execution proceeded per project workflow while 02-02 remains open; see Pending Todos.
 
@@ -70,6 +70,7 @@ Progress: [███░░░░░░░] 17% (1/6 phases)
 | Phase 04-context-driven-transitions P04 | 4min | 3 tasks | 2 files |
 | Phase 04-context-driven-transitions P05 | 7min | 3 tasks | 2 files |
 | Phase 04-context-driven-transitions P06 | 6min | 2 tasks | 2 files |
+| Phase 05 P01 | 5min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -82,6 +83,8 @@ Recent decisions affecting current work:
 - Roadmap: Transitions (Phase 4) sequenced before Compilation (Phase 5) since compilation's stitching step consumes the transition engine
 - Roadmap: TikTok/Instagram (Phase 6) sequenced last since both carry external app-review/audit gates that should be started early but not block earlier phases
 - Roadmap: Profanity Auto-Bleep added as Phase 7, depends on Phase 1's transcript/render pipeline only — independent of Phase 5 (compilation) and Phase 6 (auto-publish), so it doesn't block or get blocked by either
+- [Phase 05-01]: append_compilation_sections_markdown takes plain dicts (not Candidate) for both groups and unmatched, per the plan's explicit signature over PATTERNS.md's illustrative Candidate-typed sketch
+- [Phase 05-01]: no CLI subcommand added for append_compilation_sections_markdown — SKILL.md (Plan 05-04) will call it via a python -c one-liner, matching style_profile.py precedent
 
 ### Roadmap Evolution
 
@@ -151,6 +154,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-09T17:15:08.304Z
+Last session: 2026-07-09T21:49:36.718Z
 Stopped at: Phase 5 research done; Phase 6 context gathered
 Resume file: .planning/phases/06-tiktok-instagram-auto-publish/06-CONTEXT.md
