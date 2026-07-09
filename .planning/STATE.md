@@ -81,6 +81,11 @@ Recent decisions affecting current work:
 - Roadmap: Monetization-risk and style-profile merged into one Phase 1 (both independent, both foundational, standard granularity) rather than two separate phases
 - Roadmap: Transitions (Phase 4) sequenced before Compilation (Phase 5) since compilation's stitching step consumes the transition engine
 - Roadmap: TikTok/Instagram (Phase 6) sequenced last since both carry external app-review/audit gates that should be started early but not block earlier phases
+- Roadmap: Profanity Auto-Bleep added as Phase 7, depends on Phase 1's transcript/render pipeline only — independent of Phase 5 (compilation) and Phase 6 (auto-publish), so it doesn't block or get blocked by either
+
+### Roadmap Evolution
+
+- Phase 7 added: Profanity Auto-Bleep — detect swear words in the Whisper transcript, mask with a quiet overlay tone (audio keeps flowing, not full silence) so platform speech-to-text moderation/demonetization scanners can't pick them up
 - Plan 01-01: data/monetization_rules.yaml is committed (not gitignored) — generic platform-policy data, zero channel-specific content
 - Plan 01-01: last_checked on every risk flag is copied verbatim from the ruleset's own `updated:` date stamp, not today's date, so staleness is visible (PITFALLS.md Pitfall 2)
 - Plan 01-01: risk dict is an additive optional field on metadata.py's platform fields — never a gate, output byte-identical when absent

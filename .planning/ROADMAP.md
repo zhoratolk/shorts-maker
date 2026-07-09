@@ -155,7 +155,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -165,3 +165,17 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 4. Context-Driven Transitions | 6/6 | Complete   | 2026-07-09 |
 | 5. Sub-Threshold Highlight Compilation | 0/TBD | Not started | - |
 | 6. TikTok & Instagram Auto-Publish | 0/TBD | Not started | - |
+| 7. Profanity Auto-Bleep | 0/TBD | Not started | - |
+
+### Phase 7: Profanity Auto-Bleep
+
+**Goal**: Swear words detected in the Whisper transcript are masked with a quiet overlay tone at render time — audio keeps flowing (no dead silence gap) but the profanity itself is hard to hear and hard for platform speech-to-text moderation/demonetization scanners to pick up
+**Depends on**: Phase 1 (renders on top of the existing transcript + render pipeline; independent of compilation/auto-publish phases)
+**Requirements**: AUDIO-01, AUDIO-02, AUDIO-03
+**Success Criteria** (what must be TRUE):
+
+  1. Swear words present in the Whisper word-level transcript are identified for every clip going into `render.py`
+  2. Each identified swear word's audio span gets a quiet overlay tone applied instead of being cut to silence or left untouched — the clip's audio track keeps playing underneath
+  3. The masked span is quiet/garbled enough that a platform's automated speech-to-text moderation pass would not transcribe the word cleanly, without being so loud/abrupt that it reads as an obvious edit
+
+**Plans**: TBD

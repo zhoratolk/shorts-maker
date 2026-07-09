@@ -46,6 +46,12 @@
 - [ ] **PUB-06**: TikTok Content Posting API integration — built and shipped as its own gated sub-phase, after YouTube, since unaudited clients are restricted to private-only posting until TikTok's app audit completes (start the audit application early, in parallel with Phase 1)
 - [ ] **PUB-07**: Instagram Graph API Reels integration — requires a Business account + Meta app review; same gated-sub-phase treatment as TikTok
 
+### AUDIO — Profanity Auto-Bleep
+
+- [ ] **AUDIO-01**: Swear words are identified from the existing word-level Whisper transcript for every clip before render
+- [ ] **AUDIO-02**: Each identified span gets a quiet overlay tone applied at render time (via `render.py`'s audio filter chain) — audio keeps playing, no dead-silence gap
+- [ ] **AUDIO-03**: Overlay is quiet/garbled enough to defeat platform speech-to-text moderation scanning of the masked word, without sounding like an abrupt cut
+
 ## v2 Requirements
 
 ### MONET
@@ -94,13 +100,16 @@
 | COMP-03 | Phase 5 | Pending |
 | PUB-06 | Phase 6 | Pending |
 | PUB-07 | Phase 6 | Pending |
+| AUDIO-01 | Phase 7 | Pending |
+| AUDIO-02 | Phase 7 | Pending |
+| AUDIO-03 | Phase 7 | Pending |
 
 > TAGS-01/TAGS-02 status reflects a deliberate architectural reframe confirmed during `/gsd-discuss-phase 2` (human sign-off) — see `.planning/phases/02-llm-title-tag-generation/02-CONTEXT.md` D-01/D-02/D-03 for the full rationale. This is not an oversight or a silently dropped requirement.
 
 **Coverage:**
 
-- v1 requirements: 23 total
-- Mapped to phases: 23
+- v1 requirements: 26 total
+- Mapped to phases: 26
 - Unmapped: 0 ✓
 
 ---
