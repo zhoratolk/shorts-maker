@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 3
-current_phase_name: YouTube Scheduled Auto-Publish
+current_phase: 04
+current_phase_name: context-driven-transitions
 status: executing
 stopped_at: Phase 4 planned and verified, ready for execution
-last_updated: "2026-07-09T04:53:57.042Z"
-last_activity: 2026-07-08
-last_activity_desc: Plan 03-02 complete (upload+schedule path, PUB-02/PUB-03/PUB-05)
+last_updated: "2026-07-09T15:22:14.486Z"
+last_activity: 2026-07-09
+last_activity_desc: Phase 04 execution started
 progress:
   total_phases: 6
   completed_phases: 3
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-07)
 
 **Core value:** Из сырой записи стрима автоматически получить готовый к публикации вертикальный клип — без ручной нарезки и без потери самых залипательных моментов.
-**Current focus:** Phase 3 — YouTube Scheduled Auto-Publish
+**Current focus:** Phase 04 — context-driven-transitions
 
 ## Current Position
 
-Phase: 3 of 6 (YouTube Scheduled Auto-Publish) — IN PROGRESS
-Plan: 4 of 4 in current phase (03-01/03-02 complete, 03-03/03-04 pending)
-Status: Ready to execute 03-03
-Last activity: 2026-07-08 — Plan 03-02 complete (upload+schedule path, PUB-02/PUB-03/PUB-05)
+Phase: 04 (context-driven-transitions) — EXECUTING
+Plan: 1 of 6
+Status: Executing Phase 04
+Last activity: 2026-07-09 — Phase 04 execution started
 
 Note: Phase 2 (LLM Title & Tag Generation) has plan 02-02 still pending — Phase 3 planning/execution proceeded per project workflow while 02-02 remains open; see Pending Todos.
 
