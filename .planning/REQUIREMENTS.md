@@ -27,7 +27,7 @@
 ### TRANS — Context-Driven Transitions
 
 - [x] **TRANS-01**: Pipeline analyzes clip-boundary motion (optical flow) and audio (energy/onset via librosa) to choose a transition type at each clip boundary
-- [ ] **TRANS-02**: Supports at least: cut, crossfade, whip pan, mask/wipe, glitch, match cut
+- [x] **TRANS-02**: Supports at least: cut, crossfade, whip pan, mask/wipe, glitch, match cut
 - [x] **TRANS-03**: Falls back to existing cut/punch-zoom behavior if boundary analysis is inconclusive
 
 ### COMP — Sub-Threshold Highlight Compilation
@@ -87,7 +87,7 @@
 | PUB-04 | Phase 3 | Complete |
 | PUB-05 | Phase 3 | Complete |
 | TRANS-01 | Phase 4 | Complete |
-| TRANS-02 | Phase 4 | Pending |
+| TRANS-02 | Phase 4 | Complete |
 | TRANS-03 | Phase 4 | Complete |
 | COMP-01 | Phase 5 | Pending |
 | COMP-02 | Phase 5 | Pending |
