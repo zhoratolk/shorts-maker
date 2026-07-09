@@ -160,7 +160,26 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. A queued short can be auto-published to Instagram Reels via the Graph API (Business account + app review in place), following the same safety mechanism
   3. Each platform integration is isolated enough that one platform's audit/review delay (e.g. TikTok's SELF_ONLY restriction pre-audit) does not block the other platform or YouTube from publishing
 
-**Plans**: TBD
+**Plans**: 0/7 plans complete
+
+**Wave 1**
+
+- [ ] 06-01-PLAN.md — Legitimacy checkpoint for `requests` + direct-dependency registration in requirements.txt [PUB-06, PUB-07] (wave 1)
+- [ ] 06-02-PLAN.md — PublishConfig extension (tiktok_enabled/instagram_enabled + paths) + .gitignore for new credential files [PUB-06, PUB-07] (wave 1)
+
+**Wave 2** *(blocked on Wave 1)*
+
+- [ ] 06-03-PLAN.md — TikTok core: queue lifecycle, OAuth (cache/refresh + one-time consent), Content Posting API HTTP layer, D-05 SELF_ONLY-detecting orchestration + reconciliation [PUB-06] (wave 2)
+- [ ] 06-04-PLAN.md — Instagram core: queue lifecycle, OAuth, resumable-upload HTTP layer, attempt-then-fail-closed orchestration (InstagramAccessError) + reconciliation [PUB-07] (wave 2)
+
+**Wave 3** *(blocked on Wave 2)*
+
+- [ ] 06-05-PLAN.md — TikTok kill_item (Pitfall-4 semantics) + CLI wrapper (--check/--now/--pause/--kill/--resume/--list) [PUB-06] (wave 3)
+- [ ] 06-06-PLAN.md — Instagram kill_item (Pitfall-4 semantics) + CLI wrapper [PUB-07] (wave 3)
+
+**Wave 4** *(blocked on Wave 3)*
+
+- [ ] 06-07-PLAN.md — Cross-platform isolation + scope-minimization tests, operator docs (app registration, one-time consent, Task Scheduler extension, Instagram attempt-first runbook) [PUB-06, PUB-07] (wave 4)
 
 ## Progress
 
@@ -174,7 +193,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 3. YouTube Scheduled Auto-Publish | 4/4 | Complete   | 2026-07-08 |
 | 4. Context-Driven Transitions | 6/6 | Complete   | 2026-07-09 |
 | 5. Sub-Threshold Highlight Compilation | 0/TBD | Not started | - |
-| 6. TikTok & Instagram Auto-Publish | 0/TBD | Not started | - |
+| 6. TikTok & Instagram Auto-Publish | 0/7 | Not started | - |
 | 7. Profanity Auto-Bleep | 0/TBD | Not started | - |
 
 ### Phase 7: Profanity Auto-Bleep
