@@ -31,6 +31,7 @@ def test_load_config_applies_defaults(tmp_path):
     assert config.clip.min_seconds == 30
     assert config.clip.max_seconds == 60
     assert config.clip.fade_seconds == 0.5
+    assert config.clip.compilation_max_seconds == 150
     assert config.crop.mode == "auto"
     assert config.facecam.enabled is False
     assert config.facecam.mode == "manual_region"
@@ -221,6 +222,38 @@ def test_load_config_min_seconds_must_be_less_than_max(tmp_path):
     )
 
     with pytest.raises(ConfigError, match="min_seconds"):
+        load_config(path)
+
+
+def test_load_config_compilation_max_seconds_custom_value(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        clip:
+          compilation_max_seconds: 120
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.clip.compilation_max_seconds == 120
+
+
+def test_load_config_compilation_max_seconds_must_exceed_max_seconds(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        clip:
+          max_seconds: 60
+          compilation_max_seconds: 60
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="compilation_max_seconds"):
         load_config(path)
 
 
