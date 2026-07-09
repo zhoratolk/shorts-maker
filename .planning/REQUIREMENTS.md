@@ -33,8 +33,8 @@
 ### COMP — Sub-Threshold Highlight Compilation
 
 - [x] **COMP-01**: Candidates shorter than `config.clip.min_seconds` are not discarded — tagged with gameplay/theme tags instead
-- [ ] **COMP-02**: Similar-tagged sub-threshold candidates (same gameplay situation or same joke/theme) are grouped and stitched via the TRANS engine into one full-length short
-- [ ] **COMP-03**: Compilation only groups candidates from the same source video/session by default (no cross-session mixing in v1)
+- [x] **COMP-02**: Similar-tagged sub-threshold candidates (same gameplay situation or same joke/theme) are grouped and stitched via the TRANS engine into one full-length short
+- [x] **COMP-03**: Compilation only groups candidates from the same source video/session by default (no cross-session mixing in v1)
 
 ### PUB — Scheduled Auto-Publish
 
@@ -96,8 +96,8 @@
 | TRANS-02 | Phase 4 | Complete |
 | TRANS-03 | Phase 4 | Complete |
 | COMP-01 | Phase 5 | Complete |
-| COMP-02 | Phase 5 | Pending |
-| COMP-03 | Phase 5 | Pending |
+| COMP-02 | Phase 5 | Complete |
+| COMP-03 | Phase 5 | Complete |
 | PUB-06 | Phase 6 | Pending |
 | PUB-07 | Phase 6 | Pending |
 | AUDIO-01 | Phase 7 | Pending |
