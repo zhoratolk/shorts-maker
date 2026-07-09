@@ -4,17 +4,17 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 04
 current_phase_name: context-driven-transitions
-status: executing
+status: verifying
 stopped_at: Completed Phase 04 Plan 05 (04-05-PLAN.md) - render layer transition rendering (build_transition_filter, hybrid build_jumpcut_command fold, render_clip wiring)
-last_updated: "2026-07-09T16:30:20.020Z"
+last_updated: "2026-07-09T16:35:59.804Z"
 last_activity: 2026-07-09
 last_activity_desc: Phase 04 execution started
 progress:
   total_phases: 6
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 15
-  completed_plans: 14
-  percent: 50
+  completed_plans: 15
+  percent: 67
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 
 Phase: 04 (context-driven-transitions) — EXECUTING
 Plan: 6 of 6
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-09 — Phase 04 execution started
 
 Note: Phase 2 (LLM Title & Tag Generation) has plan 02-02 still pending — Phase 3 planning/execution proceeded per project workflow while 02-02 remains open; see Pending Todos.
@@ -69,6 +69,7 @@ Progress: [███░░░░░░░] 17% (1/6 phases)
 | Phase 04-context-driven-transitions P03 | 5min | 3 tasks | 3 files |
 | Phase 04-context-driven-transitions P04 | 4min | 3 tasks | 2 files |
 | Phase 04-context-driven-transitions P05 | 7min | 3 tasks | 2 files |
+| Phase 04-context-driven-transitions P06 | 6min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -113,6 +114,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 04-05]: VALID_TRANSITIONS in render.py is a duplicated frozenset (not imported from scripts.transitions.TRANSITION_TYPES), drift-guarded by a dedicated test, so render.py stays runnable as a standalone CLI without a sys.path insert
 - [Phase ?]: [Phase 04-05]: build_jumpcut_command's hybrid branch runs the exact pre-existing flat-concat code path when boundary_transitions is None or every entry is cut/match_cut, verified byte-identical via explicit equality tests against the omitted-param case, not just relied on by construction
 - [Phase ?]: [Phase 04-05]: xfade overlap duration is clamp(min(transition_duration, gap), min_overlap_seconds, transition_duration), split symmetrically into the two adjacent segments' trims - always <= the boundary's own pause gap, so a transition never eats real kept content
+- [Phase 04-06]: .claude/ is gitignored project-wide, so the SKILL.md orchestration-step edit lives on disk only, not in git history - same pre-existing convention as 02-01, not a regression
+- [Phase 04-06]: Integration test forces boundary_transitions directly on the plan_entry rather than calling select_boundary_transitions, isolating the render-layer xfade fold path from cv2/librosa so the test stays skippable purely on ffmpeg presence
 
 ### Pending Todos
 
@@ -143,6 +146,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-09T16:30:20.009Z
+Last session: 2026-07-09T16:35:16.727Z
 Stopped at: Completed Phase 04 Plan 05 (04-05-PLAN.md) - render layer transition rendering (build_transition_filter, hybrid build_jumpcut_command fold, render_clip wiring)
 Resume file: None

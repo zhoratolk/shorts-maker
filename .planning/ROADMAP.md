@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Monetization-Risk Flagging & Creator Style Profile** - Clips carry advisory per-platform monetization-risk flags, and a style profile learned from the creator's own upload history is ready for later phases to consume (completed 2026-07-07)
 - [x] **Phase 2: LLM Title/Tag Generation** - Pipeline proposes ready-to-use titles and tags per clip, grounded in the creator's own voice via few-shot style-profile examples (completed 2026-07-08)
 - [x] **Phase 3: YouTube Scheduled Auto-Publish** - Finished shorts can be queued and auto-published to YouTube on a schedule, safely (dry-run default, pause/kill, no duplicate posts) (completed 2026-07-08)
-- [ ] **Phase 4: Context-Driven Transitions** - Clip boundaries get a transition chosen from scene/audio context (not just a fixed cut/punch-zoom) when stitching multiple segments together
+- [x] **Phase 4: Context-Driven Transitions** - Clip boundaries get a transition chosen from scene/audio context (not just a fixed cut/punch-zoom) when stitching multiple segments together (completed 2026-07-09)
 - [ ] **Phase 5: Sub-Threshold Highlight Compilation** - Moments too short to stand alone are grouped by similarity and stitched into one coherent full-length short instead of being discarded
 - [ ] **Phase 6: TikTok & Instagram Auto-Publish** - The same scheduled auto-publish flow extends to TikTok and Instagram Reels once each platform's app-review/audit gate is cleared
 
@@ -106,7 +106,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. At least six transition types are available and selectable: cut, crossfade, whip pan, mask/wipe, glitch, match cut
   3. When the boundary analysis is inconclusive, the pipeline falls back to the existing cut/punch-zoom behavior instead of guessing or failing
 
-**Plans**: 5/6 plans executed
+**Plans**: 6/6 plans complete
 
 **Wave 1**
 
@@ -124,7 +124,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 4** *(blocked on Wave 3)*
 
-- [ ] 04-06-PLAN.md — SKILL.md automatic transition-selection orchestration (fail-open, no review gate) + end-to-end real-ffmpeg integration test [TRANS-01, TRANS-02, TRANS-03] (wave 4)
+- [x] 04-06-PLAN.md — SKILL.md automatic transition-selection orchestration (fail-open, no review gate) + end-to-end real-ffmpeg integration test [TRANS-01, TRANS-02, TRANS-03] (wave 4)
 
 ### Phase 5: Sub-Threshold Highlight Compilation
 
@@ -162,6 +162,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 1. Monetization-Risk Flagging & Creator Style Profile | 3/3 | Complete   | 2026-07-07 |
 | 2. LLM Title/Tag Generation | 2/2 | Complete   | 2026-07-08 |
 | 3. YouTube Scheduled Auto-Publish | 4/4 | Complete   | 2026-07-08 |
-| 4. Context-Driven Transitions | 5/6 | In Progress|  |
+| 4. Context-Driven Transitions | 6/6 | Complete   | 2026-07-09 |
 | 5. Sub-Threshold Highlight Compilation | 0/TBD | Not started | - |
 | 6. TikTok & Instagram Auto-Publish | 0/TBD | Not started | - |
