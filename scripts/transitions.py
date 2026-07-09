@@ -16,7 +16,11 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import tempfile
 from pathlib import Path
+
+from scripts.frames import extract_frames
+from scripts.jumpcuts import compute_boundary_gaps
 
 
 # Canonical transition-type enum consumed by the classifier (04-04) and the
@@ -207,6 +211,97 @@ def classify_transition(
     if moderate_motion:
         return "mask_wipe"
     return "cut"
+
+
+# Half-window (seconds) either side of a boundary timestamp used to extract
+# the frame pair that motion/similarity analysis compares - a small, fixed
+# offset since the goal is "right at the cut", not a wider sample.
+_BOUNDARY_FRAME_OFFSET = 0.05
+
+
+def select_boundary_transitions(
+    video_path: str,
+    keep_segments: list[tuple[float, float]],
+    config_fields: dict,
+    runner=subprocess.run,
+) -> list[str]:
+    """Orchestrates the full per-boundary decision for a clip: extracts a
+    frame pair and a short audio window at every keep_segments boundary,
+    scores motion/audio/similarity, derives this video's own adaptive
+    motion/audio thresholds (compute_signal_threshold, D-02), classifies
+    each boundary (classify_transition), then forces "cut" on any boundary
+    whose borrowable pause-gap (compute_boundary_gaps, 04-02) is too small
+    to actually host a non-cut transition (TRANS-03) - "cut" and
+    "match_cut" need no overlap, so they are never touched by this gate.
+
+    Returns a list[str] of length len(keep_segments) - 1 (one type per
+    boundary; a single-segment clip has no boundaries at all -> []).
+    Generic over any keep_segments list - no jumpcut-splice-specific
+    assumption - so Phase 5's cross-clip compilation can reuse it.
+
+    Full fail-open (TRANS-03): if cv2/librosa are both unavailable, every
+    analyze_* call returns None, both adaptive thresholds come back None,
+    and classify_transition resolves every boundary to "cut" - identical to
+    today's behavior, no crash.
+
+    config_fields carries the tunable knobs (mirrors TransitionsConfig,
+    scripts/config.py, without importing it - scripts.*.py modules never
+    import config.py at runtime, per this project's Anti-Patterns):
+    transition_duration, min_overlap_seconds, strong_signal_percentile,
+    match_cut_similarity.
+    """
+    if len(keep_segments) < 2:
+        return []
+
+    gaps = compute_boundary_gaps(keep_segments)
+    transition_duration = config_fields["transition_duration"]
+    min_overlap_seconds = config_fields["min_overlap_seconds"]
+    strong_signal_percentile = config_fields["strong_signal_percentile"]
+    match_cut_similarity = config_fields["match_cut_similarity"]
+
+    boundary_times = [segment[1] for segment in keep_segments[:-1]]
+
+    motion_scores: list[float | None] = []
+    audio_scores: list[float | None] = []
+    similarity_scores: list[float | None] = []
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        for index, boundary_time in enumerate(boundary_times):
+            frame_a_path, frame_b_path = extract_frames(
+                video_path,
+                [boundary_time - _BOUNDARY_FRAME_OFFSET, boundary_time + _BOUNDARY_FRAME_OFFSET],
+                tmp_dir,
+                prefix=f"boundary_{index}",
+                runner=runner,
+            )
+            motion_scores.append(analyze_motion_at_boundary(frame_a_path, frame_b_path))
+            similarity_scores.append(analyze_similarity_at_boundary(frame_a_path, frame_b_path))
+
+            audio_window_path = str(Path(tmp_dir) / f"boundary_{index}_audio.wav")
+            extract_audio_window(
+                video_path, boundary_time, transition_duration, audio_window_path, runner=runner
+            )
+            audio_scores.append(analyze_audio_onset_at_boundary(audio_window_path))
+
+    motion_threshold = compute_signal_threshold(motion_scores, strong_signal_percentile)
+    audio_threshold = compute_signal_threshold(audio_scores, strong_signal_percentile)
+
+    transitions: list[str] = []
+    for index in range(len(gaps)):
+        transition_type = classify_transition(
+            motion_scores[index],
+            audio_scores[index],
+            similarity_scores[index],
+            motion_threshold,
+            audio_threshold,
+            match_cut_similarity,
+        )
+        needs_overlap = transition_type not in ("cut", "match_cut")
+        if needs_overlap and gaps[index] < min_overlap_seconds:
+            transition_type = "cut"
+        transitions.append(transition_type)
+
+    return transitions
 
 
 def main() -> None:
