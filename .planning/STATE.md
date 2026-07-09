@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 04
 current_phase_name: context-driven-transitions
 status: executing
-stopped_at: Completed Phase 04 Plan 04 (04-04-PLAN.md) - transitions decision layer (classify_transition, compute_signal_threshold, select_boundary_transitions, select-transitions CLI)
-last_updated: "2026-07-09T16:19:35.328Z"
+stopped_at: Completed Phase 04 Plan 05 (04-05-PLAN.md) - render layer transition rendering (build_transition_filter, hybrid build_jumpcut_command fold, render_clip wiring)
+last_updated: "2026-07-09T16:30:20.020Z"
 last_activity: 2026-07-09
 last_activity_desc: Phase 04 execution started
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 15
-  completed_plans: 13
+  completed_plans: 14
   percent: 50
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 ## Current Position
 
 Phase: 04 (context-driven-transitions) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Ready to execute
 Last activity: 2026-07-09 — Phase 04 execution started
 
@@ -68,6 +68,7 @@ Progress: [███░░░░░░░] 17% (1/6 phases)
 | Phase 04 P02 | 12min | 2 tasks | 5 files |
 | Phase 04-context-driven-transitions P03 | 5min | 3 tasks | 3 files |
 | Phase 04-context-driven-transitions P04 | 4min | 3 tasks | 2 files |
+| Phase 04-context-driven-transitions P05 | 7min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -109,6 +110,9 @@ Recent decisions affecting current work:
 - [Phase 04-04]: classify_transition's moderate-motion band (motion_threshold/2 <= motion < motion_threshold) makes crossfade/whip_pan/glitch/mask_wipe mutually exclusive and independently reachable, resolving an overlap in 04-RESEARCH.md's suggested mapping
 - [Phase 04-04]: select_boundary_transitions imports scripts.frames.extract_frames and scripts.jumpcuts.compute_boundary_gaps at module top level - first cross-script import in this codebase, safe since both source modules are stdlib-only
 - [Phase 04-04]: config_fields is a plain dict of the 4 tunable knobs, not a TransitionsConfig instance - scripts/*.py never imports scripts/config.py at runtime (project Anti-Pattern); CLI subcommand duplicates TransitionsConfig defaults as module constants
+- [Phase ?]: [Phase 04-05]: VALID_TRANSITIONS in render.py is a duplicated frozenset (not imported from scripts.transitions.TRANSITION_TYPES), drift-guarded by a dedicated test, so render.py stays runnable as a standalone CLI without a sys.path insert
+- [Phase ?]: [Phase 04-05]: build_jumpcut_command's hybrid branch runs the exact pre-existing flat-concat code path when boundary_transitions is None or every entry is cut/match_cut, verified byte-identical via explicit equality tests against the omitted-param case, not just relied on by construction
+- [Phase ?]: [Phase 04-05]: xfade overlap duration is clamp(min(transition_duration, gap), min_overlap_seconds, transition_duration), split symmetrically into the two adjacent segments' trims - always <= the boundary's own pause gap, so a transition never eats real kept content
 
 ### Pending Todos
 
@@ -139,6 +143,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-09T16:19:35.314Z
-Stopped at: Completed Phase 04 Plan 04 (04-04-PLAN.md) - transitions decision layer (classify_transition, compute_signal_threshold, select_boundary_transitions, select-transitions CLI)
+Last session: 2026-07-09T16:30:20.009Z
+Stopped at: Completed Phase 04 Plan 05 (04-05-PLAN.md) - render layer transition rendering (build_transition_filter, hybrid build_jumpcut_command fold, render_clip wiring)
 Resume file: None

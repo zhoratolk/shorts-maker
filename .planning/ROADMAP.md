@@ -106,7 +106,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. At least six transition types are available and selectable: cut, crossfade, whip pan, mask/wipe, glitch, match cut
   3. When the boundary analysis is inconclusive, the pipeline falls back to the existing cut/punch-zoom behavior instead of guessing or failing
 
-**Plans**: 4/6 plans executed
+**Plans**: 5/6 plans executed
 
 **Wave 1**
 
@@ -120,7 +120,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Wave 3** *(blocked on Wave 2)*
 
 - [x] 04-04-PLAN.md — classify_transition (conservative 6-type tree) + adaptive per-video thresholds + select_boundary_transitions orchestration + select-transitions CLI [TRANS-02, TRANS-03] (wave 3)
-- [ ] 04-05-PLAN.md — render.py: build_transition_filter (xfade/glitch) + build_jumpcut_command concat→hybrid fold with gap-borrowed overlap + render_clip wiring [TRANS-02, TRANS-03] (wave 3)
+- [x] 04-05-PLAN.md — render.py: build_transition_filter (xfade/glitch) + build_jumpcut_command concat→hybrid fold with gap-borrowed overlap + render_clip wiring [TRANS-02, TRANS-03] (wave 3)
 
 **Wave 4** *(blocked on Wave 3)*
 
@@ -162,6 +162,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 1. Monetization-Risk Flagging & Creator Style Profile | 3/3 | Complete   | 2026-07-07 |
 | 2. LLM Title/Tag Generation | 2/2 | Complete   | 2026-07-08 |
 | 3. YouTube Scheduled Auto-Publish | 4/4 | Complete   | 2026-07-08 |
-| 4. Context-Driven Transitions | 4/6 | In Progress|  |
+| 4. Context-Driven Transitions | 5/6 | In Progress|  |
 | 5. Sub-Threshold Highlight Compilation | 0/TBD | Not started | - |
 | 6. TikTok & Instagram Auto-Publish | 0/TBD | Not started | - |
