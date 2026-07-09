@@ -277,7 +277,7 @@ def select_boundary_transitions(
         for index, boundary_time in enumerate(boundary_times):
             frame_a_path, frame_b_path = extract_frames(
                 video_path,
-                [boundary_time - _BOUNDARY_FRAME_OFFSET, boundary_time + _BOUNDARY_FRAME_OFFSET],
+                [max(0.0, boundary_time - _BOUNDARY_FRAME_OFFSET), boundary_time + _BOUNDARY_FRAME_OFFSET],
                 tmp_dir,
                 prefix=f"boundary_{index}",
                 runner=runner,
