@@ -4,6 +4,7 @@ import wave
 
 import pytest
 
+import scripts.transitions as transitions_module
 from scripts.transitions import (
     TRANSITION_TYPES,
     TransitionError,
@@ -13,6 +14,7 @@ from scripts.transitions import (
     classify_transition,
     compute_signal_threshold,
     extract_audio_window,
+    select_boundary_transitions,
 )
 
 
@@ -337,3 +339,56 @@ def test_classify_transition_fallback_none_audio_threshold_returns_cut():
     )
 
     assert result == "cut"
+
+
+def _stub_runner(command, **kwargs):
+    return subprocess.CompletedProcess(command, returncode=0, stdout="", stderr="")
+
+
+_DEFAULT_CONFIG_FIELDS = {
+    "transition_duration": 0.35,
+    "min_overlap_seconds": 0.12,
+    "strong_signal_percentile": 85.0,
+    "match_cut_similarity": 0.90,
+}
+
+
+def test_select_boundary_transitions_single_segment_returns_empty_list():
+    result = select_boundary_transitions("video.mp4", [(0.0, 5.0)], _DEFAULT_CONFIG_FIELDS)
+
+    assert result == []
+
+
+def test_select_boundary_transitions_fallback_all_cut_when_analyses_none(monkeypatch):
+    monkeypatch.setattr(transitions_module, "analyze_motion_at_boundary", lambda *a, **k: None)
+    monkeypatch.setattr(transitions_module, "analyze_similarity_at_boundary", lambda *a, **k: None)
+    monkeypatch.setattr(transitions_module, "analyze_audio_onset_at_boundary", lambda *a, **k: None)
+
+    keep_segments = [(0.0, 5.0), (5.2, 10.0), (10.05, 15.0)]
+
+    result = select_boundary_transitions(
+        "video.mp4", keep_segments, _DEFAULT_CONFIG_FIELDS, runner=_stub_runner
+    )
+
+    assert result == ["cut", "cut"]
+    assert len(result) == len(keep_segments) - 1
+
+
+def test_select_boundary_transitions_forces_cut_below_min_overlap_gap(monkeypatch):
+    monkeypatch.setattr(transitions_module, "analyze_motion_at_boundary", lambda *a, **k: 10.0)
+    monkeypatch.setattr(transitions_module, "analyze_audio_onset_at_boundary", lambda *a, **k: 10.0)
+    monkeypatch.setattr(transitions_module, "analyze_similarity_at_boundary", lambda *a, **k: 0.0)
+
+    # boundary 0 gap = 5.05 - 5.0 = 0.05 (< min_overlap_seconds: forced to "cut")
+    # boundary 1 gap = 10.2 - 10.0 = 0.2 (>= min_overlap_seconds: classification stands)
+    # Both boundaries score identically strong (motion=audio=10.0, equal to the
+    # adaptive threshold derived from these two boundaries), so classify_transition
+    # alone would pick the same non-cut type ("crossfade") for both - the
+    # differing result proves the gap gate, not the classifier, drives boundary 0.
+    keep_segments = [(0.0, 5.0), (5.05, 10.0), (10.2, 15.0)]
+
+    result = select_boundary_transitions(
+        "video.mp4", keep_segments, _DEFAULT_CONFIG_FIELDS, runner=_stub_runner
+    )
+
+    assert result == ["cut", "crossfade"]
