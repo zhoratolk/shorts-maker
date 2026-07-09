@@ -1,12 +1,16 @@
 import builtins
+import subprocess
+import wave
 
 import pytest
 
 from scripts.transitions import (
     TRANSITION_TYPES,
     TransitionError,
+    analyze_audio_onset_at_boundary,
     analyze_motion_at_boundary,
     analyze_similarity_at_boundary,
+    extract_audio_window,
 )
 
 
@@ -110,3 +114,95 @@ def test_analyze_similarity_identical_frames_high_differing_colors_lower(tmp_pat
 
     assert similarity_same is not None and similarity_same > 0.99
     assert similarity_diff is not None and similarity_diff < similarity_same
+
+
+def test_analyze_audio_onset_returns_none_when_librosa_missing(monkeypatch):
+    _block_import(monkeypatch, "librosa")
+
+    assert analyze_audio_onset_at_boundary("window.wav") is None
+
+
+def _write_transient_wav(path, sr=22050, duration=1.0):
+    import numpy as np
+
+    samples = np.zeros(int(sr * duration), dtype=np.float32)
+    burst_start = int(sr * 0.5)
+    samples[burst_start:burst_start + 200] = 1.0  # sharp transient burst mid-window
+
+    pcm = (samples * 32767).astype(np.int16)
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sr)
+        wav_file.writeframes(pcm.tobytes())
+
+
+def test_analyze_audio_onset_real_score_on_transient(tmp_path):
+    pytest.importorskip("librosa")
+    pytest.importorskip("numpy")
+
+    wav_path = tmp_path / "onset.wav"
+    _write_transient_wav(wav_path)
+
+    score = analyze_audio_onset_at_boundary(str(wav_path))
+
+    assert score is not None
+    assert score > 0.0
+
+
+def test_extract_audio_window_builds_shell_free_command_list(tmp_path):
+    captured = {}
+
+    def stub_runner(command, **kwargs):
+        captured["command"] = command
+        return subprocess.CompletedProcess(command, returncode=0, stdout="", stderr="")
+
+    output_path = str(tmp_path / "window.wav")
+
+    result = extract_audio_window(
+        "video.mp4", center_time=10.0, duration=1.5, output_path=output_path, runner=stub_runner
+    )
+
+    assert result == output_path
+    command = captured["command"]
+    assert all(isinstance(part, str) for part in command)
+    assert command[0] == "ffmpeg"
+
+    ss_index = command.index("-ss")
+    i_index = command.index("-i")
+    assert ss_index < i_index
+    assert command[i_index + 1] == "video.mp4"
+    assert command[ss_index + 1] == str(10.0 - 1.5 / 2)
+
+    t_index = command.index("-t")
+    assert command[t_index + 1] == str(1.5)
+
+    ac_index = command.index("-ac")
+    assert command[ac_index + 1] == "1"
+    assert "-vn" in command
+
+
+def test_extract_audio_window_clamps_start_at_zero_near_video_start(tmp_path):
+    captured = {}
+
+    def stub_runner(command, **kwargs):
+        captured["command"] = command
+        return subprocess.CompletedProcess(command, returncode=0, stdout="", stderr="")
+
+    extract_audio_window(
+        "video.mp4", center_time=0.2, duration=1.0, output_path=str(tmp_path / "out.wav"), runner=stub_runner
+    )
+
+    command = captured["command"]
+    ss_index = command.index("-ss")
+    assert command[ss_index + 1] == "0.0"
+
+
+def test_extract_audio_window_raises_transition_error_on_ffmpeg_failure(tmp_path):
+    def failing_runner(command, **kwargs):
+        return subprocess.CompletedProcess(command, returncode=1, stdout="", stderr="boom")
+
+    with pytest.raises(TransitionError, match="boom"):
+        extract_audio_window(
+            "video.mp4", center_time=5.0, duration=1.0, output_path=str(tmp_path / "out.wav"), runner=failing_runner
+        )
