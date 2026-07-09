@@ -42,6 +42,12 @@ class ClipConfig:
     min_seconds: int = 30
     max_seconds: int = 60
     fade_seconds: float = 0.5
+    # Length ceiling for a Phase 5 sub-threshold compilation (D-05) - its own,
+    # higher cap than max_seconds since it stitches multiple sub-threshold
+    # moments into one clip. 2.5x the default max_seconds=60, comfortably
+    # inside YouTube's 180s Shorts eligibility ceiling (05-RESEARCH.md
+    # Pitfall 3).
+    compilation_max_seconds: int = 150
 
 
 @dataclasses.dataclass
@@ -277,6 +283,11 @@ def _validate(config: Config) -> None:
         raise ConfigError("clip.min_seconds must be less than clip.max_seconds")
     if config.clip.fade_seconds < 0:
         raise ConfigError("clip.fade_seconds must be >= 0")
+    if config.clip.compilation_max_seconds <= config.clip.max_seconds:
+        raise ConfigError(
+            f"clip.compilation_max_seconds ({config.clip.compilation_max_seconds}) must be greater "
+            f"than clip.max_seconds ({config.clip.max_seconds})"
+        )
     if config.subtitles.words_per_cue <= 0:
         raise ConfigError("subtitles.words_per_cue must be > 0")
     if config.subtitles.max_gap_seconds <= 0:

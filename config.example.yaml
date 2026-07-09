@@ -35,6 +35,12 @@ clip:
   # Fade video+audio to black/silence over the last N seconds of each clip
   # instead of cutting off abruptly right after the last word. 0 disables it.
   fade_seconds: 0.5
+  # Length ceiling for a Phase 5 sub-threshold compilation (D-05) - its own,
+  # higher cap than max_seconds above, since a compilation stitches several
+  # sub-threshold moments into one clip. Must stay greater than max_seconds.
+  # 150s (2.5x the default max_seconds) stays comfortably under YouTube's
+  # 180s Shorts eligibility cutoff.
+  compilation_max_seconds: 150
 
 crop:
   mode: auto             # auto | zoom | pad | original-16:9
