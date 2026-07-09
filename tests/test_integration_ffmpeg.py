@@ -149,6 +149,39 @@ def test_combined_features_render_together(test_video, tmp_path):
     assert 3.5 < duration < 4.5
 
 
+def test_forced_crossfade_transition_renders_playable_output(test_video, tmp_path):
+    """Forces a boundary_transitions=['crossfade'] entry (no cv2/librosa
+    involved - the type is picked directly, not via select_boundary_transitions)
+    to exercise 04-05's xfade/acrossfade sequential-fold on a real ffmpeg
+    binary. A string assertion on build_jumpcut_command's output can't catch
+    a malformed xfade offset/filter syntax - only a real encode can."""
+    # audio/video is 2s tone, 2s silent gap, 2s tone - the boundary between
+    # [0, 2] and [4, 6] straddles that real 2s gap, far above the default
+    # min_overlap_seconds (0.12s), so the fold path borrows real overlap.
+    plan_entry = {
+        "start": 0.0, "end": SRC_DURATION, "crop_style": "zoom",
+        "keep_segments": [[0.0, 2.0], [4.0, SRC_DURATION]],
+        "boundary_transitions": ["crossfade"],
+    }
+    output_path = tmp_path / "out_transition.mp4"
+
+    command = render_clip(
+        str(test_video), str(output_path), plan_entry,
+        video_duration=SRC_DURATION, src_width=SRC_WIDTH, src_height=SRC_HEIGHT,
+    )
+
+    assert "-filter_complex" in command
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "xfade=transition=fade" in filter_complex  # crossfade's xfade node, not a plain concat
+
+    info = probe(output_path)
+    video_stream = next(s for s in info["streams"] if s["codec_type"] == "video")
+    audio_stream = next(s for s in info["streams"] if s["codec_type"] == "audio")
+    assert video_stream["width"] == 1080
+    assert video_stream["height"] == 1920
+    assert audio_stream is not None  # acrossfade produced a playable audio stream
+
+
 def test_silence_detection_finds_real_pause(test_video):
     pauses = find_pauses(str(test_video), min_duration=0.3)
 
