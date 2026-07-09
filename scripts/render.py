@@ -626,6 +626,8 @@ def render_clip(
     punch_zoom_amount: float = 1.15,
     punch_zoom_ramp: float = 0.25,
     denoise_strength: float = 6.0,
+    transition_duration: float = 0.35,
+    min_overlap_seconds: float = 0.12,
     runner=subprocess.run,
 ) -> list[str]:
     start, end = clamp_clip_bounds(plan_entry["start"], plan_entry["end"], video_duration)
@@ -675,11 +677,26 @@ def render_clip(
     keep_segments_raw = plan_entry.get("keep_segments")
     if keep_segments_raw is not None:
         keep_segments = [(segment[0], segment[1]) for segment in keep_segments_raw]
+        boundary_transitions = plan_entry.get("boundary_transitions")
+        boundary_gaps = None
+        if boundary_transitions is not None:
+            expected_length = len(keep_segments) - 1
+            if len(boundary_transitions) != expected_length:
+                raise RenderError(
+                    f"boundary_transitions length ({len(boundary_transitions)}) must equal "
+                    f"len(keep_segments) - 1 ({expected_length})"
+                )
+            import sys
+
+            sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+            from scripts.jumpcuts import compute_boundary_gaps
+
+            boundary_gaps = compute_boundary_gaps(keep_segments)
         command = build_jumpcut_command(
             input_path, output_path, start, end, keep_segments, crop_filter, subtitles_path,
             fade_seconds, subtitle_style, denoise, loudnorm,
             vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
-            denoise_strength,
+            denoise_strength, boundary_transitions, boundary_gaps, transition_duration, min_overlap_seconds,
         )
     else:
         command = build_ffmpeg_command(
@@ -744,6 +761,16 @@ def main() -> None:
         "--punch-zoom-ramp", type=float, default=0.25,
         help="Seconds the punch-in zoom takes to ramp from 1x to the full amount",
     )
+    parser.add_argument(
+        "--transition-duration", type=float, default=0.35,
+        help="Target xfade/acrossfade duration in seconds for a plan entry's boundary_transitions "
+        "(clamped down to the available pause gap per boundary)",
+    )
+    parser.add_argument(
+        "--min-overlap-seconds", type=float, default=0.12,
+        help="A boundary_transitions entry whose borrowed pause gap is below this many seconds "
+        "falls back to a plain cut instead of a transition (TRANS-03)",
+    )
     args = parser.parse_args()
 
     subtitle_style = {
@@ -779,6 +806,8 @@ def main() -> None:
             grain_strength=args.grain_strength,
             punch_zoom_amount=args.punch_zoom_amount,
             punch_zoom_ramp=args.punch_zoom_ramp,
+            transition_duration=args.transition_duration,
+            min_overlap_seconds=args.min_overlap_seconds,
         )
         print(output_path)
 
