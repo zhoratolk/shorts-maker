@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from scripts.jumpcuts import compute_keep_segments, remap_timestamp, remap_words, total_kept_duration
+from scripts.jumpcuts import (
+    compute_boundary_gaps,
+    compute_keep_segments,
+    remap_timestamp,
+    remap_words,
+    total_kept_duration,
+)
 
 
 def test_compute_keep_segments_no_long_pauses_returns_single_segment():
@@ -130,6 +136,28 @@ def test_remap_words_drops_word_inside_cut_gap():
     result = remap_words(words, segments)
 
     assert result == [{"word": "kept", "start": 2.0, "end": 2.5}]
+
+
+def test_compute_boundary_gap_single_segment_returns_empty():
+    assert compute_boundary_gaps([(0.0, 10.0)]) == []
+
+
+def test_compute_boundary_gap_two_segments_returns_the_cut_pause():
+    assert compute_boundary_gaps([(0.0, 10.0), (12.5, 20.0)]) == [2.5]
+
+
+def test_compute_boundary_gap_multiple_segments_includes_zero_gap_when_abutting():
+    result = compute_boundary_gaps([(0.0, 5.0), (6.0, 9.0), (9.0, 14.0)])
+
+    assert result == [1.0, 0.0]
+
+
+def test_compute_boundary_gap_length_matches_boundary_count():
+    segments = [(0.0, 5.0), (6.0, 9.0), (9.0, 14.0), (20.0, 25.0)]
+
+    result = compute_boundary_gaps(segments)
+
+    assert len(result) == len(segments) - 1
 
 
 def _run_cli(tmp_path, args):
