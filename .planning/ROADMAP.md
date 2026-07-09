@@ -137,7 +137,17 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Similar-tagged sub-threshold candidates (same gameplay situation or same joke/theme) from the same source video/session get grouped together and rendered as one full-length short, joined via Phase 4's transition engine
   3. Compilation groups never mix candidates from different source videos/sessions in this version
 
-**Plans**: TBD
+**Plans**: 0/4 plans complete
+
+**Wave 1**
+
+- [ ] 05-01-PLAN.md — Candidate dataclass gains tag/sub_threshold/group_id/unmatched fields + CANDIDATES.md compilation/unmatched sections [COMP-01] (wave 1)
+- [ ] 05-02-PLAN.md — ClipConfig.compilation_max_seconds + scripts/compilation.py mechanical group validation/PLAN.json entry builder [COMP-01, COMP-02, COMP-03] (wave 1)
+- [ ] 05-03-PLAN.md — render.py::build_compilation_command multi-input stitch + render_clip compilation dispatch [COMP-02] (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 05-04-PLAN.md — SKILL.md orchestration wiring: sub-threshold tagging, grouping pass, compilation.py/candidates.py/render.py end-to-end [COMP-01, COMP-02, COMP-03] (wave 2)
 
 ### Phase 6: TikTok & Instagram Auto-Publish
 
