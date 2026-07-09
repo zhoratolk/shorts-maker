@@ -1,4 +1,6 @@
+import argparse
 import builtins
+import json
 import subprocess
 import wave
 
@@ -392,3 +394,39 @@ def test_select_boundary_transitions_forces_cut_below_min_overlap_gap(monkeypatc
     )
 
     assert result == ["cut", "crossfade"]
+
+
+def test_select_transitions_cli_handler_writes_all_cut_when_analyses_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(transitions_module, "analyze_motion_at_boundary", lambda *a, **k: None)
+    monkeypatch.setattr(transitions_module, "analyze_similarity_at_boundary", lambda *a, **k: None)
+    monkeypatch.setattr(transitions_module, "analyze_audio_onset_at_boundary", lambda *a, **k: None)
+
+    keep_segments = [[0.0, 5.0], [5.2, 10.0], [10.05, 15.0]]
+    keep_segments_json = tmp_path / "keep_segments.json"
+    keep_segments_json.write_text(json.dumps(keep_segments), encoding="utf-8")
+    out_json = tmp_path / "boundary_transitions.json"
+
+    args = argparse.Namespace(
+        video_path="video.mp4",
+        keep_segments_json=str(keep_segments_json),
+        out_json=str(out_json),
+        transition_duration=0.35,
+        min_overlap_seconds=0.12,
+        strong_signal_percentile=85.0,
+        match_cut_similarity=0.90,
+    )
+
+    transitions_module._cmd_select_transitions(args, runner=_stub_runner)
+
+    written = json.loads(out_json.read_text(encoding="utf-8"))
+    assert written == ["cut", "cut"]
+    assert len(written) == len(keep_segments) - 1
+
+
+def test_select_transitions_cli_defaults_match_transitions_config():
+    # Mirrors TransitionsConfig's defaults (scripts/config.py) so the CLI's
+    # flag defaults never silently drift from the config schema's.
+    assert transitions_module._DEFAULT_TRANSITION_DURATION == 0.35
+    assert transitions_module._DEFAULT_MIN_OVERLAP_SECONDS == 0.12
+    assert transitions_module._DEFAULT_STRONG_SIGNAL_PERCENTILE == 85.0
+    assert transitions_module._DEFAULT_MATCH_CUT_SIMILARITY == 0.90
