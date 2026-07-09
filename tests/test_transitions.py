@@ -10,6 +10,8 @@ from scripts.transitions import (
     analyze_audio_onset_at_boundary,
     analyze_motion_at_boundary,
     analyze_similarity_at_boundary,
+    classify_transition,
+    compute_signal_threshold,
     extract_audio_window,
 )
 
@@ -206,3 +208,132 @@ def test_extract_audio_window_raises_transition_error_on_ffmpeg_failure(tmp_path
         extract_audio_window(
             "video.mp4", center_time=5.0, duration=1.0, output_path=str(tmp_path / "out.wav"), runner=failing_runner
         )
+
+
+def test_compute_signal_threshold_drops_none_and_returns_percentile():
+    scores = [1.0, None, 2.0, 3.0, None, 4.0, 5.0]
+
+    assert compute_signal_threshold(scores, 50.0) == 3.0
+
+
+def test_compute_signal_threshold_all_none_returns_none():
+    assert compute_signal_threshold([None, None], 85.0) is None
+
+
+def test_compute_signal_threshold_single_score_returns_that_score():
+    assert compute_signal_threshold([5.0], 85.0) == 5.0
+
+
+def test_compute_signal_threshold_interpolates_high_percentile():
+    result = compute_signal_threshold([1.0, 10.0], 85.0)
+
+    assert result == pytest.approx(8.65)
+
+
+def test_classify_transition_returns_match_cut():
+    result = classify_transition(
+        motion=1.0, audio=1.0, similarity=0.95,
+        motion_threshold=10.0, audio_threshold=10.0, match_cut_similarity=0.9,
+    )
+
+    assert result == "match_cut"
+
+
+def test_classify_transition_returns_crossfade():
+    result = classify_transition(
+        motion=20.0, audio=20.0, similarity=0.1,
+        motion_threshold=10.0, audio_threshold=10.0, match_cut_similarity=0.9,
+    )
+
+    assert result == "crossfade"
+
+
+def test_classify_transition_returns_whip_pan():
+    result = classify_transition(
+        motion=20.0, audio=1.0, similarity=0.1,
+        motion_threshold=10.0, audio_threshold=10.0, match_cut_similarity=0.9,
+    )
+
+    assert result == "whip_pan"
+
+
+def test_classify_transition_returns_glitch():
+    result = classify_transition(
+        motion=7.0, audio=20.0, similarity=0.1,
+        motion_threshold=10.0, audio_threshold=10.0, match_cut_similarity=0.9,
+    )
+
+    assert result == "glitch"
+
+
+def test_classify_transition_returns_mask_wipe():
+    result = classify_transition(
+        motion=7.0, audio=1.0, similarity=0.1,
+        motion_threshold=10.0, audio_threshold=10.0, match_cut_similarity=0.9,
+    )
+
+    assert result == "mask_wipe"
+
+
+def test_classify_transition_weak_signals_returns_cut():
+    result = classify_transition(
+        motion=1.0, audio=1.0, similarity=0.1,
+        motion_threshold=10.0, audio_threshold=10.0, match_cut_similarity=0.9,
+    )
+
+    assert result == "cut"
+
+
+def test_classify_transition_all_six_types_are_reachable():
+    thresholds = dict(motion_threshold=10.0, audio_threshold=10.0, match_cut_similarity=0.9)
+    fixtures = {
+        "cut": dict(motion=1.0, audio=1.0, similarity=0.1),
+        "match_cut": dict(motion=1.0, audio=1.0, similarity=0.95),
+        "crossfade": dict(motion=20.0, audio=20.0, similarity=0.1),
+        "whip_pan": dict(motion=20.0, audio=1.0, similarity=0.1),
+        "glitch": dict(motion=7.0, audio=20.0, similarity=0.1),
+        "mask_wipe": dict(motion=7.0, audio=1.0, similarity=0.1),
+    }
+
+    results = {
+        expected: classify_transition(**inputs, **thresholds) for expected, inputs in fixtures.items()
+    }
+
+    assert results == {expected: expected for expected in fixtures}
+    assert set(results.values()) == TRANSITION_TYPES
+
+
+def test_classify_transition_fallback_none_motion_returns_cut():
+    result = classify_transition(
+        motion=None, audio=20.0, similarity=0.1,
+        motion_threshold=10.0, audio_threshold=10.0, match_cut_similarity=0.9,
+    )
+
+    assert result == "cut"
+
+
+def test_classify_transition_fallback_none_audio_returns_cut():
+    result = classify_transition(
+        motion=20.0, audio=None, similarity=0.1,
+        motion_threshold=10.0, audio_threshold=10.0, match_cut_similarity=0.9,
+    )
+
+    assert result == "cut"
+
+
+def test_classify_transition_fallback_none_motion_threshold_returns_cut():
+    result = classify_transition(
+        motion=20.0, audio=20.0, similarity=0.1,
+        motion_threshold=None, audio_threshold=10.0, match_cut_similarity=0.9,
+    )
+
+    assert result == "cut"
+
+
+def test_classify_transition_fallback_none_audio_threshold_returns_cut():
+    result = classify_transition(
+        motion=20.0, audio=20.0, similarity=0.1,
+        motion_threshold=10.0, audio_threshold=None, match_cut_similarity=0.9,
+    )
+
+    assert result == "cut"
