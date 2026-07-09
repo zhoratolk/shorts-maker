@@ -76,6 +76,18 @@ def format_ass_timestamp(seconds: float) -> str:
     return f"{hours:01d}:{minutes:02d}:{secs:02d}.{centiseconds:02d}"
 
 
+def _escape_ass_text(text: str) -> str:
+    """Escapes ASS override-block syntax (`{`/`}`) and the tag escape
+    character (`\\`) in caption text before it's interpolated into a
+    Dialogue line. Transcribed/edited caption text can plausibly contain any
+    of these (code-reading, chat-quote, emoticon) - left unescaped, they can
+    prematurely close or inject arbitrary `{\\...}` override tags into the
+    rendered subtitle stream. Backslash must be escaped first so escaping
+    braces afterward doesn't double-escape the backslashes it just inserted.
+    """
+    return text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
+
+
 def build_ass_content(
     cues: list[dict], font: str, size: int, color: str, outline_color: str, highlight_color: str,
     position: str, margin_v: int, play_res_x: int, play_res_y: int,
@@ -117,15 +129,16 @@ def build_ass_content(
     highlight_tag = ass_color(highlight_color)
     events_parts = []
     for cue in cues:
+        escaped_text = _escape_ass_text(cue["text"]).replace(chr(10), "\\N")
         events_parts.append(
             f"Dialogue: 0,{format_ass_timestamp(cue['start'])},{format_ass_timestamp(cue['end'])},"
-            f"Default,,0,0,0,,{cue['text'].replace(chr(10), '\\N')}\n"
+            f"Default,,0,0,0,,{escaped_text}\n"
         )
         if "words" in cue:
             for index, word in enumerate(cue["words"]):
                 parts = []
                 for i, w in enumerate(cue["words"]):
-                    token = w["word"].strip()
+                    token = _escape_ass_text(w["word"].strip())
                     if i == index:
                         parts.append(f"{{\\alpha&H00&\\c{highlight_tag}&}}{token}{{\\c}}")
                     else:
