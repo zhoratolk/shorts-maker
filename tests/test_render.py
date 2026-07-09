@@ -4,12 +4,14 @@ import pytest
 
 from scripts.render import (
     RenderError,
+    VALID_TRANSITIONS,
     ass_color,
     build_ass_content,
     build_ffmpeg_command,
     build_jumpcut_command,
     build_punch_zoom_filter,
     build_subtitle_force_style,
+    build_transition_filter,
     clamp_clip_bounds,
     compute_crop_filter,
     compute_subtitle_margin_v,
@@ -426,6 +428,67 @@ def test_build_jumpcut_command_rejects_empty_keep_segments():
             keep_segments=[],
             crop_filter="crop=608:1080:656:0,scale=1080:1920",
         )
+
+
+def test_build_transition_filter_crossfade_returns_xfade_fade_node():
+    result = build_transition_filter("crossfade", duration=0.35, offset=1.2, in_a="vA", in_b="vB", out_label="vout")
+
+    assert result == "[vA][vB]xfade=transition=fade:duration=0.35:offset=1.2[vout]"
+
+
+def test_build_transition_filter_whip_pan_returns_xfade_hblur_node():
+    result = build_transition_filter("whip_pan", duration=0.35, offset=1.2, in_a="vA", in_b="vB", out_label="vout")
+
+    assert result == "[vA][vB]xfade=transition=hblur:duration=0.35:offset=1.2[vout]"
+
+
+def test_build_transition_filter_mask_wipe_returns_xfade_wipeleft_node():
+    result = build_transition_filter("mask_wipe", duration=0.35, offset=1.2, in_a="vA", in_b="vB", out_label="vout")
+
+    assert result == "[vA][vB]xfade=transition=wipeleft:duration=0.35:offset=1.2[vout]"
+
+
+def test_build_transition_filter_glitch_returns_pixelize_chain_with_rgbashift_and_noise():
+    result = build_transition_filter("glitch", duration=0.2, offset=1.0, in_a="vA", in_b="vB", out_label="vout")
+
+    assert result.startswith("[vA][vB]xfade=transition=pixelize:duration=0.2:offset=1.0,")
+    assert "rgbashift=rh=8:bh=-8:edge=smear" in result
+    assert "noise=alls=25:allf=t+u" in result
+    assert result.endswith("[vout]")
+
+
+def test_build_transition_filter_cut_returns_none():
+    assert build_transition_filter("cut", duration=0.35, offset=1.0, in_a="vA", in_b="vB", out_label="vout") is None
+
+
+def test_build_transition_filter_match_cut_returns_none():
+    assert build_transition_filter(
+        "match_cut", duration=0.35, offset=1.0, in_a="vA", in_b="vB", out_label="vout"
+    ) is None
+
+
+def test_build_transition_filter_rejects_unknown_transition_type():
+    with pytest.raises(RenderError, match="transition_type must be one of"):
+        build_transition_filter("teleport", duration=0.35, offset=1.0, in_a="vA", in_b="vB", out_label="vout")
+
+
+def test_build_transition_filter_rejects_non_positive_duration():
+    with pytest.raises(RenderError, match="duration must be > 0"):
+        build_transition_filter("crossfade", duration=0.0, offset=1.0, in_a="vA", in_b="vB", out_label="vout")
+
+
+def test_build_transition_filter_rejects_negative_offset():
+    with pytest.raises(RenderError, match="offset must be >= 0"):
+        build_transition_filter("crossfade", duration=0.35, offset=-0.1, in_a="vA", in_b="vB", out_label="vout")
+
+
+def test_valid_transitions_matches_transitions_module_canonical_enum():
+    # Drift guard: render.py duplicates VALID_TRANSITIONS (rather than importing
+    # scripts.transitions) so it stays runnable as a standalone CLI without a
+    # sys.path insert - this test catches the two enums silently diverging.
+    from scripts.transitions import TRANSITION_TYPES
+
+    assert VALID_TRANSITIONS == TRANSITION_TYPES
 
 
 def test_build_ffmpeg_command_no_audio_flags_has_no_audio_filter():
