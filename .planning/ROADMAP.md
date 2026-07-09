@@ -106,12 +106,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. At least six transition types are available and selectable: cut, crossfade, whip pan, mask/wipe, glitch, match cut
   3. When the boundary analysis is inconclusive, the pipeline falls back to the existing cut/punch-zoom behavior instead of guessing or failing
 
-**Plans**: 1/6 plans executed
+**Plans**: 2/6 plans executed
 
 **Wave 1**
 
 - [x] 04-01-PLAN.md — Optional deps (opencv-python-headless + librosa) install behind a blocking-human legitimacy checkpoint, registered as optional in requirements.txt [TRANS-01] (wave 1)
-- [ ] 04-02-PLAN.md — TransitionsConfig dataclass + validation + config.example.yaml section, and compute_boundary_gaps pure helper exposing per-boundary pause-gap seconds [TRANS-01, TRANS-03] (wave 1)
+- [x] 04-02-PLAN.md — TransitionsConfig dataclass + validation + config.example.yaml section, and compute_boundary_gaps pure helper exposing per-boundary pause-gap seconds [TRANS-01, TRANS-03] (wave 1)
 
 **Wave 2** *(blocked on Wave 1)*
 
@@ -162,6 +162,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 1. Monetization-Risk Flagging & Creator Style Profile | 3/3 | Complete   | 2026-07-07 |
 | 2. LLM Title/Tag Generation | 2/2 | Complete   | 2026-07-08 |
 | 3. YouTube Scheduled Auto-Publish | 4/4 | Complete   | 2026-07-08 |
-| 4. Context-Driven Transitions | 1/6 | In Progress|  |
+| 4. Context-Driven Transitions | 2/6 | In Progress|  |
 | 5. Sub-Threshold Highlight Compilation | 0/TBD | Not started | - |
 | 6. TikTok & Instagram Auto-Publish | 0/TBD | Not started | - |

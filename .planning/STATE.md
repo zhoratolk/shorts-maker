@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 04
 current_phase_name: context-driven-transitions
 status: executing
-stopped_at: Completed Phase 04 Plan 01 (04-01-PLAN.md) - opencv-python-headless + librosa installed and registered
-last_updated: "2026-07-09T15:50:00.910Z"
+stopped_at: Completed Phase 04 Plan 02 (04-02-PLAN.md) - TransitionsConfig + compute_boundary_gaps
+last_updated: "2026-07-09T15:55:15.445Z"
 last_activity: 2026-07-09
 last_activity_desc: Phase 04 execution started
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 15
-  completed_plans: 10
+  completed_plans: 11
   percent: 50
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 ## Current Position
 
 Phase: 04 (context-driven-transitions) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-07-09 — Phase 04 execution started
 
@@ -65,6 +65,7 @@ Progress: [███░░░░░░░] 17% (1/6 phases)
 | Phase 03-youtube-scheduled-auto-publish P03 | 35min | 3 tasks | 3 files |
 | Phase 03-youtube-scheduled-auto-publish P04 | 40min | 3 tasks | 3 files |
 | Phase 04-context-driven-transitions P01 | 30min | 2 tasks | 1 files |
+| Phase 04 P02 | 12min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -99,6 +100,8 @@ Recent decisions affecting current work:
 - [Phase 03-youtube-scheduled-auto-publish]: Notification-log marker is a persisted line-count in a sibling .read file, not a byte offset — Simpler to reason about with splitlines, no multi-byte UTF-8 boundary risk; log is always read in full and re-diffed, never seeked into
 - [Phase 03-youtube-scheduled-auto-publish]: check and now both call one shared upload_one helper wrapping upload_and_schedule — Structurally guarantees the two trigger paths can never diverge onto separate publish logic (D-05)
 - [Phase 04-01]: Human approved opencv-python-headless + librosa after pypi.org legitimacy review (T-04-SC mitigated); pip install pulled numpy 2.5.0 -> 2.4.6 transitively via numba, verified pip check clean
+- [Phase 04-02]: TransitionsConfig min_overlap_seconds > transition_duration is a hard ConfigError (a floor above the whole window is nonsensical), mirroring jumpcuts' cut_threshold_seconds >= detect_min_seconds precedent
+- [Phase 04-02]: compute_boundary_gaps has no standalone CLI subcommand - internal helper only for render.py/transitions.py, matching total_kept_duration precedent
 
 ### Pending Todos
 
@@ -129,6 +132,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-09T15:50:00.899Z
-Stopped at: Completed Phase 04 Plan 01 (04-01-PLAN.md) - opencv-python-headless + librosa installed and registered
+Last session: 2026-07-09T15:55:15.434Z
+Stopped at: Completed Phase 04 Plan 02 (04-02-PLAN.md) - TransitionsConfig + compute_boundary_gaps
 Resume file: None
