@@ -491,6 +491,104 @@ def test_valid_transitions_matches_transitions_module_canonical_enum():
     assert VALID_TRANSITIONS == TRANSITION_TYPES
 
 
+def test_build_jumpcut_command_all_cut_boundary_transitions_matches_flat_concat():
+    # backward compatibility: explicit all-cut boundary_transitions must produce
+    # the exact same flat-concat graph as omitting the param entirely.
+    command_with_none = build_jumpcut_command(
+        "in.mp4", "out.mp4", clip_start=10.0, clip_end=40.0,
+        keep_segments=[(10.0, 20.0), (22.0, 40.0)],
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+    )
+    command_with_cut = build_jumpcut_command(
+        "in.mp4", "out.mp4", clip_start=10.0, clip_end=40.0,
+        keep_segments=[(10.0, 20.0), (22.0, 40.0)],
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        boundary_transitions=["cut"], boundary_gaps=[2.0],
+    )
+
+    assert command_with_cut == command_with_none
+
+
+def test_build_jumpcut_command_all_match_cut_boundary_transitions_matches_flat_concat():
+    command_with_none = build_jumpcut_command(
+        "in.mp4", "out.mp4", clip_start=10.0, clip_end=40.0,
+        keep_segments=[(10.0, 20.0), (22.0, 40.0)],
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+    )
+    command_with_match_cut = build_jumpcut_command(
+        "in.mp4", "out.mp4", clip_start=10.0, clip_end=40.0,
+        keep_segments=[(10.0, 20.0), (22.0, 40.0)],
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        boundary_transitions=["match_cut"], boundary_gaps=[2.0],
+    )
+
+    assert command_with_match_cut == command_with_none
+
+
+def test_build_jumpcut_command_forced_crossfade_transition_emits_xfade_and_acrossfade():
+    command = build_jumpcut_command(
+        "in.mp4", "out.mp4", clip_start=10.0, clip_end=40.0,
+        keep_segments=[(10.0, 20.0), (22.0, 40.0)],
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        boundary_transitions=["crossfade"], boundary_gaps=[2.0],
+    )
+
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "xfade=transition=fade" in filter_complex
+    assert "acrossfade=d=" in filter_complex
+    assert "[vout]" in filter_complex
+    assert "[aout]" in filter_complex
+
+
+def test_build_jumpcut_command_forced_whip_pan_transition_emits_hblur():
+    command = build_jumpcut_command(
+        "in.mp4", "out.mp4", clip_start=10.0, clip_end=40.0,
+        keep_segments=[(10.0, 20.0), (22.0, 40.0)],
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        boundary_transitions=["whip_pan"], boundary_gaps=[2.0],
+    )
+
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "xfade=transition=hblur" in filter_complex
+
+
+def test_build_jumpcut_command_forced_glitch_transition_emits_pixelize_and_rgbashift():
+    command = build_jumpcut_command(
+        "in.mp4", "out.mp4", clip_start=10.0, clip_end=40.0,
+        keep_segments=[(10.0, 20.0), (22.0, 40.0)],
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        boundary_transitions=["glitch"], boundary_gaps=[2.0],
+    )
+
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "xfade=transition=pixelize" in filter_complex
+    assert "rgbashift" in filter_complex
+
+
+def test_build_jumpcut_command_transition_falls_back_to_concat_when_gap_below_min_overlap():
+    command = build_jumpcut_command(
+        "in.mp4", "out.mp4", clip_start=10.0, clip_end=40.0,
+        keep_segments=[(10.0, 20.0), (22.0, 40.0)],
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        boundary_transitions=["crossfade"], boundary_gaps=[0.05],
+        min_overlap_seconds=0.12,
+    )
+
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "xfade" not in filter_complex
+    assert "concat=n=2:v=1:a=1" in filter_complex
+
+
+def test_build_jumpcut_command_rejects_unknown_boundary_transition_type():
+    with pytest.raises(RenderError, match="boundary_transitions"):
+        build_jumpcut_command(
+            "in.mp4", "out.mp4", clip_start=10.0, clip_end=40.0,
+            keep_segments=[(10.0, 20.0), (22.0, 40.0)],
+            crop_filter="crop=608:1080:656:0,scale=1080:1920",
+            boundary_transitions=["teleport"], boundary_gaps=[2.0],
+        )
+
+
 def test_build_ffmpeg_command_no_audio_flags_has_no_audio_filter():
     command = build_ffmpeg_command(
         "in.mp4", "out.mp4", start=10.0, end=40.0,
