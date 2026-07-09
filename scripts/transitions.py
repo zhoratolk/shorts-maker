@@ -16,8 +16,16 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
+
+# When this file is invoked directly (`python scripts/transitions.py ...`,
+# as SKILL.md documents), sys.path[0] is scripts/ itself, not the repo root,
+# so `import scripts.*` fails. Insert the repo root before the sibling
+# imports below - mirrors the same workaround render.py already uses for
+# its own sibling-module imports (render.py's subtitles_path branch).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.frames import extract_frames
 from scripts.jumpcuts import compute_boundary_gaps
