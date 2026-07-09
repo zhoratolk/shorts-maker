@@ -80,6 +80,36 @@ def render_candidates_markdown(candidates: list[Candidate]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def append_compilation_sections_markdown(path: str, groups: list[dict], unmatched: list[dict]) -> None:
+    # Dict-based (not Candidate-typed) so this round-trips trivially through a
+    # JSON file when called from SKILL.md via a `python -c` one-liner (mirrors
+    # style_profile.format_naming_examples_block's invocation style) — no
+    # dataclass reconstruction needed at the call site.
+    if not groups and not unmatched:
+        return
+
+    lines: list[str] = []
+    if groups:
+        lines.append("")
+        lines.append("## Sub-Threshold Compilations")
+        lines.append("")
+        for group in groups:
+            member_ids = ", ".join(f"#{member['id']}" for member in group["members"])
+            lines.append(f"- Candidates {member_ids} grouped into compilation: {group['title']}")
+
+    if unmatched:
+        lines.append("")
+        lines.append("## Unmatched Sub-Threshold")
+        lines.append("")
+        for candidate in unmatched:
+            start_tc = format_timecode(candidate["start"])
+            end_tc = format_timecode(candidate["end"])
+            lines.append(f"- `{start_tc}` - `{end_tc}` — {candidate['reason']} (tag: {candidate['tag']})")
+
+    existing = Path(path).read_text(encoding="utf-8")
+    Path(path).write_text(existing + "\n".join(lines) + "\n", encoding="utf-8")
+
+
 def write_candidates_json(candidates: list[Candidate], path: str) -> None:
     Path(path).write_text(
         json.dumps([dataclasses.asdict(candidate) for candidate in candidates], ensure_ascii=False, indent=2),
