@@ -41,6 +41,21 @@ def total_kept_duration(keep_segments: list[tuple[float, float]]) -> float:
     return sum(end - start for start, end in keep_segments)
 
 
+def compute_boundary_gaps(keep_segments: list[tuple[float, float]]) -> list[float]:
+    """Returns the cut pause-gap (absolute source seconds) at each adjacent
+    keep_segments boundary: gap N = keep_segments[N+1][0] - keep_segments[N][1].
+    This is exactly the pause footage compute_keep_segments already cut out,
+    surfaced here instead of discarded - a non-cut transition (crossfade/whip
+    pan/etc.) borrows from this unused source footage as its xfade overlap
+    window, so it never eats into real kept content. Result length always
+    equals len(keep_segments) - 1; a single segment has zero boundaries.
+    """
+    return [
+        keep_segments[index + 1][0] - keep_segments[index][1]
+        for index in range(len(keep_segments) - 1)
+    ]
+
+
 def remap_timestamp(t: float, keep_segments: list[tuple[float, float]]) -> float | None:
     """Maps an absolute source-file timestamp onto the spliced (concatenated)
     output timeline built from keep_segments, in order. Returns None when t
