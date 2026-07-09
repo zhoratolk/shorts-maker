@@ -5,6 +5,7 @@ import pytest
 
 from scripts.candidates import (
     Candidate,
+    append_compilation_sections_markdown,
     format_timecode,
     merge_candidate_files,
     merge_candidates,
@@ -156,3 +157,43 @@ def test_merge_candidates_tag_or_sub_threshold_fields_default_when_absent():
     assert merged[0].sub_threshold is False
     assert merged[0].group_id is None
     assert merged[0].unmatched is False
+
+
+def test_append_compilation_sections_markdown_adds_group_and_unmatched_sections(tmp_path):
+    path = str(tmp_path / "CANDIDATES.md")
+    Path(path).write_text("# Candidates\n\n1. `00:00:10` - `00:00:20` — first joke\n", encoding="utf-8")
+
+    groups = [
+        {
+            "members": [{"id": 4}, {"id": 7}],
+            "title": "Boss Rage Compilation",
+        }
+    ]
+    unmatched = [
+        {"start": 12.3, "end": 15.1, "reason": "died alone", "tag": "solo death"},
+    ]
+
+    append_compilation_sections_markdown(path, groups, unmatched)
+
+    result = Path(path).read_text(encoding="utf-8")
+
+    assert "## Sub-Threshold Compilations" in result
+    assert "#4" in result
+    assert "#7" in result
+    assert "Boss Rage Compilation" in result
+    assert "## Unmatched Sub-Threshold" in result
+    assert "`00:00:12` - `00:00:15`" in result
+    assert "died alone" in result
+    assert "solo death" in result
+    # Original numbered candidate list must be untouched.
+    assert "1. `00:00:10` - `00:00:20` — first joke" in result
+
+
+def test_append_compilation_sections_markdown_noop_when_both_empty(tmp_path):
+    path = str(tmp_path / "CANDIDATES.md")
+    original = "# Candidates\n\n1. `00:00:10` - `00:00:20` — first joke\n"
+    Path(path).write_text(original, encoding="utf-8")
+
+    append_compilation_sections_markdown(path, [], [])
+
+    assert Path(path).read_text(encoding="utf-8") == original
