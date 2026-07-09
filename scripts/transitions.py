@@ -75,6 +75,50 @@ def analyze_similarity_at_boundary(frame_a_path: str, frame_b_path: str) -> floa
     return float(cv2.compareHist(hist_a, hist_b, cv2.HISTCMP_CORREL))
 
 
+def analyze_audio_onset_at_boundary(audio_window_path: str) -> float | None:
+    """Spectral-flux onset-strength peak within a short audio window around a
+    boundary - a sharp transient scores higher than a steady/near-silent
+    window. librosa is named explicitly in TRANS-01's own requirement text,
+    so it's used here rather than audio_energy.py's ebur128 spike detector
+    (which can't distinguish a transient attack from a sustained loud
+    passage - 04-RESEARCH.md Alternatives Considered). Returns None
+    (fail-open) if librosa is unavailable.
+    """
+    try:
+        import librosa
+    except ImportError:
+        return None
+
+    y, sr = librosa.load(audio_window_path, sr=None)
+    onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+    return float(onset_env.max())
+
+
+def extract_audio_window(
+    video_path: str, center_time: float, duration: float, output_path: str, runner=subprocess.run
+) -> str:
+    """Slices a short mono wav centered on center_time via ffmpeg (-ss before
+    -i for fast seek), the input analyze_audio_onset_at_boundary consumes.
+    Builds the ffmpeg call as an argument list (never a shell string -
+    T-04-INJ-A mitigation) and clamps the window start at 0.0 so a boundary
+    near the start of the video doesn't request a negative timestamp.
+    """
+    start = max(0.0, center_time - duration / 2)
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        "ffmpeg", "-y",
+        "-ss", str(start),
+        "-i", video_path,
+        "-t", str(duration),
+        "-vn", "-ac", "1",
+        output_path,
+    ]
+    result = runner(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise TransitionError(f"ffmpeg failed extracting audio window at {center_time}s: {result.stderr}")
+    return output_path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Analyze clip-boundary motion/audio/similarity signals for context-driven transitions"
