@@ -15,6 +15,16 @@ class Candidate:
     # 1-5, set by candidate-finding subagents only when speaker-labeled
     # segments are available (config.diarization.enabled); None otherwise.
     coherence: int | None = None
+    # Free-form gameplay/theme description (D-01), set only once step 5's
+    # trim decision marks this candidate sub_threshold.
+    tag: str | None = None
+    # True once step 5's tightest reasonable trim is still below
+    # config.clip.min_seconds.
+    sub_threshold: bool = False
+    # Set by the same-session grouping pass; None means ungrouped.
+    group_id: int | None = None
+    # True only when sub_threshold and no group formed this run (D-03).
+    unmatched: bool = False
 
 
 def format_timecode(total_seconds: float) -> str:
@@ -40,6 +50,10 @@ def merge_candidates(chunks_candidates: list[list[dict]]) -> list[Candidate]:
             end=item["end"],
             reason=item["reason"],
             coherence=item.get("coherence"),
+            tag=item.get("tag"),
+            sub_threshold=item.get("sub_threshold", False),
+            group_id=item.get("group_id"),
+            unmatched=item.get("unmatched", False),
         )
         for index, item in enumerate(flattened)
     ]
