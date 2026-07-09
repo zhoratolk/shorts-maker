@@ -80,7 +80,17 @@ def test_write_candidates_json_round_trips(tmp_path):
     write_candidates_json(candidates, path)
 
     assert json.loads(Path(path).read_text(encoding="utf-8")) == [
-        {"id": 1, "start": 10.0, "end": 20.0, "reason": "first joke", "coherence": None}
+        {
+            "id": 1,
+            "start": 10.0,
+            "end": 20.0,
+            "reason": "first joke",
+            "coherence": None,
+            "tag": None,
+            "sub_threshold": False,
+            "group_id": None,
+            "unmatched": False,
+        }
     ]
 
 
@@ -106,3 +116,43 @@ def test_render_candidates_markdown_includes_coherence_when_present():
     markdown = render_candidates_markdown(candidates)
 
     assert markdown == "# Candidates\n\n1. `00:00:10` - `00:00:20` — clean monologue (целостность: 5/5)\n"
+
+
+def test_merge_candidates_carries_tag_or_sub_threshold_fields_when_present():
+    chunk = [
+        {
+            "start": 10.0,
+            "end": 15.0,
+            "reason": "died to boss",
+            "tag": "died to same boss",
+            "sub_threshold": True,
+            "group_id": 2,
+            "unmatched": False,
+        }
+    ]
+
+    merged = merge_candidates([chunk])
+
+    assert merged == [
+        Candidate(
+            id=1,
+            start=10.0,
+            end=15.0,
+            reason="died to boss",
+            tag="died to same boss",
+            sub_threshold=True,
+            group_id=2,
+            unmatched=False,
+        )
+    ]
+
+
+def test_merge_candidates_tag_or_sub_threshold_fields_default_when_absent():
+    chunk = [{"start": 10.0, "end": 20.0, "reason": "no sub-threshold data"}]
+
+    merged = merge_candidates([chunk])
+
+    assert merged[0].tag is None
+    assert merged[0].sub_threshold is False
+    assert merged[0].group_id is None
+    assert merged[0].unmatched is False
