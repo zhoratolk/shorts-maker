@@ -1063,6 +1063,189 @@ def test_load_config_tiktok_instagram_custom_values_round_trip(tmp_path):
     assert config.publish.instagram_token_path == "instagram_token.json"
 
 
+def test_load_config_profanity_defaults_when_section_missing(tmp_path):
+    path = write_config(tmp_path, 'input_dir: "F:/in"\noutput_dir: "F:/out"\n')
+
+    config = load_config(path)
+
+    assert config.profanity.enabled is False
+    assert config.profanity.wordlist_path == "data/profanity_wordlist.yaml"
+    assert config.profanity.pad_seconds == 0.08
+    assert config.profanity.max_masked_spans_per_clip == 40
+    assert config.profanity.duck_volume == 0.12
+    assert config.profanity.garble_freq == 1800.0
+    assert config.profanity.garble_width_octaves == 4.0
+    assert config.profanity.warble_freq == 18.0
+    assert config.profanity.warble_depth == 0.7
+
+
+def test_load_config_profanity_custom_values_round_trip(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        profanity:
+          enabled: true
+          wordlist_path: "data/custom_wordlist.yaml"
+          pad_seconds: 0.1
+          max_masked_spans_per_clip: 10
+          duck_volume: 0.2
+          garble_freq: 1500.0
+          garble_width_octaves: 3.0
+          warble_freq: 20.0
+          warble_depth: 0.5
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.profanity.enabled is True
+    assert config.profanity.wordlist_path == "data/custom_wordlist.yaml"
+    assert config.profanity.pad_seconds == 0.1
+    assert config.profanity.max_masked_spans_per_clip == 10
+    assert config.profanity.duck_volume == 0.2
+    assert config.profanity.garble_freq == 1500.0
+    assert config.profanity.garble_width_octaves == 3.0
+    assert config.profanity.warble_freq == 20.0
+    assert config.profanity.warble_depth == 0.5
+
+
+def test_load_config_profanity_pad_seconds_negative_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        profanity:
+          pad_seconds: -0.01
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="profanity.pad_seconds"):
+        load_config(path)
+
+
+def test_load_config_profanity_max_masked_spans_per_clip_zero_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        profanity:
+          max_masked_spans_per_clip: 0
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="profanity.max_masked_spans_per_clip"):
+        load_config(path)
+
+
+def test_load_config_profanity_duck_volume_zero_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        profanity:
+          duck_volume: 0
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="profanity.duck_volume"):
+        load_config(path)
+
+
+def test_load_config_profanity_duck_volume_one_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        profanity:
+          duck_volume: 1
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="profanity.duck_volume"):
+        load_config(path)
+
+
+def test_load_config_profanity_garble_freq_zero_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        profanity:
+          garble_freq: 0
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="profanity.garble_freq"):
+        load_config(path)
+
+
+def test_load_config_profanity_garble_width_octaves_zero_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        profanity:
+          garble_width_octaves: 0
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="profanity.garble_width_octaves"):
+        load_config(path)
+
+
+def test_load_config_profanity_warble_freq_zero_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        profanity:
+          warble_freq: 0
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="profanity.warble_freq"):
+        load_config(path)
+
+
+def test_load_config_profanity_warble_depth_zero_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        profanity:
+          warble_depth: 0
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="profanity.warble_depth"):
+        load_config(path)
+
+
+def test_load_config_profanity_warble_depth_above_one_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        profanity:
+          warble_depth: 1.1
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="profanity.warble_depth"):
+        load_config(path)
+
+
 def test_load_config_transitions_unknown_field_raises(tmp_path):
     path = write_config(
         tmp_path,
