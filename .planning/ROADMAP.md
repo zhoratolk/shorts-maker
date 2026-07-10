@@ -164,7 +164,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. A queued short can be auto-published to Instagram Reels via the Graph API (Business account + app review in place), following the same safety mechanism
   3. Each platform integration is isolated enough that one platform's audit/review delay (e.g. TikTok's SELF_ONLY restriction pre-audit) does not block the other platform or YouTube from publishing
 
-**Plans**: 4/7 plans executed
+**Plans**: 5/7 plans executed
 
 **Wave 1**
 
@@ -178,7 +178,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 06-05-PLAN.md — TikTok kill_item (Pitfall-4 semantics) + CLI wrapper (--check/--now/--pause/--kill/--resume/--list) [PUB-06] (wave 3)
+- [x] 06-05-PLAN.md — TikTok kill_item (Pitfall-4 semantics) + CLI wrapper (--check/--now/--pause/--kill/--resume/--list) [PUB-06] (wave 3)
 - [ ] 06-06-PLAN.md — Instagram kill_item (Pitfall-4 semantics) + CLI wrapper [PUB-07] (wave 3)
 
 **Wave 4** *(blocked on Wave 3)*
@@ -197,7 +197,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 3. YouTube Scheduled Auto-Publish | 4/4 | Complete   | 2026-07-08 |
 | 4. Context-Driven Transitions | 6/6 | Complete   | 2026-07-09 |
 | 5. Sub-Threshold Highlight Compilation | 5/5 | Complete    | 2026-07-10 |
-| 6. TikTok & Instagram Auto-Publish | 4/7 | In Progress|  |
+| 6. TikTok & Instagram Auto-Publish | 5/7 | In Progress|  |
 | 7. Profanity Auto-Bleep | 0/TBD | Not started | - |
 
 ### Phase 7: Profanity Auto-Bleep

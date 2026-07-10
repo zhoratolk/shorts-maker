@@ -6,14 +6,14 @@ current_phase: 06
 current_phase_name: tiktok-instagram-auto-publish
 status: executing
 stopped_at: Completed 06-01-PLAN.md
-last_updated: "2026-07-10T11:44:25.243Z"
+last_updated: "2026-07-10T11:55:50.877Z"
 last_activity: 2026-07-10
 last_activity_desc: Phase 06 execution started
 progress:
   total_phases: 7
   completed_phases: 5
   total_plans: 27
-  completed_plans: 24
+  completed_plans: 25
   percent: 71
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 ## Current Position
 
 Phase: 06 (tiktok-instagram-auto-publish) — EXECUTING
-Plan: 5 of 7
+Plan: 6 of 7
 Status: Ready to execute
 Last activity: 2026-07-10 — Phase 06 execution started
 
@@ -80,6 +80,7 @@ Progress: [███░░░░░░░] 17% (1/6 phases)
 | Phase 06 P02 | 5min | 2 tasks | 3 files |
 | Phase 06 P03 | 25min | 3 tasks | 2 files |
 | Phase 06 P04 | 6min | 3 tasks | 2 files |
+| Phase 06 P05 | 9min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -111,6 +112,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 06-04]: load_credentials refresh trigger simplified to a single 24h-age threshold rather than RESEARCH.md's fuller age+days-remaining wording - Instagram's actual hard API requirement is only the 24h minimum age
 - [Phase ?]: [Phase 06-04]: _check_meta_permission_error checks status_code==403 OR permission-flavored substrings in message/type/code; any other non-2xx propagates as plain requests.HTTPError - documented best-effort per 06-RESEARCH.md's no-live-call caveat
 - [Phase ?]: [Phase 06-04]: no-pre-publish-gating-call verification tests assert against instagram_publish's module namespace rather than raw source-text grep, avoiding false positives from explanatory docstring prose
+- [Phase ?]: [Phase 06-05]: kill_item takes no service_factory/credentials_factory parameter - every branch is either local-only or a hard RuntimeError raise, never a network call
+- [Phase ?]: [Phase 06-05]: sys.path.insert workaround added to scripts/tiktok_publish.py (matching scripts/transitions.py/scripts/render.py precedent) so the module runs standalone via python scripts/tiktok_publish.py, not just under pytest
 
 ### Roadmap Evolution
 
@@ -180,6 +183,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-10T11:43:29.978Z
+Last session: 2026-07-10T11:55:15.336Z
 Stopped at: Completed 06-01-PLAN.md
 Resume file: None
