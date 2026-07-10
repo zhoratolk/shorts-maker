@@ -350,18 +350,24 @@ def build_profanity_mask_filter(
 
 
 def build_audio_filter_chain(
-    denoise: bool, loudnorm: bool, fade_filter: str | None, denoise_strength: float = 6.0
+    denoise: bool, loudnorm: bool, fade_filter: str | None, denoise_strength: float = 6.0,
+    profanity_filter: str | None = None,
 ) -> str | None:
-    """Combines the optional cleanup filters and the fade into one -af chain.
+    """Combines the optional cleanup filters, the profanity mask, and the
+    fade into one -af chain.
 
     Order matters: denoise the raw signal first, normalize loudness on the
-    cleaned signal, then fade last so the fade-out isn't undone by loudnorm.
+    cleaned signal, then apply the profanity mask (07-RESEARCH.md Pattern 1 -
+    it must come after loudnorm so loudnorm's own gain-riding can't partially
+    undo the duck), then fade last so the fade-out isn't undone by loudnorm.
     """
     filters = []
     if denoise:
         filters.append(f"afftdn=nr={denoise_strength}")
     if loudnorm:
         filters.append("loudnorm=I=-16:TP=-1.5:LRA=11")
+    if profanity_filter:
+        filters.append(profanity_filter)
     if fade_filter:
         filters.append(fade_filter)
     return ",".join(filters) if filters else None

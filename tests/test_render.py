@@ -7,6 +7,7 @@ from scripts.render import (
     VALID_TRANSITIONS,
     ass_color,
     build_ass_content,
+    build_audio_filter_chain,
     build_compilation_command,
     build_ffmpeg_command,
     build_jumpcut_command,
@@ -276,6 +277,28 @@ def test_build_ffmpeg_command_denoise_loudnorm_and_fade_chain_in_order():
     assert command[command.index("-af") + 1] == (
         "afftdn=nr=6.0,loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=out:st=29.5:d=0.5"
     )
+
+
+def test_build_audio_filter_chain_profanity_filter_order_after_loudnorm_before_fade():
+    mask = build_profanity_mask_filter([(2.0, 2.4)])
+
+    chain = build_audio_filter_chain(
+        denoise=True, loudnorm=True, fade_filter="afade=t=out:st=29.5:d=0.5",
+        profanity_filter=mask,
+    )
+
+    assert chain == (
+        f"afftdn=nr=6.0,loudnorm=I=-16:TP=-1.5:LRA=11,{mask},afade=t=out:st=29.5:d=0.5"
+    )
+
+
+def test_build_audio_filter_chain_none_profanity_filter_unchanged():
+    chain = build_audio_filter_chain(
+        denoise=True, loudnorm=True, fade_filter="afade=t=out:st=29.5:d=0.5",
+        profanity_filter=None,
+    )
+
+    assert chain == "afftdn=nr=6.0,loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=out:st=29.5:d=0.5"
 
 
 def test_build_ffmpeg_command_vignette_applies_after_crop_before_subtitles():
