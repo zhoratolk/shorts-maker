@@ -9,6 +9,7 @@ import requests
 
 import scripts.tiktok_publish as tiktok_publish
 from scripts.tiktok_publish import (
+    KILLED,
     MAX_TITLE_LENGTH,
     PAUSED,
     PUBLISHED,
@@ -24,6 +25,7 @@ from scripts.tiktok_publish import (
     enqueue,
     fetch_post_status,
     init_direct_post,
+    kill_item,
     load_credentials,
     load_queue,
     pause_item,
@@ -504,6 +506,61 @@ def make_tiktok_entry(**overrides):
     }
     entry.update(overrides)
     return entry
+
+
+# --- Task 4: kill_item (Pitfall 4 divergence from YouTube's revert+verify) -
+
+
+def test_kill_item_queued_is_local_only_no_publish_id():
+    queue = {"entries": [make_tiktok_entry(status=QUEUED, publish_id=None)]}
+
+    kill_item(queue, "clip-1")
+
+    assert queue["entries"][0]["status"] == KILLED
+
+
+def test_kill_item_paused_is_local_only():
+    queue = {"entries": [make_tiktok_entry(status=PAUSED, publish_id=None)]}
+
+    kill_item(queue, "clip-1")
+
+    assert queue["entries"][0]["status"] == KILLED
+
+
+def test_kill_item_uploading_no_publish_id_is_local_only():
+    queue = {"entries": [make_tiktok_entry(status=UPLOADING, publish_id=None)]}
+
+    kill_item(queue, "clip-1")
+
+    assert queue["entries"][0]["status"] == KILLED
+
+
+def test_kill_item_uploading_with_publish_id_is_still_local_only():
+    # An in-flight upload that already has a publish_id is not public yet -
+    # kill must remain local-only, no network call attempted (Pitfall 4/5).
+    queue = {"entries": [make_tiktok_entry(status=UPLOADING, publish_id="pub-1")]}
+
+    kill_item(queue, "clip-1")
+
+    assert queue["entries"][0]["status"] == KILLED
+
+
+def test_kill_item_published_raises_runtime_error_and_leaves_status_untouched():
+    queue = {"entries": [make_tiktok_entry(status=PUBLISHED, publish_id="pub-1")]}
+
+    with pytest.raises(RuntimeError):
+        kill_item(queue, "clip-1")
+
+    # A PUBLISHED entry must never be silently marked KILLED - this is the
+    # one behavior that must NOT silently succeed (Pitfall 4).
+    assert queue["entries"][0]["status"] == PUBLISHED
+
+
+def test_kill_item_takes_no_credentials_factory_parameter():
+    import inspect
+
+    sig = inspect.signature(kill_item)
+    assert list(sig.parameters) == ["queue", "clip_id"]
 
 
 def test_dry_run_default_no_upload(tmp_path):

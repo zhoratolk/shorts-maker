@@ -187,6 +187,58 @@ def resume_item(queue: dict[str, Any], clip_id: str) -> dict[str, Any]:
     return entry
 
 
+# --- Kill (PUB-04, TikTok's Pitfall-4 divergence) --------------------------
+
+# Statuses a kill treats as "not yet live" - no Direct Post has actually gone
+# public on TikTok yet, so a kill of these is purely local: no API call, just
+# flip the manifest. Same shape as publish_queue.py's
+# _NOT_YET_UPLOADED_STATUSES, but here UPLOADING stays local-only even once a
+# publish_id has been recorded (write-ahead #2) - a recorded publish_id only
+# means an in-flight, not-yet-terminal upload exists, never that anything is
+# public (06-RESEARCH.md Pitfall 4/5).
+_NOT_YET_UPLOADED_STATUSES = frozenset({QUEUED, PAUSED, UPLOADING})
+
+
+def kill_item(queue: dict[str, Any], clip_id: str) -> dict[str, Any]:
+    """Kills a queue entry (PUB-04), diverging from publish_queue.py's
+    revert-then-verify PUBLISHED branch:
+
+    - status in QUEUED/PAUSED/UPLOADING (with or without a publish_id
+      already recorded): local-only - flips status to KILLED, no API call.
+      TikTok has no equivalent of YouTube's "cancel a scheduled release"
+      call for an in-flight-but-not-yet-public upload.
+    - status is PUBLISHED: raises RuntimeError rather than silently
+      succeeding or pretending to revert it - TikTok's Content Posting API
+      has no un-publish/cancel endpoint for an already-completed Direct
+      Post (06-RESEARCH.md Pitfall 4). The entry's status is left untouched,
+      never marked KILLED, so an operator can never be misled into thinking
+      a live TikTok post was pulled down when it wasn't.
+
+    Unlike publish_queue.py's kill_item, this function takes no
+    service_factory/credentials_factory parameter at all - it never makes a
+    network call in any branch.
+    """
+    entry = _find_entry(queue, clip_id)
+
+    if entry["status"] in _NOT_YET_UPLOADED_STATUSES:
+        entry["status"] = KILLED
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return entry
+
+    if entry["status"] == PUBLISHED:
+        raise RuntimeError(
+            f"kill_item: clip_id={clip_id!r} is already PUBLISHED to TikTok - "
+            "TikTok's Content Posting API has no un-publish/cancel endpoint for "
+            "an already-completed Direct Post (06-RESEARCH.md Pitfall 4); the "
+            "entry's status is left untouched, not silently marked KILLED"
+        )
+
+    # Already KILLED - idempotent no-op re-flip, no API call either way.
+    entry["status"] = KILLED
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return entry
+
+
 # --- OAuth credential handling --------------------------------------------
 
 
