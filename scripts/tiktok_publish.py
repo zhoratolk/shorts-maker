@@ -23,12 +23,14 @@ google-api-python-client's deferred-import pattern) since it is a
 lightweight, always-installed dependency, not an optional extra.
 """
 
+import argparse
 import http.server
 import json
 import math
 import os
 import random
 import string
+import sys
 import time
 import urllib.parse
 import webbrowser
@@ -37,6 +39,13 @@ from pathlib import Path
 from typing import Any
 
 import requests
+
+# Makes `python scripts/tiktok_publish.py --check` etc. runnable standalone
+# (the repo root, not just scripts/, must be on sys.path for the
+# scripts.publish_queue cross-script import below to resolve) - same
+# workaround scripts/transitions.py/scripts/render.py already use for their
+# own sibling-module imports.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.publish_queue import append_notification
 
@@ -683,3 +692,141 @@ def reconcile_all_uploading(queue: dict[str, Any], credentials_factory, session=
     for entry in queue["entries"]:
         if entry["status"] == UPLOADING:
             reconcile_uploading(queue, entry, credentials_factory, session)
+
+
+# --- CLI (--check / --now / --pause / --kill / --resume / --list) --------
+
+
+def build_argument_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Local TikTok publish-queue CLI: periodic --check, manual --now override, "
+        "--pause/--kill/--resume, and --list - both --check and --now route through the "
+        "same upload_and_publish path, matching publish_queue.py's exact CLI contract"
+    )
+    parser.add_argument("--check", action="store_true", help="Periodic check: reconcile stuck uploads, then upload+publish the single next due item (or log a dry-run skip)")
+    parser.add_argument("--now", metavar="CLIP_ID", help="Force-publish one specific queued clip_id out of band, via the same upload path")
+    parser.add_argument("--pause", metavar="CLIP_ID", help="Pause a not-yet-uploaded queued clip_id")
+    parser.add_argument("--kill", metavar="CLIP_ID", help="Kill a clip_id (local-only if not yet PUBLISHED - TikTok has no un-publish API for an already-PUBLISHED entry, Pitfall 4)")
+    parser.add_argument("--resume", metavar="CLIP_ID", help="Resume a paused clip_id back to queued")
+    parser.add_argument("--list", action="store_true", help="Print the queue's seq/status/caption so numbering is visible")
+    parser.add_argument("--client-key", default="tiktok_client_key.json", help="TikTok client_key/client_secret JSON path")
+    parser.add_argument("--token", default="tiktok_token.json", help="Cached TikTok OAuth token JSON path")
+    parser.add_argument("--config", default="config.yaml", help="Path to config.yaml")
+    return parser
+
+
+def run_command(args: argparse.Namespace, credentials_factory, config, session=requests) -> None:
+    """Dispatches one CLI invocation. Factored out from main() so tests can
+    drive it with a fake credentials_factory + a config carrying tmp-path
+    queue/notifications paths, without ever touching real OAuth (main()'s
+    only job is parsing args, building the real credentials_factory + config,
+    and calling this) - mirrors scripts/publish_queue.py::run_command's
+    dispatch shape exactly (--list, --pause, --resume, --kill, --now,
+    --check, fallback usage message).
+
+    --check and --now both call _upload_one, which calls the identical
+    upload_and_publish - no second/divergent publish code path. --check
+    enforces "at most one item per invocation" by construction:
+    select_next_due (after reconcile_all_uploading resolves anything stuck)
+    returns at most one entry, and only that one entry is ever passed to
+    _upload_one per call. Reconciliation happens even in dry-run mode
+    (before the tiktok_enabled check) - only the actual upload is gated.
+    """
+    queue_path = config.tiktok_queue_path
+
+    if args.list:
+        queue = load_queue(queue_path)
+        for entry in sorted(queue["entries"], key=lambda e: e["seq"]):
+            print(f"{entry['seq']}\t{entry['status']}\t{entry['caption']}")
+        return
+
+    if args.pause:
+        queue = load_queue(queue_path)
+        try:
+            pause_item(queue, args.pause)
+        except KeyError:
+            print(f"error: no queue entry with clip_id={args.pause!r}", file=sys.stderr)
+            raise SystemExit(2)
+        save_queue(queue, queue_path)
+        print(f"paused {args.pause}")
+        return
+
+    if args.resume:
+        queue = load_queue(queue_path)
+        try:
+            resume_item(queue, args.resume)
+        except KeyError:
+            print(f"error: no queue entry with clip_id={args.resume!r}", file=sys.stderr)
+            raise SystemExit(2)
+        save_queue(queue, queue_path)
+        print(f"resumed {args.resume}")
+        return
+
+    if args.kill:
+        queue = load_queue(queue_path)
+        try:
+            # No credentials_factory arg (unlike publish_queue.py's
+            # kill_item) - kill_item never makes a network call. A
+            # RuntimeError from an already-PUBLISHED entry is deliberately
+            # NOT caught here - let it propagate to the CLI's default
+            # traceback, since that is a genuine operator error the tool
+            # should surface loudly, not swallow into a clean exit code.
+            kill_item(queue, args.kill)
+        except KeyError:
+            print(f"error: no queue entry with clip_id={args.kill!r}", file=sys.stderr)
+            raise SystemExit(2)
+        save_queue(queue, queue_path)
+        print(f"killed {args.kill}")
+        return
+
+    if args.now:
+        queue = load_queue(queue_path)
+        try:
+            entry = _find_entry(queue, args.now)
+        except KeyError:
+            print(f"error: no queue entry with clip_id={args.now!r}", file=sys.stderr)
+            raise SystemExit(2)
+        _upload_one(entry, queue, credentials_factory, config, session=session)
+        return
+
+    if args.check:
+        queue = load_queue(queue_path)
+        # Reconcile-first: any crash-mid-upload entry must be resolved
+        # before a fresh item is ever selected. Happens even in dry-run
+        # mode - only the actual upload is gated by tiktok_enabled.
+        reconcile_all_uploading(queue, credentials_factory, session=session)
+        save_queue(queue, queue_path)
+
+        if not config.tiktok_enabled:
+            print("dry-run: skipped (tiktok_enabled disabled)")
+            return
+
+        entry = select_next_due(queue)
+        if entry is None:
+            print("check: nothing due")
+            return
+
+        # --check uploads AT MOST ONE item per invocation - this is also
+        # the natural quota debounce.
+        _upload_one(entry, queue, credentials_factory, config, session=session)
+        return
+
+    print("no action given - use --check/--now/--pause/--kill/--resume/--list")
+
+
+def main() -> None:
+    parser = build_argument_parser()
+    args = parser.parse_args()
+
+    from scripts.config import load_config
+
+    config = load_config(args.config).publish
+
+    def credentials_factory():
+        return load_credentials(args.client_key, args.token, session=requests)
+
+    run_command(args, credentials_factory, config)
+
+
+if __name__ == "__main__":
+    main()
