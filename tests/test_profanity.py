@@ -137,7 +137,7 @@ def test_find_profane_spans_detects_ru_en_and_obfuscated_stems():
     words = [
         {"word": "привет", "start": 0.0, "end": 0.4},
         {"word": "бляяя,", "start": 0.5, "end": 0.9},
-        {"word": "f0ck", "start": 1.0, "end": 1.3},
+        {"word": "fu_ck", "start": 1.0, "end": 1.3},
         {"word": "чисто", "start": 1.4, "end": 1.7},
     ]
 
