@@ -94,8 +94,11 @@ def append_compilation_sections_markdown(path: str, groups: list[dict], unmatche
         lines.append("## Sub-Threshold Compilations")
         lines.append("")
         for group in groups:
-            member_ids = ", ".join(f"#{member['id']}" for member in group["members"])
-            lines.append(f"- Candidates {member_ids} grouped into compilation: {group['title']}")
+            member_ids = ", ".join(f"#{member.get('id', '?')}" for member in group["members"])
+            lines.append(
+                f"- Candidates {member_ids} grouped into compilation: "
+                f"{group.get('title', '(untitled compilation)')}"
+            )
 
     if unmatched:
         lines.append("")
@@ -104,7 +107,9 @@ def append_compilation_sections_markdown(path: str, groups: list[dict], unmatche
         for candidate in unmatched:
             start_tc = format_timecode(candidate["start"])
             end_tc = format_timecode(candidate["end"])
-            lines.append(f"- `{start_tc}` - `{end_tc}` — {candidate['reason']} (tag: {candidate['tag']})")
+            reason = candidate.get("reason", "(no reason given)")
+            tag = candidate.get("tag", "(untagged)")
+            lines.append(f"- `{start_tc}` - `{end_tc}` — {reason} (tag: {tag})")
 
     existing = Path(path).read_text(encoding="utf-8")
     Path(path).write_text(existing + "\n".join(lines) + "\n", encoding="utf-8")
