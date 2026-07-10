@@ -1,30 +1,25 @@
 ---
 phase: 05-sub-threshold-highlight-compilation
-verified: 2026-07-10T09:00:00Z
-status: gaps_found
-score: 2/3 must-haves verified
+verified: 2026-07-10T10:59:01Z
+status: passed
+score: 3/3 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
-gaps:
-  - truth: "Similar-tagged sub-threshold candidates (same gameplay situation or same joke/theme) from the same source video/session get grouped together and rendered as one full-length short, joined via Phase 4's transition engine"
-    status: failed
-    reason: "CR-01 (05-REVIEW.md, Critical, empirically reproduced): scripts/compilation.py:build_compilation_entry validates boundary_transitions length against the POST-cap (fitted) member list (lines 68-94), but SKILL.md step 5b computes boundary_transitions PRE-cap (bullet 4 flattens ALL group members before capping ever runs; bullet 5 runs select-transitions against that full uncapped list; only bullet 8's compilation.py CLI call ever applies the length-ceiling cap). Whenever compilation_max_seconds capping actually drops trailing (weakest) members AND config.transitions.enabled is true — both real, tested, non-edge-case pipeline states — build_compilation_entry always raises CompilationError, and SKILL.md step 8 has no documented fail-open handling for this specific call (unlike step 5b bullet 5's explicit 'fail open, do not abort' framing for the transitions-selection sub-step itself). The compilation for that group is not built, so those sub-threshold candidates are not rendered as a full-length short in that run — directly failing this success criterion under the exact 'similar-tagged + grouped + stitched via transition engine' condition it describes, whenever the group also happens to overflow compilation_max_seconds."
-    artifacts:
-      - path: "scripts/compilation.py"
-        issue: "Lines 68-81 (capping loop) run before lines 83-94 (boundary_transitions length validation), but the validation compares against len(fitted) (post-cap), while SKILL.md's step 5b (lines 202-230 of .claude/skills/make-shorts/SKILL.md) computes and passes a boundary_transitions list sized for the full pre-cap member list — the two are never reconciled."
-      - path: ".claude/skills/make-shorts/SKILL.md"
-        issue: "Step 5b bullet 5 (transitions) runs before bullet 8 (compilation.py build, which is the only place capping happens) with no instruction to recompute or truncate boundary_transitions after capping, and step 8 documents no fail-open/catch behavior for a CompilationError from this specific CLI call."
-    missing:
-      - "Either: truncate the caller-supplied boundary_transitions to the fitted prefix inside build_compilation_entry (capping only ever drops a contiguous trailing run, so this is safe per the reviewer's own analysis), or update SKILL.md step 5b to recompute select-transitions after determining which members survive capping."
-      - "A regression test in tests/test_compilation.py that exercises capping (dropping >=1 member) together with a non-None boundary_transitions list sized for the pre-cap member set — this exact combination has zero test coverage today (confirmed: none of the 7 existing build_compilation_entry tests combine capping with boundary_transitions)."
+re_verification:
+  previous_status: gaps_found
+  previous_score: 2/3
+  gaps_closed:
+    - "Similar-tagged sub-threshold candidates get grouped together and rendered as one full-length short, joined via Phase 4's transition engine (CR-01 fixed — build_compilation_entry now truncates a pre-cap boundary_transitions list to the fitted post-cap prefix before length-validating, instead of always raising CompilationError when capping drops members and transitions are enabled)"
+  gaps_remaining: []
+  regressions: []
 ---
 
 # Phase 5: Sub-Threshold Highlight Compilation Verification Report
 
 **Phase Goal:** Moments too short to stand alone are grouped by similarity and stitched into one coherent full-length short instead of being discarded
-**Verified:** 2026-07-10T09:00:00Z
-**Status:** gaps_found
-**Re-verification:** No — initial verification
+**Verified:** 2026-07-10T10:59:01Z
+**Status:** passed
+**Re-verification:** Yes — after gap closure (05-05-PLAN.md, gap_closure: true)
 
 ## Goal Achievement
 
@@ -32,86 +27,109 @@ gaps:
 
 | # | Truth | Status | Evidence |
 |---|-------|--------|----------|
-| 1 | Candidates shorter than `config.clip.min_seconds` show up tagged with gameplay/theme tags in review output instead of silently disappearing | ✓ VERIFIED | `Candidate` dataclass (scripts/candidates.py:9-27) carries `tag`/`sub_threshold`/`group_id`/`unmatched`; `merge_candidates` threads them through via `.get()` (lines 39-59); `append_compilation_sections_markdown` (lines 83-110) appends `## Sub-Threshold Compilations`/`## Unmatched Sub-Threshold` sections to CANDIDATES.md, confirmed substantive (not stub) by reading the function body; SKILL.md step 5 bullet "Sub-threshold detection + tagging" (line 130) documents the trigger; step 5b bullet 9 (lines 232-236) wires the append call. All 8 candidates.py tests pass (`pytest tests/test_candidates.py`, verified directly). |
-| 2 | Similar-tagged sub-threshold candidates (same gameplay situation or same joke/theme) from the same source video/session get grouped together and rendered as one full-length short, joined via Phase 4's transition engine | ✗ FAILED | Grouping/ordering/PLAN.json-entry mechanics all exist and are individually well-tested (`scripts/compilation.py::build_compilation_entry`, `scripts/render.py::build_compilation_command`/`_build_compilation_fold`, `render_clip`'s `type=="compilation"` dispatch, SKILL.md step 5b). **However CR-01 (05-REVIEW.md) is a confirmed, reproducible Critical defect**: `build_compilation_entry` validates `boundary_transitions` length against the post-cap `fitted` list, but SKILL.md step 5b computes `boundary_transitions` pre-cap. Verified independently by direct reproduction (see below) — whenever `config.transitions.enabled` is true AND `compilation_max_seconds` capping actually drops trailing members (both realistic, non-edge-case run states), `build_compilation_entry` always raises `CompilationError` and that compilation is never built. This is not a hypothetical: `test_build_compilation_entry_caps_at_compilation_max_seconds_dropping_weakest` (which proves capping drops members) and `test_build_compilation_entry_rejects_boundary_transitions_length_mismatch` (which proves the length guard fires) both pass individually, but no test exercises them together — the exact gap the reviewer found. |
-| 3 | Compilation groups never mix candidates from different source videos/sessions in this version | ✓ VERIFIED | `build_compilation_entry` Guard 2 (scripts/compilation.py:56-60) computes `{member["video_stem"] for member in members}` and raises `CompilationError` if more than one distinct value exists. `test_build_compilation_entry_requires_same_video_stem` passes. SKILL.md step 5b bullet 1 (line 202) explicitly instructs "never group candidates from two different video_stems together (COMP-03)". |
+| 1 | Candidates shorter than `config.clip.min_seconds` show up tagged with gameplay/theme tags in review output instead of silently disappearing | ✓ VERIFIED | Unchanged since prior pass. `Candidate` dataclass (scripts/candidates.py:9-27) carries `tag`/`sub_threshold`/`group_id`/`unmatched`; `merge_candidates` threads them through via `.get()`; `append_compilation_sections_markdown` (scripts/candidates.py:83-115) appends `## Sub-Threshold Compilations`/`## Unmatched Sub-Threshold` sections to CANDIDATES.md. Now additionally hardened by 05-05's WR-03 fix: unchecked `member['id']`/`group['title']`/`candidate['reason']`/`candidate['tag']` bracket access replaced with `.get()`-with-default (verified by direct code read, lines 97, 100, 110-111). Independently re-ran `pytest tests/test_candidates.py -q`: 16 passed (was 8 pre-Phase-5-baseline; 14 pre-05-05, +2 new in 05-05 including `test_append_compilation_sections_markdown_defaults_missing_fields`, confirmed present via `--collect-only`). |
+| 2 | Similar-tagged sub-threshold candidates (same gameplay situation or same joke/theme) from the same source video/session get grouped together and rendered as one full-length short, joined via Phase 4's transition engine | ✓ VERIFIED | **CR-01 closed.** Independently re-read `scripts/compilation.py:87-103` (not just SUMMARY narration): the caller-supplied `boundary_transitions` is now truncated to `expected_length` (the post-cap fitted boundary count) via `boundary_transitions = boundary_transitions[:expected_length]` *before* the existing `if len(boundary_transitions) != expected_length: raise CompilationError(...)` check. Independently re-ran the exact CR-01 repro snippet from the prior 05-VERIFICATION.md against the current on-disk module (see reproduction below) — it now returns a valid entry instead of raising. Also independently verified a genuinely-too-short list (unrelated to capping) still raises `CompilationError` — the fix truncates, it does not silently accept any length. |
+| 3 | Compilation groups never mix candidates from different source videos/sessions in this version | ✓ VERIFIED | Unchanged since prior pass. `build_compilation_entry` Guard 2 (scripts/compilation.py:56-60) computes `{member["video_stem"] for member in members}` and raises `CompilationError` if more than one distinct value exists — confirmed present and untouched by the gap-closure diff. `test_build_compilation_entry_requires_same_video_stem` confirmed present via `--collect-only` and passing. |
 
-**Score:** 2/3 truths verified (1 present-but-defective, tracked as a gap, not behavior-unverified — the defect was directly reproduced, not merely un-exercised)
+**Score:** 3/3 truths verified (0 present-but-behavior-unverified)
 
-### CR-01 Direct Reproduction (independent of 05-REVIEW.md's own repro)
+### Truth #2 Independent Re-Verification (fresh, not carried over)
+
+**1. Exact prior repro snippet, re-run against current code:**
 
 ```python
-from scripts.compilation import build_compilation_entry
+from scripts.compilation import build_compilation_entry, CompilationError
 members = [
     {"video_stem": "mystream", "start": 0, "end": 60},
     {"video_stem": "mystream", "start": 100, "end": 160},
     {"video_stem": "mystream", "start": 200, "end": 260},
 ]
-build_compilation_entry(members, 150, "zoom", boundary_transitions=["crossfade", "crossfade"])
-# -> CompilationError: boundary_transitions must have length 1 (flattened segment count 2 - 1), got 2
+entry = build_compilation_entry(members, 150, "zoom", boundary_transitions=["crossfade", "crossfade"])
+print(entry)
 ```
-Ran this verbatim against the current on-disk `scripts/compilation.py` — confirmed the exception fires exactly as 05-REVIEW.md describes. This is the strongest form of evidence available (executed code, not narration).
+
+Actual output (executed directly by this verifier, not narrated):
+
+```
+{'type': 'compilation', 'segments': [{'start': 0, 'end': 60}, {'start': 100, 'end': 160}], 'crop_style': 'zoom', 'boundary_transitions': ['crossfade']}
+```
+
+No exception raised. Capping drops the third member (running_total 60+60=120, +60=180 > 150 → stop), leaving 2 fitted members / 1 boundary. The pre-cap 2-length `boundary_transitions` is truncated to its own first-element prefix `['crossfade']`, matching the truncate-not-pad contract.
+
+**2. Genuinely-too-short list (unrelated to capping) still raises:**
+
+```python
+build_compilation_entry(members, 150, "zoom", boundary_transitions=[])
+```
+
+Actual output: `CompilationError: boundary_transitions must have length 1 (flattened segment count 2 - 1), got 0` — raised as expected. Confirms the fix is a truncate-only reconciliation, not a relaxed/removed guard: a list that is still short after truncation (here, trivially short since it was empty) continues to fail closed.
 
 ### Required Artifacts
 
 | Artifact | Expected | Status | Details |
 |----------|----------|--------|---------|
-| `scripts/candidates.py` | Candidate tag/sub_threshold/group_id/unmatched fields + append_compilation_sections_markdown | ✓ VERIFIED | Present, substantive, wired (8 tests pass) |
-| `scripts/config.py` | `ClipConfig.compilation_max_seconds` (default 150) + `_validate` guard > max_seconds | ✓ VERIFIED | Lines 50, 286-289; tests pass |
-| `scripts/compilation.py` | `CompilationError`, `MIN_GROUP_SIZE`, `build_compilation_entry` | ⚠️ VERIFIED-WITH-DEFECT | Exists, substantive, wired, all 7 unit tests pass individually — but CR-01's capping/boundary_transitions interaction is unhandled (see gap above) |
-| `scripts/render.py` | `build_compilation_command`, `_build_compilation_fold`, `render_clip` dispatch on `type=="compilation"` | ✓ VERIFIED | Lines 626 (`_build_compilation_fold`), 707 (`build_compilation_command`), 935 (dispatch); 13 compilation-named unit tests + 1 real-ffmpeg integration test all pass (verified directly) |
-| `.claude/skills/make-shorts/SKILL.md` | Step 5 sub-threshold bullet, step 5b grouping subsection, PLAN.json schema update, step 6 note | ✓ VERIFIED (content present) | Read directly (gitignored, confirmed on-disk); step 5 line 130, step 5b lines 198-236; but step 5b's bullet ordering (transitions computed at bullet 5, capping only happens at bullet 8) is the root cause of CR-01 |
+| `scripts/compilation.py` | `CompilationError`, `MIN_GROUP_SIZE`, `build_compilation_entry` with truncate-then-validate `boundary_transitions` handling | ✓ VERIFIED | Lines 87-103 read directly; truncation logic confirmed correct by independent execution (above), not just static reading |
+| `tests/test_compilation.py` | Regression tests combining capping-drops-members with a pre-cap-sized `boundary_transitions`, plus a still-too-short-after-truncation case | ✓ VERIFIED | `test_build_compilation_entry_caps_and_truncates_boundary_transitions` and `test_build_compilation_entry_still_rejects_too_short_boundary_transitions` confirmed present via `pytest --collect-only`; both pass as part of the file's 10/10 passing tests |
+| `scripts/candidates.py` | Defensive `.get()` access in `append_compilation_sections_markdown` (WR-03) | ✓ VERIFIED | Lines 97, 100, 110-111 read directly; `member['id']`/`group['title']`/`candidate['reason']`/`candidate['tag']` all now `.get(...)`-with-default; `start`/`end` intentionally left as required bracket access (structural, not display-only) |
+| `tests/test_candidates.py` | New regression test for missing-field defaulting (WR-03) | ✓ VERIFIED | `test_append_compilation_sections_markdown_defaults_missing_fields` confirmed present and passing |
+| `.claude/skills/make-shorts/SKILL.md` | Step 5b bullet 9 explicit groups.json/unmatched.json write instruction (WR-01); bullet 7 explicit compilation words-file literal path (WR-02) | ✓ VERIFIED | Read directly (gitignored, confirmed on-disk): bullet 9 (SKILL.md:236) now reads "as bullets 1-8 above are worked through, accumulate two running JSON files... write them yourself (they do not exist beforehand); start each as `[]` before the first append..."; bullet 7 (SKILL.md:224-227) now spells out the literal path `work/<video_stem>/compilations/<compilation_stem>_words.json` and the full three-arg `remap-words` CLI invocation |
 
 ### Key Link Verification
 
 | From | To | Via | Status | Details |
 |------|----|----|--------|---------|
-| `merge_candidates`'s `.get()` reads | Candidate dataclass fields | direct assignment | ✓ WIRED | Confirmed in code |
-| `append_compilation_sections_markdown` | CANDIDATES.md | read-append-rewrite | ✓ WIRED | No-op-when-empty and content-append both tested |
-| `build_compilation_entry`'s returned dict | `render_clip`'s `type=="compilation"` dispatch | PLAN.json entry shape (`type`, `segments`, `crop_style`, ...) | ✓ WIRED | `render_clip` reads `plan_entry["segments"]`/`plan_entry.get("boundary_transitions")` etc. exactly matching `build_compilation_entry`'s output shape |
-| SKILL.md step 5b bullet 5 (transitions, pre-cap flattened list) | SKILL.md step 5b bullet 8 (`compilation.py` CLI, applies cap) | file hand-off (`<compilation_stem>_boundary.json` -> `--boundary-transitions-json`) | ✗ NOT RECONCILED | This is the exact link CR-01 identifies as broken — the two bullets operate on lists of different (pre-cap vs. post-cap) lengths with nothing in between reconciling them |
-| `scripts/transitions.py::select_boundary_transitions` | Step 5b's flattened segment list | unchanged CLI reuse | ✓ WIRED | Confirmed via SKILL.md text; not independently re-tested here (Plan 04's own scope) |
+| SKILL.md step 5b bullet 5 (transitions computed pre-cap, full uncapped flattened segment list) | scripts/compilation.py CLI (step 8, where capping actually happens) -> build_compilation_entry's own truncation | file hand-off (`<compilation_stem>_boundary.json` -> `--boundary-transitions-json`) reconciled inside the function | ✓ WIRED (was ✗ NOT RECONCILED) | This is the exact link CR-01 identified as broken. Now reconciled: `build_compilation_entry` truncates the pre-cap list to the fitted post-cap prefix itself, so SKILL.md no longer needs to predict the cap result in advance. Independently confirmed by direct execution above, not just code reading. |
+| `build_compilation_entry`'s returned dict | `render_clip`'s `type=="compilation"` dispatch | PLAN.json entry shape | ✓ WIRED | Unchanged since prior pass; `render.py` compilation-named tests still pass (see spot-checks) |
+| `merge_candidates`'s `.get()` reads | Candidate dataclass fields | direct assignment | ✓ WIRED | Unchanged since prior pass |
+| `append_compilation_sections_markdown` | CANDIDATES.md | read-append-rewrite, now defensive against missing fields | ✓ WIRED | Unchanged wiring, hardened field access (WR-03) |
+| SKILL.md step 5b bullets 1-8 (groups/unmatched decided) | groups.json/unmatched.json | explicit accumulate-as-you-go instruction (WR-01, was undocumented) | ✓ WIRED | Now explicit; previously an unexplained pre-existing-input assumption |
 
 ### Behavioral Spot-Checks
 
 | Behavior | Command | Result | Status |
 |----------|---------|--------|--------|
-| candidates/compilation/config unit tests | `pytest tests/test_candidates.py tests/test_compilation.py tests/test_config.py -q` | 88 passed | ✓ PASS |
-| render.py compilation-named unit tests | `pytest tests/test_render.py -k compilation -q` | 13 passed | ✓ PASS |
-| Full non-integration suite (regression check) | `pytest -m "not integration" -q` | 407 passed, 5 skipped | ✓ PASS (matches 05-03/05-04 SUMMARY claims exactly) |
-| Real-ffmpeg compilation integration test | `pytest tests/test_integration_ffmpeg.py -k compilation -m integration -q` | 1 passed | ✓ PASS |
-| CR-01 direct reproduction | `python -c "...build_compilation_entry(... boundary_transitions=[...])"` | `CompilationError` raised as predicted | ✓ CONFIRMS GAP (not a pass/fail spot-check — this is adversarial evidence the defect is real) |
+| CR-01 exact repro (3 members, 60/60/60, cap 150, boundary_transitions sized for pre-cap 2-boundary list) | `python -c "...build_compilation_entry(...)"` | Returns valid entry, `boundary_transitions == ['crossfade']`, no exception | ✓ PASS (was ✗ FAIL / CompilationError in prior verification) |
+| Genuinely-too-short boundary_transitions (empty list, unrelated to capping) | `python -c "...build_compilation_entry(..., boundary_transitions=[])"` | `CompilationError: ...got 0` raised | ✓ PASS (truncate-only, not a relaxed guard) |
+| tests/test_compilation.py | `pytest tests/test_compilation.py -q` | 10 passed | ✓ PASS |
+| tests/test_candidates.py | `pytest tests/test_candidates.py -q` | 16 passed | ✓ PASS |
+| New test names present (not just claimed) | `pytest tests/test_compilation.py tests/test_candidates.py --collect-only -q \| grep -E "truncat\|still_rejects\|defaults_missing"` | All 3 new test IDs listed | ✓ PASS |
+| Full non-integration regression suite (run once, not per-truth) | `pytest -m "not integration" -q --basetemp=/tmp/pytest-scratch` | 410 passed, 5 skipped, 9 deselected | ✓ PASS (matches 05-05-SUMMARY.md's claimed count exactly) |
+
+Note: this machine's default pytest tmp dir breaks under the Cyrillic Windows username (`PermissionError` mentioning `pytest-of-`); `--basetemp=/tmp/pytest-scratch` was used to work around it, per the task instructions — this is an environment quirk unrelated to any code under test, and does not affect the pass/fail outcome (identical to the workaround 05-05-SUMMARY.md itself documents).
 
 ### Requirements Coverage
 
 | Requirement | Source Plan | Description | Status | Evidence |
-|-------------|-------------|-------------|--------|----------|
-| COMP-01 | 05-01, 05-04 | Candidates shorter than min_seconds are tagged instead of discarded | ✓ SATISFIED | Truth #1 verified above |
-| COMP-02 | 05-02, 05-03, 05-04 | Similar-tagged sub-threshold candidates grouped and stitched via TRANS engine into one full-length short | ✗ BLOCKED | Truth #2 failed — CR-01 breaks exactly this requirement's "joined via the transition engine" clause under a real, non-edge-case condition combination |
-| COMP-03 | 05-02, 05-04 | Compilation only groups candidates from the same source video/session | ✓ SATISFIED | Truth #3 verified above |
+|-------------|-------------|--------------|--------|----------|
+| COMP-01 | 05-01, 05-04, 05-05 (WR-03 hardening) | Candidates shorter than min_seconds are tagged instead of discarded | ✓ SATISFIED | Truth #1 verified above; REQUIREMENTS.md marks `[x]` and "Complete" |
+| COMP-02 | 05-02, 05-03, 05-04, 05-05 (CR-01 fix) | Similar-tagged sub-threshold candidates grouped and stitched via TRANS engine into one full-length short | ✓ SATISFIED (was ✗ BLOCKED) | Truth #2 verified above via fresh, independent reproduction — CR-01 confirmed closed by direct execution, not narration; REQUIREMENTS.md marks `[x]` and "Complete" |
+| COMP-03 | 05-02, 05-04 | Compilation only groups candidates from the same source video/session | ✓ SATISFIED | Truth #3 verified above; REQUIREMENTS.md marks `[x]` and "Complete" |
 
-No orphaned requirements — REQUIREMENTS.md maps only COMP-01/02/03 to Phase 5, and all three appear in at least one plan's `requirements` frontmatter field.
+No orphaned requirements — REQUIREMENTS.md maps only COMP-01/02/03 to Phase 5, and all three appear in 05-05-PLAN.md's own `requirements` frontmatter field (`[COMP-01, COMP-02]`) plus prior plans' frontmatter.
 
 ### Anti-Patterns Found
 
 | File | Line | Pattern | Severity | Impact |
 |------|------|---------|----------|--------|
-| — | — | No TBD/FIXME/XXX/TODO/HACK/PLACEHOLDER markers found in scripts/candidates.py, scripts/compilation.py, scripts/config.py, scripts/render.py | — | Clean |
-| scripts/compilation.py:62-94 | 62-94 | CR-01 logic defect (not a marker-based anti-pattern, but a genuine correctness gap between two validation passes) | 🛑 Blocker | See gap above |
+| — | — | No TBD/FIXME/XXX/TODO/HACK/PLACEHOLDER markers found in scripts/candidates.py, scripts/compilation.py (re-scanned on current code) | — | Clean |
+| — | — | CR-01 logic defect (prior 🛑 Blocker) | — | **Resolved.** Truncate-then-validate logic confirmed correct by independent execution, not just reading. |
 
-Additionally, per 05-REVIEW.md (not independently re-verified line-by-line here, but consistent with direct code reading): WR-01 (SKILL.md step 9/5b references `groups.json`/`unmatched.json` as pre-existing inputs with no earlier bullet instructing the orchestrator to write them as it works through the grouping pass — confirmed by reading SKILL.md lines 232-236 directly, no accumulation instruction precedes it), WR-02 (compilation karaoke-words file path relies on an unstated naming convention), WR-03 (unchecked dict indexing in `append_compilation_sections_markdown`), WR-04 (fold-loop duplication between `_build_transition_fold`/`_build_compilation_fold`). These are Warnings, not independently re-scored as blockers here — they don't break a stated Success Criterion the way CR-01 does, but WR-01 in particular weakens confidence in truth #1's end-to-end reliability (the append call's own inputs are undocumented bookkeeping) and is worth the same attention during gap closure.
+05-REVIEW.md (re-review dated 2026-07-10T00:00:00Z, after 05-05's gap closure) independently confirms: CR-01 fixed, WR-01 fixed, WR-02 fixed, WR-03 fixed (all four re-verified against current code by the reviewer, matching this verifier's own independent findings). WR-04 (fold-loop duplication in render.py) remains explicitly deferred — a maintainability-only observation with zero functional impact on any Success Criterion, not part of this plan's scope, and does not block phase completion. The review surfaced two new lower-severity Warning findings during its adversarial re-review of the whole phase (not just the gap-closure diff):
+
+- **WR-05** (SKILL.md's illustrative compilation `PLAN.json` example combines `crop_style: "pad"` with `punch_zoom_at`, and its `boundary_transitions` length doesn't match its own `segments` shape — an internally-inconsistent reference example, not a runtime code defect).
+- **WR-06** (SKILL.md step 5b bullet 8 reads `<compilation_stem>_members.json` with no earlier bullet instructing it be written — the same class of documentation gap as WR-01, but for a different file).
+
+Both are SKILL.md documentation-only issues discovered in this re-review pass, outside 05-05-PLAN.md's declared scope (which targeted only CR-01/WR-01/WR-02/WR-03). Neither breaks a stated Success Criterion or blocks a requirement — `scripts/compilation.py`'s CLI itself still functions correctly when `_members.json` is actually written (confirmed by this verifier's direct code/test execution above), and WR-05's broken example is illustrative text, not code invoked at runtime. These are tracked here as informational follow-up, not phase-blocking gaps; they do not affect the phase goal ("moments too short to stand alone are grouped by similarity and stitched into one coherent full-length short") which is achieved by the underlying Python mechanics, independently verified above.
 
 ### Human Verification Required
 
-None. All three success criteria were resolvable via direct code reading, test execution, and one adversarial reproduction — no visual/UX/external-service judgment calls remain open.
+None. All three success criteria and the CR-01 gap closure were resolvable via direct code reading, independent test execution, and adversarial reproduction of both the fixed case and the still-must-fail case — no visual/UX/external-service judgment calls remain open.
 
 ### Gaps Summary
 
-Phase 5's mechanical scaffolding (tagging, config knob, group validation, multi-input render fold, SKILL.md orchestration wiring) is real, substantive, and individually well-tested — this is not a stub-detection failure. The single blocking gap is a genuine **integration defect between two pieces that were each tested in isolation but never tested together**: `build_compilation_entry`'s length-ceiling capping (tested) and its `boundary_transitions` length validation (tested) interact incorrectly the moment both a non-trivial cap-drop and a non-None `boundary_transitions` list are present in the same call — a combination SKILL.md's own step 5b will produce on any real run where a sub-threshold group's full uncapped duration exceeds `compilation_max_seconds` and `config.transitions.enabled` is true. This directly undermines Success Criterion 2's explicit "joined via Phase 4's transition engine" clause — not in a rare edge case, but in the ordinary "long group + transitions on" path the feature is meant to handle. The pipeline itself is fail-open (per its own threat model) and won't crash, but the affected compilation silently fails to render, which is exactly the kind of silent-discard-under-real-conditions outcome this phase exists to prevent for sub-threshold candidates in the first place.
-
-Recommended closure path (per 05-REVIEW.md's own fix suggestion, endorsed here as the simpler option): truncate the caller-supplied `boundary_transitions` to the fitted prefix inside `build_compilation_entry` (mechanically safe, since capping only ever drops a contiguous trailing run — the pre-cap boundary list's prefix is exactly the boundaries that survive), plus a new regression test combining capping with a boundary_transitions list sized for the pre-cap member set.
+No gaps remain. The single blocking gap from the prior verification (CR-01: `build_compilation_entry` validated `boundary_transitions` length against the post-cap fitted list while SKILL.md computed it pre-cap, always raising `CompilationError` under the realistic "capping drops members + transitions enabled" combination) is confirmed closed by this verifier's own independent execution of both the original failing repro (now succeeds) and a genuinely-too-short case (still correctly raises). The three Warning-level findings addressed by 05-05 (WR-01/WR-02/WR-03) are also confirmed fixed by direct code reading. WR-04 remains explicitly and appropriately deferred. Two new lower-priority SKILL.md documentation findings (WR-05, WR-06) surfaced during the post-fix code review are informational follow-ups, not phase-blocking — they concern illustrative/doc text, not the tested Python mechanics that deliver the phase goal. Phase 5's goal — "moments too short to stand alone are grouped by similarity and stitched into one coherent full-length short instead of being discarded" — is achieved: tagging (COMP-01), grouping+stitching via the transition engine (COMP-02), and same-session-only grouping (COMP-03) are all implemented, tested, and independently confirmed working end-to-end at the mechanical level this phase's Python layer is responsible for.
 
 ---
 
-_Verified: 2026-07-10T09:00:00Z_
+_Verified: 2026-07-10T10:59:01Z_
 _Verifier: Claude (gsd-verifier)_
