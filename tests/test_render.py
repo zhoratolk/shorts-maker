@@ -7,6 +7,7 @@ from scripts.render import (
     VALID_TRANSITIONS,
     ass_color,
     build_ass_content,
+    build_compilation_command,
     build_ffmpeg_command,
     build_jumpcut_command,
     build_punch_zoom_filter,
@@ -587,6 +588,152 @@ def test_build_jumpcut_command_rejects_unknown_boundary_transition_type():
             crop_filter="crop=608:1080:656:0,scale=1080:1920",
             boundary_transitions=["teleport"], boundary_gaps=[2.0],
         )
+
+
+def test_build_compilation_command_rejects_empty_members():
+    with pytest.raises(RenderError, match="members must not be empty"):
+        build_compilation_command(
+            "in.mp4", "out.mp4", members=[],
+            crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        )
+
+
+def test_build_compilation_command_rejects_single_member():
+    with pytest.raises(RenderError, match="a compilation needs >= 2 members"):
+        build_compilation_command(
+            "in.mp4", "out.mp4", members=[{"start": 0.0, "end": 5.0}],
+            crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        )
+
+
+def test_build_compilation_command_builds_one_input_per_member_two_members():
+    command = build_compilation_command(
+        "in.mp4", "out.mp4",
+        members=[{"start": 10.0, "end": 15.0}, {"start": 50.0, "end": 55.0}],
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+    )
+
+    assert command.count("-i") == 2
+    assert command.count("-ss") == 2
+
+
+def test_build_compilation_command_builds_one_input_per_member_three_members():
+    command = build_compilation_command(
+        "in.mp4", "out.mp4",
+        members=[
+            {"start": 10.0, "end": 15.0},
+            {"start": 50.0, "end": 55.0},
+            {"start": 90.0, "end": 92.0},
+        ],
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+    )
+
+    assert command.count("-i") == 3
+    assert command.count("-ss") == 3
+
+
+def test_build_compilation_command_rejects_unknown_boundary_transition():
+    with pytest.raises(RenderError, match="boundary_transitions entries must be one of"):
+        build_compilation_command(
+            "in.mp4", "out.mp4",
+            members=[{"start": 10.0, "end": 15.0}, {"start": 50.0, "end": 55.0}],
+            crop_filter="crop=608:1080:656:0,scale=1080:1920",
+            boundary_transitions=["teleport"],
+        )
+
+
+def test_build_compilation_command_all_cut_boundary_transitions_matches_no_transitions():
+    members = [{"start": 10.0, "end": 15.0}, {"start": 50.0, "end": 55.0}]
+
+    command_with_none = build_compilation_command(
+        "in.mp4", "out.mp4", members=members,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+    )
+    command_with_cut = build_compilation_command(
+        "in.mp4", "out.mp4", members=members,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        boundary_transitions=["cut"],
+    )
+
+    assert command_with_cut == command_with_none
+
+
+def test_build_compilation_command_forced_crossfade_boundary_emits_xfade_without_trim_extension():
+    members = [{"start": 10.0, "end": 15.0}, {"start": 50.0, "end": 55.0}]
+
+    no_transition_command = build_compilation_command(
+        "in.mp4", "out.mp4", members=members,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+    )
+    crossfade_command = build_compilation_command(
+        "in.mp4", "out.mp4", members=members,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        boundary_transitions=["crossfade"],
+    )
+
+    no_transition_filter = no_transition_command[no_transition_command.index("-filter_complex") + 1]
+    crossfade_filter = crossfade_command[crossfade_command.index("-filter_complex") + 1]
+
+    # trims for the two adjacent segments are unchanged from the no-transition
+    # case - only the xfade offset differs, no gap-borrowed trim-extension.
+    assert "[0:v]trim=start=0.0:end=5.0,setpts=PTS-STARTPTS[v0]" in no_transition_filter
+    assert "[1:v]trim=start=0.0:end=5.0,setpts=PTS-STARTPTS[v1]" in no_transition_filter
+    assert "[0:v]trim=start=0.0:end=5.0,setpts=PTS-STARTPTS[v0]" in crossfade_filter
+    assert "[1:v]trim=start=0.0:end=5.0,setpts=PTS-STARTPTS[v1]" in crossfade_filter
+    assert "xfade=transition=fade" in crossfade_filter
+    assert "acrossfade=d=" in crossfade_filter
+
+
+def test_build_compilation_command_member_with_keep_segments_flattens_extra_boundary():
+    members = [
+        {"start": 10.0, "end": 20.0, "keep_segments": [[10.0, 13.0], [15.0, 20.0]]},
+        {"start": 50.0, "end": 55.0},
+    ]
+
+    # 2 members, but 3 flattened segments (member 0's 2 keep_segments + member
+    # 1's single window) - a 2-entry boundary_transitions list is required.
+    command = build_compilation_command(
+        "in.mp4", "out.mp4", members=members,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        boundary_transitions=["cut", "cut"],
+    )
+
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "concat=n=3:v=1:a=1" in filter_complex
+
+
+def test_build_compilation_command_rejects_mismatched_boundary_transitions_length():
+    members = [
+        {"start": 10.0, "end": 20.0, "keep_segments": [[10.0, 13.0], [15.0, 20.0]]},
+        {"start": 50.0, "end": 55.0},
+    ]
+
+    with pytest.raises(RenderError, match="boundary_transitions length"):
+        build_compilation_command(
+            "in.mp4", "out.mp4", members=members,
+            crop_filter="crop=608:1080:656:0,scale=1080:1920",
+            boundary_transitions=["cut"],
+        )
+
+
+def test_build_compilation_command_applies_crop_subtitles_fade_exactly_once(tmp_path):
+    subs_path = tmp_path / "subs.ass"
+    subs_path.write_text("dummy", encoding="utf-8")
+    members = [{"start": 10.0, "end": 15.0}, {"start": 50.0, "end": 55.0}]
+
+    command = build_compilation_command(
+        "in.mp4", "out.mp4", members=members,
+        crop_filter="crop=608:1080:656:0,scale=1080:1920",
+        subtitles_path=str(subs_path),
+        fade_seconds=0.5,
+    )
+
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert filter_complex.count("crop=608:1080:656:0,scale=1080:1920") == 1
+    assert filter_complex.count("subtitles=") == 1
+    # one video fade=t=out (vcat) and one audio afade=t=out (acat) - not
+    # duplicated per member (2 members would show 4 if it were).
+    assert filter_complex.count("d=0.5") == 2
 
 
 def test_build_ffmpeg_command_no_audio_flags_has_no_audio_filter():
