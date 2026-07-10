@@ -155,3 +155,16 @@ None for this plan specifically (this plan is code-only - queue/OAuth/HTTP-layer
 ---
 *Phase: 06-tiktok-instagram-auto-publish*
 *Completed: 2026-07-10*
+
+## Self-Check: PASSED
+
+- FOUND: scripts/instagram_publish.py
+- FOUND: tests/test_instagram_publish.py
+- FOUND: .planning/phases/06-tiktok-instagram-auto-publish/06-04-SUMMARY.md
+- FOUND: commit 29f46b3 (test: Task 1 RED)
+- FOUND: commit d94af34 (feat: Task 1 GREEN)
+- FOUND: commit f607990 (test: Task 2 RED)
+- FOUND: commit fdfa6e2 (feat: Task 2 GREEN)
+- FOUND: commit 2b8dfd7 (test: Task 3 RED)
+- FOUND: commit 1603f3b (feat: Task 3 GREEN)
+- FOUND: commit 099dddf (docs: summary)
