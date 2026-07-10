@@ -8,6 +8,7 @@ otherwise. Marked `integration`: pytest -m "not integration" skips this file.
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -16,7 +17,7 @@ import pytest
 
 from scripts.frames import extract_frames
 from scripts.jumpcuts import compute_keep_segments
-from scripts.render import render_clip
+from scripts.render import build_profanity_mask_filter, render_clip
 from scripts.silence import find_pauses
 
 FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
@@ -253,3 +254,53 @@ def test_full_pipeline_silence_detect_to_jumpcut_render(test_video, tmp_path):
     info = probe(output_path)
     duration = float(info["format"]["duration"])
     assert 3.5 < duration < 4.5
+
+
+def measure_mean_volume(video_path, start: float, end: float, runner=subprocess.run) -> float:
+    """Isolates [start, end) via atrim then reads its mean_volume off
+    ffmpeg's volumedetect filter - the exact technique live-verified in
+    07-RESEARCH.md Pattern 1 (baseline -21.1dB, ducked -33.3dB, outside the
+    window unchanged). volumedetect prints its measurement to stderr at the
+    default (info) log level, so this intentionally omits -loglevel error.
+    Uses the project's injectable runner=subprocess.run shape (matches
+    scripts/render.py::probe_video) rather than an inline subprocess call.
+    """
+    result = runner(
+        ["ffmpeg", "-i", str(video_path), "-af", f"atrim=start={start}:end={end},volumedetect", "-f", "null", "-"],
+        capture_output=True, text=True,
+    )
+    match = re.search(r"mean_volume:\s*(-?[\d.]+)\s*dB", result.stderr)
+    assert match, f"could not parse mean_volume from ffmpeg volumedetect output: {result.stderr}"
+    return float(match.group(1))
+
+
+def test_profanity_mask_measurably_ducks_loudness_inside_span(test_video, tmp_path):
+    """AUDIO-02: a real ffmpeg render with profanity_spans set is measurably
+    quieter inside the masked span than outside it - audio keeps flowing
+    (not a hard silence cut), just ducked+garbled. Renders through
+    render_clip (the real production path build_ffmpeg_command/
+    build_profanity_mask_filter feed into, not just a string assertion -
+    those already exist in tests/test_render.py) and measures with the
+    exact volumedetect isolation technique live-verified in 07-RESEARCH.md
+    Pattern 1."""
+    plan_entry = {
+        "start": 0.0, "end": 2.0, "crop_style": "zoom",
+        "profanity_spans": [[0.5, 1.0]],
+    }
+    output_path = tmp_path / "out_profanity_mask.mp4"
+
+    render_clip(
+        str(test_video), str(output_path), plan_entry,
+        video_duration=SRC_DURATION, src_width=SRC_WIDTH, src_height=SRC_HEIGHT,
+    )
+
+    # test_video's [0, 2) window is a plain 440Hz tone (see the fixture's own
+    # docstring) - both windows below sit fully inside the masked [0.5, 1.0]
+    # span or fully outside it, on the same tone so only the mask differs.
+    inside_volume = measure_mean_volume(output_path, 0.6, 0.9)
+    outside_volume = measure_mean_volume(output_path, 1.2, 1.8)
+
+    assert inside_volume < outside_volume - 5.0, (
+        f"masked span is not measurably quieter than outside it: "
+        f"inside={inside_volume}dB outside={outside_volume}dB"
+    )
