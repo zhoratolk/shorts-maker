@@ -1,0 +1,310 @@
+from __future__ import annotations
+
+"""Local TikTok publish-queue + upload layer.
+
+Tracks finished shorts through their own manifest (work/_publish/
+tiktok_queue.json - kept separate from YouTube's queue.json so a TikTok
+audit delay or bug can never touch the already-live YouTube pipeline,
+06-RESEARCH.md Standard Stack). Mirrors scripts/publish_queue.py's
+enqueue/select_next_due/pause/resume state machine exactly; the only new
+logic is the TikTok-specific HTTP calls (video/init, chunked PUT,
+status/fetch, creator_info/query), the one-time interactive OAuth consent
+flow, and the D-05 SELF_ONLY gating check.
+
+This module covers the queue lifecycle, OAuth credential handling, the
+Content Posting API HTTP layer, and the orchestration/reconciliation
+functions - everything needed to actually publish one queued clip to
+TikTok. It deliberately does NOT include kill_item (an already-PUBLISHED
+TikTok post cannot be un-published, unlike YouTube's publishAt-based kill
+- see 06-PATTERNS.md) or a CLI wrapper; both are Plan 06-05's job.
+
+`requests` is imported at module top level (unlike
+google-api-python-client's deferred-import pattern) since it is a
+lightweight, always-installed dependency, not an optional extra.
+"""
+
+import http.server
+import json
+import random
+import string
+import time
+import urllib.parse
+import webbrowser
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import requests
+
+# Status enum - the full lifecycle a TikTok queue entry can move through.
+# No SCHEDULED status: TikTok Direct Post has no publishAt-style native
+# schedule (06-RESEARCH.md Pitfall 4) - QUEUED -> UPLOADING -> PUBLISHED
+# is the whole lifecycle, no SCHEDULED intermediate.
+QUEUED = "queued"
+UPLOADING = "uploading"
+PUBLISHED = "published"
+KILLED = "killed"
+PAUSED = "paused"
+
+VALID_STATUSES = frozenset({QUEUED, UPLOADING, PUBLISHED, KILLED, PAUSED})
+
+# Queue manifest + notification-log locations (paths only - no file is
+# created by importing this module).
+DEFAULT_QUEUE_PATH = "work/_publish/tiktok_queue.json"
+DEFAULT_NOTIFICATIONS_PATH = "work/_publish/notifications.log"  # SHARED, D-06
+
+# V4 scope minimization - never request a broader scope than these two.
+TIKTOK_SCOPES = ["video.publish", "video.upload"]
+
+TIKTOK_TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
+TIKTOK_AUTHORIZE_URL = "https://www.tiktok.com/v2/auth/authorize/"
+TIKTOK_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/"
+TIKTOK_STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
+TIKTOK_CREATOR_INFO_URL = "https://open.tiktokapis.com/v2/post/publish/creator_info/query/"
+
+
+class TikTokPublishError(ValueError):
+    pass
+
+
+# --- Queue lifecycle -----------------------------------------------------
+
+
+def load_queue(path: str = DEFAULT_QUEUE_PATH) -> dict[str, Any]:
+    """Loads the queue manifest, fail-open: a missing file yields an empty
+    queue rather than crashing (matches scripts/publish_queue.py exactly).
+    """
+    queue_file = Path(path)
+    if not queue_file.exists():
+        return {"entries": []}
+    return json.loads(queue_file.read_text(encoding="utf-8"))
+
+
+def save_queue(queue: dict[str, Any], path: str = DEFAULT_QUEUE_PATH) -> None:
+    """Writes the queue manifest as human-readable UTF-8 JSON, creating
+    parent directories as needed (matches scripts/publish_queue.py exactly).
+    """
+    queue_file = Path(path)
+    queue_file.parent.mkdir(parents=True, exist_ok=True)
+    queue_file.write_text(
+        json.dumps(queue, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def enqueue(
+    queue: dict[str, Any],
+    clip_id: str,
+    video_path: str,
+    metadata_path: str,
+    caption: str,
+) -> dict[str, Any]:
+    """Appends a new entry to queue["entries"] with a sequential seq number
+    (max existing seq + 1, starting at 1) and status=QUEUED. Idempotent on
+    clip_id: re-enqueuing an already-present clip_id is a no-op that returns
+    the existing entry unchanged.
+
+    caption is taken verbatim from the already-rendered per-clip metadata
+    (scripts/metadata.py's platforms_data["tiktok"]["caption"] field) - this
+    function never regenerates metadata. Unlike YouTube's queue entry there
+    is no description/tags/publish_at field: TikTok's post_info only takes
+    title+privacy_level, and there is no native scheduling (06-RESEARCH.md
+    Pitfall 4).
+    """
+    for entry in queue["entries"]:
+        if entry["clip_id"] == clip_id:
+            return entry
+
+    next_seq = max((entry["seq"] for entry in queue["entries"]), default=0) + 1
+    now = datetime.now(timezone.utc).isoformat()
+    entry = {
+        "seq": next_seq,
+        "clip_id": clip_id,
+        "video_path": video_path,
+        "metadata_path": metadata_path,
+        "caption": caption,
+        "status": QUEUED,
+        "publish_id": None,
+        "video_share_url": None,
+        "enqueued_at": now,
+        "updated_at": now,
+    }
+    queue["entries"].append(entry)
+    return entry
+
+
+def _find_entry(queue: dict[str, Any], clip_id: str) -> dict[str, Any]:
+    for entry in queue["entries"]:
+        if entry["clip_id"] == clip_id:
+            return entry
+    raise KeyError(f"no queue entry with clip_id={clip_id!r}")
+
+
+def select_next_due(queue: dict[str, Any]) -> dict[str, Any] | None:
+    """Returns the lowest-seq QUEUED entry, or None if nothing is eligible.
+    PAUSED/KILLED/UPLOADING/PUBLISHED entries are never returned.
+    """
+    eligible = [entry for entry in queue["entries"] if entry["status"] == QUEUED]
+    if not eligible:
+        return None
+    return min(eligible, key=lambda entry: entry["seq"])
+
+
+def pause_item(queue: dict[str, Any], clip_id: str) -> dict[str, Any]:
+    """Flips a QUEUED entry to PAUSED so the next check/select_next_due
+    skips it. Only touches status/updated_at.
+    """
+    entry = _find_entry(queue, clip_id)
+    entry["status"] = PAUSED
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return entry
+
+
+def resume_item(queue: dict[str, Any], clip_id: str) -> dict[str, Any]:
+    """Flips a PAUSED entry back to QUEUED so it becomes eligible again."""
+    entry = _find_entry(queue, clip_id)
+    entry["status"] = QUEUED
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return entry
+
+
+# --- OAuth credential handling --------------------------------------------
+
+
+def load_credentials(client_key_path: str, token_path: str, session=requests) -> str:
+    """Loads a cached TikTok access token, silently refreshing via
+    grant_type=refresh_token when expired (access tokens last 24h, refresh
+    tokens last 365 days - refresh needs no user interaction). Raises
+    FileNotFoundError with an actionable message if no cached token exists
+    yet - first-time consent is a manual, one-time interactive step
+    (run_tiktok_oauth_consent), matching
+    youtube_analytics.py::load_credentials's "only interactive on the very
+    first run" contract (06-RESEARCH.md Pattern 3).
+    """
+    token_file = Path(token_path)
+    if not token_file.exists():
+        raise FileNotFoundError(
+            f"{token_path} not found - run the one-time interactive TikTok "
+            "OAuth consent flow first (scripts.tiktok_publish.run_tiktok_oauth_consent)"
+        )
+    token_data = json.loads(token_file.read_text(encoding="utf-8"))
+    if time.time() < token_data["expires_at"]:
+        return token_data["access_token"]
+
+    client = json.loads(Path(client_key_path).read_text(encoding="utf-8"))
+    response = session.post(
+        TIKTOK_TOKEN_URL,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        data={
+            "client_key": client["client_key"],
+            "client_secret": client["client_secret"],
+            "grant_type": "refresh_token",
+            "refresh_token": token_data["refresh_token"],
+        },
+    )
+    response.raise_for_status()
+    refreshed = response.json()
+    refreshed["expires_at"] = time.time() + refreshed["expires_in"]
+    token_file.write_text(
+        json.dumps(refreshed, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return refreshed["access_token"]
+
+
+def _build_redirect_server(host: str, port: int):
+    """Constructs (but does not run) the one-shot local OAuth redirect
+    listener, bound explicitly to `host` (the caller always passes
+    "127.0.0.1", never "0.0.0.0" - T-06-03/V4 spoofing mitigation). Split
+    out from _capture_oauth_redirect_code so the bind address itself is
+    directly assertable in tests without needing a real HTTP round-trip.
+    Returns (server, captured), where `captured` is filled in with the
+    request's `code` query param once a request is handled.
+    """
+    captured: dict[str, str] = {}
+
+    class _RedirectHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - stdlib method name
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query)
+            captured["code"] = params.get("code", [""])[0]
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(
+                "TikTok authorization received - you can close this tab.".encode("utf-8")
+            )
+
+        def log_message(self, format_str: str, *args: Any) -> None:  # noqa: A002
+            pass  # suppress default request logging to stderr
+
+    server = http.server.HTTPServer((host, port), _RedirectHandler)
+    return server, captured
+
+
+def _capture_oauth_redirect_code(host: str, port: int, timeout_seconds: float = 300) -> str:
+    """Blocks on a local HTTP listener bound to (host, port) for exactly one
+    redirect request (handle_request(), never serve_forever() - bounded, no
+    lingering listener), then returns the `code` query param from that one
+    request.
+    """
+    server, captured = _build_redirect_server(host, port)
+    server.timeout = timeout_seconds
+    try:
+        server.handle_request()
+    finally:
+        server.server_close()
+
+    code = captured.get("code")
+    if not code:
+        raise TikTokPublishError("no authorization code received on the OAuth redirect")
+    return code
+
+
+def run_tiktok_oauth_consent(
+    client_key_path: str, token_path: str, port: int = 8765, session=requests
+) -> str:
+    """One-time interactive TikTok OAuth consent flow: builds the authorize
+    URL, opens it via webbrowser.open, blocks on a local redirect-capture
+    listener bound to 127.0.0.1 (never 0.0.0.0) for exactly one request,
+    exchanges the returned code for tokens, and writes the token file in the
+    same shape load_credentials expects (access_token, refresh_token,
+    expires_at). Uses a fixed port (not port=0 like Google's flow) since
+    TikTok apps require an exact pre-registered redirect_uri, unlike
+    Google's loopback-exception handling (06-RESEARCH.md Pattern 3 /
+    Security Domain).
+    """
+    client = json.loads(Path(client_key_path).read_text(encoding="utf-8"))
+    redirect_uri = f"http://127.0.0.1:{port}/callback"
+    state = "".join(random.choices(string.ascii_letters + string.digits, k=16))
+
+    authorize_url = (
+        f"{TIKTOK_AUTHORIZE_URL}?client_key={client['client_key']}"
+        f"&scope={','.join(TIKTOK_SCOPES)}"
+        "&response_type=code"
+        f"&redirect_uri={urllib.parse.quote(redirect_uri, safe='')}"
+        f"&state={state}"
+    )
+    webbrowser.open(authorize_url)
+
+    code = _capture_oauth_redirect_code("127.0.0.1", port)
+
+    response = session.post(
+        TIKTOK_TOKEN_URL,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        data={
+            "client_key": client["client_key"],
+            "client_secret": client["client_secret"],
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+        },
+    )
+    response.raise_for_status()
+    token_data = response.json()
+    token_data["expires_at"] = time.time() + token_data["expires_in"]
+
+    token_file = Path(token_path)
+    token_file.parent.mkdir(parents=True, exist_ok=True)
+    token_file.write_text(
+        json.dumps(token_data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return token_data["access_token"]
