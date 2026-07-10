@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 06
-current_phase_name: TikTok & Instagram Auto-Publish
-status: completed
-stopped_at: Completed 05-04-PLAN.md
-last_updated: "2026-07-10T11:00:31.698Z"
+current_phase_name: tiktok-instagram-auto-publish
+status: executing
+stopped_at: Completed 06-01-PLAN.md
+last_updated: "2026-07-10T11:11:31.883Z"
 last_activity: 2026-07-10
-last_activity_desc: Phase 05 complete, transitioned to Phase 06
+last_activity_desc: Phase 06 execution started
 progress:
   total_phases: 7
   completed_phases: 5
   total_plans: 27
-  completed_plans: 20
+  completed_plans: 21
   percent: 71
 ---
 
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-07)
 
 **Core value:** Из сырой записи стрима автоматически получить готовый к публикации вертикальный клип — без ручной нарезки и без потери самых залипательных моментов.
-**Current focus:** Phase 05 — sub-threshold-highlight-compilation
+**Current focus:** Phase 06 — tiktok-instagram-auto-publish
 
 ## Current Position
 
-Phase: 06 of 5 (TikTok & Instagram Auto-Publish)
-Plan: Not started
-Status: Phase 05 complete (including gap-closure plan 05-05); ready for phase transition/next phase
-Last activity: 2026-07-10 — Phase 05 complete, transitioned to Phase 06
+Phase: 06 (tiktok-instagram-auto-publish) — EXECUTING
+Plan: 2 of 7
+Status: Ready to execute
+Last activity: 2026-07-10 — Phase 06 execution started
 
 Note: Phase 2 (LLM Title & Tag Generation) has plan 02-02 still pending — Phase 3 planning/execution proceeded per project workflow while 02-02 remains open; see Pending Todos.
 
@@ -76,6 +76,7 @@ Progress: [███░░░░░░░] 17% (1/6 phases)
 | Phase 05-sub-threshold-highlight-compilation P03 | 20min | 2 tasks | 3 files |
 | Phase 05-sub-threshold-highlight-compilation P04 | 15min | 2 tasks | 1 files |
 | Phase 05 P05 | 15min | 3 tasks | 5 files |
+| Phase 06 P01 | 1min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -98,6 +99,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05-04]: The compilation PLAN.json entry (scripts/compilation.py CLI call) is documented as built once at the end of step 5b, after crop_style/punch-zoom/title/subtitles/metadata are all decided - mirrors the single-clip 'write merged results' final-assembly pattern rather than the plan's raw bullet-listing order
 - [Phase ?]: [Phase 05-05]: CR-01 fix truncates boundary_transitions to the fitted post-cap prefix inside build_compilation_entry's validation block only, before the existing length-mismatch raise, so a genuinely too-short list still raises unchanged
 - [Phase ?]: [Phase 05-05]: WR-01/WR-02 SKILL.md edits are disk-only (not committed) - .claude/ is gitignored project-wide, same pre-existing convention as Plans 02-01/04-06
+- [Phase 06]: [Phase 06-01]: requests documented as an unconditional direct dependency (not a feature-flagged optional block), matching the google-api-python-client wording convention, since it is imported unconditionally at module top level by scripts/tiktok_publish.py and scripts/instagram_publish.py in later plans
+- [Phase 06]: [Phase 06-01]: Legitimacy checkpoint for requests resolved via live pypi.org verification performed by the orchestrating session (github.com/psf/requests confirmed, no typosquat, version 2.34.2 matches current stable release) rather than a literal interactive human reply - documented as the audit trail per T-06-SC
 
 ### Roadmap Evolution
 
@@ -167,6 +170,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-10T10:44:51.245Z
-Stopped at: Completed 05-04-PLAN.md
+Last session: 2026-07-10T11:11:31.869Z
+Stopped at: Completed 06-01-PLAN.md
 Resume file: None
