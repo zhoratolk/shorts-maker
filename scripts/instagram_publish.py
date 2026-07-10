@@ -398,3 +398,151 @@ def run_instagram_oauth_consent(
         json.dumps(token_data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return token_data["access_token"]
+
+
+# --- Caption validation + pure body builder -------------------------------
+
+
+def validate_caption(caption: str) -> None:
+    """Raises ValueError if caption exceeds Instagram's own field limits
+    (V5 input validation, 06-RESEARCH Security Domain) - a violation fails
+    only this queue item, not the whole run."""
+    if len(caption) > MAX_CAPTION_LENGTH:
+        raise ValueError(
+            f"caption exceeds Instagram's {MAX_CAPTION_LENGTH}-char limit ({len(caption)} chars)"
+        )
+    hashtag_count = len(_HASHTAG_PATTERN.findall(caption))
+    if hashtag_count > MAX_HASHTAGS:
+        raise ValueError(
+            f"caption has {hashtag_count} hashtags, exceeding Instagram's "
+            f"{MAX_HASHTAGS}-hashtag limit"
+        )
+    mention_count = len(_MENTION_PATTERN.findall(caption))
+    if mention_count > MAX_MENTIONS:
+        raise ValueError(
+            f"caption has {mention_count} mentions, exceeding Instagram's "
+            f"{MAX_MENTIONS}-mention limit"
+        )
+
+
+def build_media_container_params(caption: str) -> dict[str, Any]:
+    """Pure function - validates the caption first, then returns the exact
+    media container params. No network call (mirrors
+    scripts/publish_queue.py::build_insert_body's pure-body-builder-
+    separate-from-network-call convention)."""
+    validate_caption(caption)
+    return {"media_type": "REELS", "upload_type": "resumable", "caption": caption}
+
+
+# --- Fail-closed permission handling ---------------------------------------
+
+
+def _check_meta_permission_error(response) -> None:
+    """Inspects a non-2xx response's JSON body for Meta's standard
+    {"error": {"message", "type", "code", ...}} shape. If the status code is
+    403, or the error object's type/message/code look like a
+    permissions/access-tier rejection (heuristic - see
+    _PERMISSION_ERROR_SUBSTRINGS), raises InstagramAccessError with a
+    message that (a) quotes Meta's original error message, (b) states in
+    plain language that this account may need Advanced Access / Meta App
+    Review, and (c) points at docs/publish-queue.md's Instagram section.
+
+    For any other non-2xx response, calls response.raise_for_status()
+    normally (propagates as a plain requests.HTTPError) - non-permission
+    errors are never swallowed or reinterpreted into InstagramAccessError.
+    A 2xx response is a no-op (nothing to check).
+    """
+    if response.status_code < 400:
+        return
+
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    error = body.get("error", {}) if isinstance(body, dict) else {}
+    message = str(error.get("message", ""))
+    error_type = str(error.get("type", ""))
+    error_code = str(error.get("code", ""))
+    combined = f"{message} {error_type} {error_code}".lower()
+
+    is_permission_flavored = response.status_code == 403 or any(
+        substring in combined for substring in _PERMISSION_ERROR_SUBSTRINGS
+    )
+    if is_permission_flavored:
+        raise InstagramAccessError(
+            f"Meta API rejected this request with a permission/access-tier "
+            f"error: {message or 'unknown error'!r}. This Instagram Business "
+            "account may need Advanced Access / Meta App Review before this "
+            "app can publish to it - see docs/publish-queue.md's Instagram "
+            "section for next steps."
+        )
+
+    response.raise_for_status()
+
+
+# --- Graph API resumable-upload HTTP layer ---------------------------------
+
+
+def create_resumable_container(
+    ig_user_id: str, access_token: str, params: dict[str, Any], session=requests
+) -> str:
+    """POSTs params to /{ig_user_id}/media with access_token, routes any
+    error response through _check_meta_permission_error before
+    raise_for_status(), returns response.json()["id"]."""
+    response = session.post(
+        f"https://graph.facebook.com/{GRAPH_API_VERSION}/{ig_user_id}/media",
+        params={**params, "access_token": access_token},
+    )
+    _check_meta_permission_error(response)
+    response.raise_for_status()
+    return response.json()["id"]
+
+
+def upload_local_video(
+    container_id: str, access_token: str, video_path: str, session=requests
+) -> None:
+    """POSTs the raw video bytes to rupload.facebook.com (NOT
+    graph.facebook.com - the one host divergence, do not "normalize" it)
+    with offset/file_size headers, routes errors through
+    _check_meta_permission_error."""
+    file_size = Path(video_path).stat().st_size
+    with open(video_path, "rb") as handle:
+        data = handle.read()
+    response = session.post(
+        f"https://rupload.facebook.com/ig-api-upload/{GRAPH_API_VERSION}/{container_id}",
+        headers={
+            "Authorization": f"OAuth {access_token}",
+            "offset": "0",
+            "file_size": str(file_size),
+        },
+        data=data,
+    )
+    _check_meta_permission_error(response)
+    response.raise_for_status()
+
+
+def poll_container_status(container_id: str, access_token: str, session=requests) -> str:
+    """GETs /{container_id}?fields=status_code, returns
+    response.json()["status_code"]."""
+    response = session.get(
+        f"https://graph.facebook.com/{GRAPH_API_VERSION}/{container_id}",
+        params={"fields": "status_code", "access_token": access_token},
+    )
+    response.raise_for_status()
+    return response.json()["status_code"]
+
+
+def publish_container(
+    ig_user_id: str, access_token: str, creation_id: str, session=requests
+) -> str:
+    """POSTs to /{ig_user_id}/media_publish with creation_id + access_token,
+    routes errors through _check_meta_permission_error, returns
+    response.json()["id"]."""
+    response = session.post(
+        f"https://graph.facebook.com/{GRAPH_API_VERSION}/{ig_user_id}/media_publish",
+        params={"creation_id": creation_id, "access_token": access_token},
+    )
+    _check_meta_permission_error(response)
+    response.raise_for_status()
+    return response.json()["id"]
