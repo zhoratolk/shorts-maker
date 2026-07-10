@@ -62,6 +62,34 @@ schtasks /delete /tn "shorts-maker-publish" /f
 
 then re-create the single entry with the command above.
 
+### Sibling tasks for TikTok and Instagram (PUB-06/PUB-07)
+
+`schtasks`'s `/tr` only accepts one command per task, and keeping each
+platform's periodic check as its own separate Task Scheduler entry
+preserves this phase's whole isolation design (Success Criterion 3) at the
+OS scheduling layer too, not just the file layer - a crash or hang in one
+platform's `--check` can never block another platform's task from firing.
+Create these as two additional **sibling** tasks alongside
+`shorts-maker-publish` above, not folded into it:
+
+```
+schtasks /create /sc hourly /mo 3 /tn "shorts-maker-publish-tiktok" ^
+  /tr "python D:\shorts-maker\scripts\tiktok_publish.py --check" ^
+  /st 09:00 /ru "%USERNAME%"
+
+schtasks /create /sc hourly /mo 3 /tn "shorts-maker-publish-instagram" ^
+  /tr "python D:\shorts-maker\scripts\instagram_publish.py --check --ig-user-id <your-ig-user-id>" ^
+  /st 09:00 /ru "%USERNAME%"
+```
+
+Verify all three tasks exist exactly once each, the same way section 1
+verifies `shorts-maker-publish`:
+
+```
+schtasks /query /tn "shorts-maker-publish-tiktok" /v /fo list
+schtasks /query /tn "shorts-maker-publish-instagram" /v /fo list
+```
+
 ## 2. Flipping from dry-run to live (PUB-03 opt-in)
 
 **Dry-run is the default.** With `publish.enabled: false` (or no `publish:`
@@ -175,6 +203,188 @@ python scripts/publish_queue.py --list
 An unknown `clip_id` on `--now`/`--kill`/`--pause`/`--resume` prints a clear
 error and exits non-zero rather than silently acting on the wrong item.
 
+## 6. TikTok setup and going live (PUB-06, D-02/D-04)
+
+### App registration
+
+1. Register an app in the [TikTok Developer Portal](https://developers.tiktok.com/).
+   Add the **Content Posting API** product to it.
+2. Request exactly these two scopes - never a broader one (V4):
+   `video.publish` and `video.upload`.
+3. Set the redirect URI to `http://127.0.0.1:8765/callback` (the fixed
+   port `run_tiktok_oauth_consent` binds to - TikTok apps require an
+   exact pre-registered redirect URI, unlike Google's loopback-exception
+   handling).
+4. Save the issued `client_key`/`client_secret` into `tiktok_client_key.json`
+   at the repo root:
+   ```json
+   {"client_key": "...", "client_secret": "..."}
+   ```
+   Gitignored, same discipline as `client_secret.json`/`upload_token.json` -
+   never commit it.
+
+### One-time interactive consent
+
+The very first time `--check` or `--now` runs with `publish.tiktok_enabled:
+true`, `tiktok_token.json` does not exist yet. Run the one-time interactive
+consent flow yourself, once, from an open terminal (same "run it
+interactively before relying on the scheduled task" recommendation as
+section 2's YouTube consent):
+
+```
+python -c "from scripts.tiktok_publish import run_tiktok_oauth_consent; run_tiktok_oauth_consent('tiktok_client_key.json', 'tiktok_token.json')"
+```
+
+This opens a browser for consent, captures the redirect code on
+`127.0.0.1:8765`, and writes `tiktok_token.json` (gitignored). After that,
+the cached, refreshable token means subsequent scheduled runs don't need a
+browser at all.
+
+### Opt-in to going live
+
+**⚠️ Going live is a one-way, public action**, same as YouTube's opt-in in
+section 2. With `publish.tiktok_enabled: false` (the default), `--check`
+still reconciles stuck uploads but makes **zero** network calls for the
+actual upload step. Once `publish.tiktok_enabled: true`, every future
+`--check`/`--now` will actually attempt a real TikTok Direct Post.
+
+```yaml
+publish:
+  tiktok_enabled: true
+  tiktok_queue_path: "work/_publish/tiktok_queue.json"
+  tiktok_client_key_path: "tiktok_client_key.json"
+  tiktok_token_path: "tiktok_token.json"
+```
+
+### Pre-audit posts are SELF_ONLY (private) - D-05
+
+Before TikTok's Content Posting API audit clears, every post this module
+makes is restricted to `SELF_ONLY` (private) - **the API call still
+returns success even though nothing actually goes public** (the documented
+pre-audit trap). `upload_and_publish` checks this via
+`check_tiktok_publish_gate` before every post and, if still gated, appends
+a distinct notification line instead of the normal success line:
+
+> TikTok {seq}: залито, но аккаунт всё ещё SELF_ONLY (аудит Content Posting API не пройден) - видео приватное
+
+Once you're ready to go fully public, file the **Content Posting API
+audit** specifically in the TikTok Developer Portal - this is a separate
+application from base app approval (a common trap: base app approval alone
+does not unlock public posting). There is no official published SLA for
+this review; only unverified secondary-source estimates exist
+(06-RESEARCH.md Assumption A1) - do not promise yourself or anyone else a
+specific timeline.
+
+## 7. Instagram setup and going live (PUB-07, D-02/D-04, user's build-both-scenarios decision)
+
+### App registration
+
+1. Create a Meta App of type **Business** in the
+   [Meta App Dashboard](https://developers.facebook.com/apps/).
+2. Add your own Instagram Business account as a tester/admin of the app
+   (App Dashboard → Roles) - this is the one-time step that makes the
+   account "yours" for Standard Access purposes.
+3. Request exactly these two scopes - never a broader one (V4):
+   `instagram_business_basic` and `instagram_business_content_publish`
+   (never `instagram_business_manage_messages`/
+   `instagram_business_manage_comments`, which this project has no use
+   for).
+4. Set the redirect URI to `http://127.0.0.1:8766/callback` (the fixed
+   port `run_instagram_oauth_consent` binds to - a different port than
+   TikTok's 8765 so both one-time flows can be registered as distinct
+   redirect URIs without collision, even though they're never run
+   simultaneously in practice).
+5. Save the app id/secret into `instagram_client_secret.json` at the repo
+   root:
+   ```json
+   {"client_id": "...", "client_secret": "..."}
+   ```
+   Gitignored, same discipline as every other credential file in this
+   project - never commit it.
+
+### One-time interactive consent
+
+The very first time `--check` or `--now` runs with `publish.instagram_enabled:
+true`, `instagram_token.json` does not exist yet. Run the one-time
+interactive consent flow yourself, once, from an open terminal:
+
+```
+python -c "from scripts.instagram_publish import run_instagram_oauth_consent; run_instagram_oauth_consent('instagram_client_secret.json', 'instagram_token.json')"
+```
+
+This opens a browser for consent, captures the redirect code on
+`127.0.0.1:8766`, exchanges it for a short-lived token and then a 60-day
+long-lived token, and writes `instagram_token.json` (gitignored).
+`load_credentials()` silently refreshes it (no browser) any time it's
+older than 24h, well inside the 60-day validity window.
+
+### Opt-in to going live
+
+**⚠️ Going live is a one-way, public action**, same as YouTube's opt-in in
+section 2. With `publish.instagram_enabled: false` (the default), `--check`
+still reconciles stuck uploads but makes **zero** network calls for the
+actual upload step. Once `publish.instagram_enabled: true`, every future
+`--check`/`--now` will actually attempt a real Instagram Reels publish.
+
+```yaml
+publish:
+  instagram_enabled: true
+  instagram_queue_path: "work/_publish/instagram_queue.json"
+  instagram_client_secret_path: "instagram_client_secret.json"
+  instagram_token_path: "instagram_token.json"
+```
+
+`--now`/`--check` also need `--ig-user-id <your-ig-user-id>` (the
+Instagram Business account's numeric user ID, already registered as a
+tester in the App Dashboard per step 2 above) - `--list`/`--pause`/
+`--resume`/`--kill` never touch the API and work without it.
+
+### Attempt Standard Access first - do NOT file App Review preemptively
+
+**Unlike TikTok, this module does NOT pre-check whether your account needs
+Meta App Review before every publish attempt.** Per the user's explicit
+decision (06-CONTEXT.md, resolving 06-RESEARCH.md Open Question 1), it
+attempts a real publish directly via Standard Access - there is no
+`creator_info/query`-equivalent gating call anywhere in
+`instagram_publish.py`. Follow this instruction exactly:
+
+1. **Attempt first.** Just run `--now`/`--check` with
+   `instagram_enabled: true` and your registered account. If it succeeds,
+   Standard Access was sufficient - no App Review needed for this
+   self-owned-account use case.
+2. **Only file App Review if `InstagramAccessError` says so.** If Meta's
+   API itself reports a permission/access-tier problem on a live call, the
+   module raises `InstagramAccessError` with a message stating that
+   Advanced Access/App Review is likely needed. Only at that point should
+   you go file App Review in the Meta App Dashboard.
+3. **Do NOT file App Review preemptively.** Meta's documented
+   Standard-vs-Advanced-Access split states Advanced Access (and its
+   review requirement) is only needed "if your app publishes on behalf of
+   accounts you do not own" - this project publishes exclusively to the
+   creator's own account, added as a tester in step 2 above.
+
+Do not "fix" `instagram_publish.py` by adding a TikTok-style pre-publish
+gate (a `creator_info/query`-equivalent check called before every post) -
+that would reintroduce a design the user explicitly rejected for
+Instagram's different access model.
+
+## Instagram permission-error heuristic (unverified assumption)
+
+**Status: not yet performed** - `_check_meta_permission_error`'s detection
+of a permission/access-tier rejection (matching substrings like
+`"permission"`, `"advanced access"`, `"requires app review"` in a non-2xx
+Meta response) is a best-effort heuristic built without a captured real
+Meta error response - 06-RESEARCH.md never made a live API call this
+session to confirm the exact shape of a real 403/permission error from the
+Graph API. It should be empirically confirmed the same way "Kill-path
+verification" above was confirmed: once real Instagram credentials exist
+and a real publish attempt either succeeds (Standard Access sufficient) or
+produces a real permission/access-tier error, compare the actual response
+body against `_PERMISSION_ERROR_SUBSTRINGS` and update this section with
+the observed error shape and a dated PASS/FAIL outcome, the same way
+"Kill-path verification" was updated from "Status: not yet performed" to a
+dated result after Phase 3's live test.
+
 ## Kill-path verification (Assumption A1)
 
 **Status: PERFORMED 2026-07-08 — first attempt FAILED live (root cause found, fixed), re-test with the fix PASSED.**
@@ -274,3 +484,6 @@ to cancel a pending `publishAt`.
 
 *Phase: 03-youtube-scheduled-auto-publish*
 *Plans: 03-03 (kill-path verification scaffold), 03-04 (operator guide: Task Scheduler setup, dry-run/opt-in, daily grid, notifications, manual/pause/kill CLI reference)*
+
+*Phase: 06-tiktok-instagram-auto-publish*
+*Plans: 06-01 through 06-06 (TikTok/Instagram queue lifecycle, OAuth, upload/publish orchestration, kill_item, CLI wrappers), 06-07 (isolation + scope tests, this doc's TikTok/Instagram operator sections and Task Scheduler sibling-task wiring)*
