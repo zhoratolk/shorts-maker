@@ -25,6 +25,7 @@ lightweight, always-installed dependency, not an optional extra.
 
 import http.server
 import json
+import math
 import os
 import random
 import string
@@ -36,6 +37,8 @@ from pathlib import Path
 from typing import Any
 
 import requests
+
+from scripts.publish_queue import append_notification
 
 # Status enum - the full lifecycle a TikTok queue entry can move through.
 # No SCHEDULED status: TikTok Direct Post has no publishAt-style native
@@ -435,3 +438,196 @@ def check_tiktok_publish_gate(access_token: str, session=requests) -> tuple[str,
     if "PUBLIC_TO_EVERYONE" in options:
         return "PUBLIC_TO_EVERYONE", False
     return "SELF_ONLY", True
+
+
+# --- Orchestration (dry-run gate, D-05 detection, write-ahead) -----------
+
+
+def upload_and_publish(
+    queue: dict[str, Any],
+    entry: dict[str, Any],
+    credentials_factory,
+    config,
+    session=requests,
+    queue_path: str = DEFAULT_QUEUE_PATH,
+    poll_interval_seconds: float = 2.0,
+) -> dict[str, Any]:
+    """Orchestrates the dry-run gate -> write-ahead uploading -> gate-check
+    -> init -> write-ahead publish_id -> chunked upload -> poll -> publish
+    flow for one queue entry (06-RESEARCH.md Pattern 1/4, Shared Patterns).
+
+    If config.tiktok_enabled is False, this is the VERY FIRST thing checked
+    - before credentials_factory is ever called - so dry-run makes NO
+    credential load and NO network call (PUB-03 parity). Returns
+    {"dry_run": True} and leaves entry["status"] untouched.
+
+    If enabled: sets entry["status"]=UPLOADING and persists (write-ahead #1,
+    before creator_info/query or init_direct_post); checks the D-05 gate;
+    builds the video/init body from the actual file size; calls
+    init_direct_post and immediately persists entry["publish_id"]
+    (write-ahead #2, Pitfall 5's specific point - persisted before the
+    chunk PUT loop starts, so a crash mid-upload leaves a durable trace);
+    uploads the chunks; polls status/fetch until a terminal state.
+
+    On PUBLISH_COMPLETE: status=PUBLISHED, persists, returns
+    {"publish_id", "is_still_gated"}. On FAILED: raises RuntimeError with
+    the fail_reason - entry status stays UPLOADING for the next
+    reconcile_uploading pass to resolve.
+    """
+    if not config.tiktok_enabled:
+        return {"dry_run": True}
+
+    access_token = credentials_factory()
+
+    entry["status"] = UPLOADING
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    save_queue(queue, queue_path)
+
+    privacy_level, is_still_gated = check_tiktok_publish_gate(access_token, session)
+
+    video_size = os.path.getsize(entry["video_path"])
+    chunk_size = CHUNK_SIZE_DEFAULT
+    total_chunk_count = max(1, math.ceil(video_size / chunk_size))
+
+    body = build_direct_post_body(
+        title=entry["caption"],
+        privacy_level=privacy_level,
+        video_size=video_size,
+        chunk_size=chunk_size,
+        total_chunk_count=total_chunk_count,
+    )
+    data = init_direct_post(access_token, body, session)
+
+    entry["publish_id"] = data["publish_id"]
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    save_queue(queue, queue_path)
+
+    upload_video_chunks(data["upload_url"], entry["video_path"], chunk_size, session)
+
+    status_data = fetch_post_status(access_token, entry["publish_id"], session)
+    while status_data["status"] not in TERMINAL_STATUSES:
+        time.sleep(poll_interval_seconds)
+        status_data = fetch_post_status(access_token, entry["publish_id"], session)
+
+    if status_data["status"] == "FAILED":
+        raise RuntimeError(
+            f"TikTok publish failed for clip_id={entry['clip_id']!r}: "
+            f"{status_data.get('fail_reason', 'unknown reason')}"
+        )
+
+    entry["status"] = PUBLISHED
+    entry["video_share_url"] = status_data.get("publicaly_available_post_id")
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    save_queue(queue, queue_path)
+
+    return {"publish_id": entry["publish_id"], "is_still_gated": is_still_gated}
+
+
+def _success_notification_text(entry: dict[str, Any]) -> str:
+    return f"залил {entry['seq']} в TikTok"
+
+
+def _self_only_notification_text(entry: dict[str, Any]) -> str:
+    """D-05's distinct wording - never silently report success as if it
+    were public when the account is still pre-audit/SELF_ONLY."""
+    return (
+        f"TikTok {entry['seq']}: залито, но аккаунт всё ещё SELF_ONLY "
+        "(аудит Content Posting API не пройден) - видео приватное"
+    )
+
+
+def _error_notification_text(entry: dict[str, Any], reason: str) -> str:
+    return f"[error] TikTok {entry['seq']}: {reason}"
+
+
+def _upload_one(
+    entry: dict[str, Any],
+    queue: dict[str, Any],
+    credentials_factory,
+    config,
+    session=requests,
+) -> None:
+    """Mirrors scripts/publish_queue.py::_upload_one's error-vs-success
+    branching, with a third branch (success-but-still-gated, D-05) YouTube's
+    module has no equivalent for - the account being SELF_ONLY must never
+    be reported as a normal success.
+    """
+    try:
+        result = upload_and_publish(
+            queue, entry, credentials_factory, config,
+            session=session, queue_path=config.tiktok_queue_path,
+        )
+    except Exception as error:
+        append_notification(
+            _error_notification_text(entry, str(error)), config.notifications_path
+        )
+        raise
+
+    if isinstance(result, dict) and result.get("dry_run"):
+        print("dry-run: skipped (tiktok_enabled disabled)")
+        return
+
+    if result.get("is_still_gated"):
+        append_notification(_self_only_notification_text(entry), config.notifications_path)
+        print(_self_only_notification_text(entry))
+        return
+
+    append_notification(_success_notification_text(entry), config.notifications_path)
+    print(_success_notification_text(entry))
+
+
+# --- Reconciliation of a stuck UPLOADING entry ---------------------------
+
+
+def reconcile_uploading(
+    queue: dict[str, Any], entry: dict[str, Any], credentials_factory, session=requests
+) -> dict[str, Any]:
+    """Resolves a manifest entry stuck in UPLOADING via status/fetch using
+    the recorded publish_id - no blind re-init (T-06-04).
+
+    - No publish_id recorded (crash before init_direct_post ever returned):
+      reset to QUEUED directly, no API call - nothing was created on
+      TikTok's side.
+    - publish_id recorded, status/fetch errors (expired/invalid publish_id):
+      reset to QUEUED, clear publish_id, so a clean retry can happen.
+    - publish_id recorded, PUBLISH_COMPLETE: adopt - status=PUBLISHED.
+    - publish_id recorded, FAILED: reset to QUEUED, clear publish_id.
+    - publish_id recorded, still PROCESSING_UPLOAD/PROCESSING_DOWNLOAD:
+      leave untouched - legitimately still in flight.
+    """
+    if not entry.get("publish_id"):
+        entry["status"] = QUEUED
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return entry
+
+    access_token = credentials_factory()
+    try:
+        status_data = fetch_post_status(access_token, entry["publish_id"], session)
+    except Exception:
+        entry["status"] = QUEUED
+        entry["publish_id"] = None
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return entry
+
+    status = status_data.get("status")
+    if status == "PUBLISH_COMPLETE":
+        entry["status"] = PUBLISHED
+        entry["video_share_url"] = status_data.get("publicaly_available_post_id")
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    elif status == "FAILED":
+        entry["status"] = QUEUED
+        entry["publish_id"] = None
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    # else: still in-flight (PROCESSING_UPLOAD/PROCESSING_DOWNLOAD) - leave
+    # untouched, this is legitimately not done yet.
+    return entry
+
+
+def reconcile_all_uploading(queue: dict[str, Any], credentials_factory, session=requests) -> None:
+    """Reconciles every UPLOADING entry before any new selection happens -
+    wired as the mandatory first step before select_next_due is ever called
+    (mirrors scripts/publish_queue.py::reconcile_all_uploading).
+    """
+    for entry in queue["entries"]:
+        if entry["status"] == UPLOADING:
+            reconcile_uploading(queue, entry, credentials_factory, session)
