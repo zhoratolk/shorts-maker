@@ -25,6 +25,7 @@ from scripts.instagram_publish import (
     _check_meta_permission_error,
     _find_entry,
     _upload_one,
+    build_argument_parser,
     build_media_container_params,
     create_resumable_container,
     enqueue,
@@ -37,6 +38,7 @@ from scripts.instagram_publish import (
     reconcile_all_uploading,
     reconcile_uploading,
     resume_item,
+    run_command,
     run_instagram_oauth_consent,
     save_queue,
     select_next_due,
@@ -1005,3 +1007,200 @@ def test_no_pre_publish_gating_call_or_endpoint_exists_in_module():
     assert not any("creator_info" in url for url in url_constants)
 
     assert not hasattr(instagram_publish, "check_tiktok_publish_gate")
+
+
+# --- Task 2: CLI (--check / --now / --pause / --kill / --resume / --list) -
+
+
+def make_cli_instagram_queue(tmp_path, entries):
+    queue_path = str(tmp_path / "instagram_queue.json")
+    save_queue({"entries": entries}, queue_path)
+    return queue_path
+
+
+def test_list_prints_seq_status_caption(tmp_path, capsys):
+    queue_path = make_cli_instagram_queue(
+        tmp_path,
+        [
+            _kill_test_entry(clip_id="clip-1", seq=1, status=QUEUED, caption="First"),
+            _kill_test_entry(clip_id="clip-2", seq=2, status=PUBLISHED, caption="Second"),
+        ],
+    )
+    config = FakeInstagramPublishConfig(instagram_enabled=False, instagram_queue_path=queue_path)
+
+    args = build_argument_parser().parse_args(["--list"])
+    run_command(args, credentials_factory=lambda: "token", config=config, ig_user_id="ig-user-1")
+
+    out = capsys.readouterr().out
+    assert "1" in out
+    assert "2" in out
+    assert "First" in out
+    assert "Second" in out
+
+
+def test_check_dry_run_makes_zero_credential_calls(tmp_path, capsys):
+    queue_path = make_cli_instagram_queue(
+        tmp_path, [_kill_test_entry(clip_id="clip-1", seq=1, status=QUEUED)]
+    )
+    config = FakeInstagramPublishConfig(instagram_enabled=False, instagram_queue_path=queue_path)
+
+    def credentials_factory():
+        raise AssertionError("credentials_factory must never be called in dry-run")
+
+    args = build_argument_parser().parse_args(["--check"])
+    run_command(args, credentials_factory=credentials_factory, config=config, ig_user_id="ig-user-1")
+
+    queue = load_queue(queue_path)
+    assert queue["entries"][0]["status"] == QUEUED
+    out = capsys.readouterr().out
+    assert "dry-run" in out.lower()
+
+
+def test_check_reconciles_before_selecting_and_uploads_at_most_one(tmp_path):
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"fake video bytes")
+    queued_entry_1 = _kill_test_entry(
+        clip_id="clip-1", seq=1, status=QUEUED, video_path=str(video_path)
+    )
+    stuck_entry = _kill_test_entry(
+        clip_id="clip-stuck", seq=2, status=UPLOADING, container_id=None, media_id=None,
+        video_path=str(video_path),
+    )
+    queued_entry_2 = _kill_test_entry(
+        clip_id="clip-2", seq=3, status=QUEUED, video_path=str(video_path)
+    )
+    queue_path = make_cli_instagram_queue(tmp_path, [queued_entry_1, stuck_entry, queued_entry_2])
+    notifications_path = str(tmp_path / "notifications.log")
+    config = FakeInstagramPublishConfig(
+        instagram_enabled=True, instagram_queue_path=queue_path,
+        notifications_path=notifications_path,
+    )
+
+    session = FakeSession([
+        FakeResponse({"id": "container-1"}),          # create_resumable_container
+        FakeResponse({}),                              # upload_local_video (rupload)
+        FakeResponse({"status_code": "FINISHED"}),      # poll_container_status
+        FakeResponse({"id": "media-1"}),                # publish_container
+    ])
+
+    args = build_argument_parser().parse_args(["--check"])
+    run_command(args, credentials_factory=lambda: "token", config=config, ig_user_id="ig-user-1", session=session)
+
+    queue = load_queue(queue_path)
+    stuck = next(e for e in queue["entries"] if e["clip_id"] == "clip-stuck")
+    entry_1 = next(e for e in queue["entries"] if e["clip_id"] == "clip-1")
+    entry_2 = next(e for e in queue["entries"] if e["clip_id"] == "clip-2")
+    assert stuck["status"] == QUEUED  # reconciled first (no container_id -> reset)
+    assert entry_1["status"] == PUBLISHED  # lowest-seq due item picked up
+    assert entry_2["status"] == QUEUED  # only one upload per --check
+
+
+def test_now_targets_named_clip_via_same_upload_path(tmp_path):
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"fake video bytes")
+    queue_path = make_cli_instagram_queue(
+        tmp_path,
+        [
+            _kill_test_entry(clip_id="clip-1", seq=1, status=QUEUED, video_path=str(video_path)),
+            _kill_test_entry(clip_id="clip-2", seq=2, status=QUEUED, video_path=str(video_path)),
+        ],
+    )
+    notifications_path = str(tmp_path / "notifications.log")
+    config = FakeInstagramPublishConfig(
+        instagram_enabled=True, instagram_queue_path=queue_path,
+        notifications_path=notifications_path,
+    )
+
+    session = FakeSession([
+        FakeResponse({"id": "container-2"}),
+        FakeResponse({}),
+        FakeResponse({"status_code": "FINISHED"}),
+        FakeResponse({"id": "media-2"}),
+    ])
+
+    args = build_argument_parser().parse_args(["--now", "clip-2"])
+    run_command(args, credentials_factory=lambda: "token", config=config, ig_user_id="ig-user-1", session=session)
+
+    queue = load_queue(queue_path)
+    entry_1 = next(e for e in queue["entries"] if e["clip_id"] == "clip-1")
+    entry_2 = next(e for e in queue["entries"] if e["clip_id"] == "clip-2")
+    assert entry_1["status"] == QUEUED
+    assert entry_2["status"] == PUBLISHED
+
+
+def test_now_unknown_clip_id_errors_cleanly_not_crash(tmp_path):
+    queue_path = make_cli_instagram_queue(
+        tmp_path, [_kill_test_entry(clip_id="clip-1", seq=1, status=QUEUED)]
+    )
+    config = FakeInstagramPublishConfig(instagram_enabled=True, instagram_queue_path=queue_path)
+
+    args = build_argument_parser().parse_args(["--now", "does-not-exist"])
+    with pytest.raises(SystemExit):
+        run_command(args, credentials_factory=lambda: "token", config=config, ig_user_id="ig-user-1")
+
+
+def test_kill_unknown_clip_id_errors_cleanly_not_crash(tmp_path):
+    queue_path = make_cli_instagram_queue(
+        tmp_path, [_kill_test_entry(clip_id="clip-1", seq=1, status=QUEUED)]
+    )
+    config = FakeInstagramPublishConfig(instagram_enabled=True, instagram_queue_path=queue_path)
+
+    args = build_argument_parser().parse_args(["--kill", "does-not-exist"])
+    with pytest.raises(SystemExit):
+        run_command(args, credentials_factory=lambda: "token", config=config, ig_user_id="ig-user-1")
+
+
+def test_kill_via_cli_on_published_entry_raises_not_system_exit(tmp_path):
+    # A RuntimeError from kill_item (PUBLISHED entry) must propagate loudly,
+    # not be caught into a clean SystemExit(2) like the unknown-clip_id case.
+    queue_path = make_cli_instagram_queue(
+        tmp_path, [_kill_test_entry(clip_id="clip-1", seq=1, status=PUBLISHED, media_id="media-1")]
+    )
+    config = FakeInstagramPublishConfig(instagram_enabled=True, instagram_queue_path=queue_path)
+
+    args = build_argument_parser().parse_args(["--kill", "clip-1"])
+    with pytest.raises(RuntimeError):
+        run_command(args, credentials_factory=lambda: "token", config=config, ig_user_id="ig-user-1")
+
+
+def test_kill_via_cli_flips_not_yet_uploaded_entry_to_killed(tmp_path):
+    queue_path = make_cli_instagram_queue(
+        tmp_path, [_kill_test_entry(clip_id="clip-1", seq=1, status=QUEUED)]
+    )
+    config = FakeInstagramPublishConfig(instagram_enabled=True, instagram_queue_path=queue_path)
+
+    args = build_argument_parser().parse_args(["--kill", "clip-1"])
+    run_command(args, credentials_factory=lambda: "token", config=config, ig_user_id="ig-user-1")
+
+    assert load_queue(queue_path)["entries"][0]["status"] == KILLED
+
+
+def test_pause_and_resume_via_cli_dispatch(tmp_path):
+    queue_path = make_cli_instagram_queue(
+        tmp_path, [_kill_test_entry(clip_id="clip-1", seq=1, status=QUEUED)]
+    )
+    config = FakeInstagramPublishConfig(instagram_enabled=True, instagram_queue_path=queue_path)
+
+    pause_args = build_argument_parser().parse_args(["--pause", "clip-1"])
+    run_command(pause_args, credentials_factory=lambda: "token", config=config, ig_user_id="ig-user-1")
+    assert load_queue(queue_path)["entries"][0]["status"] == PAUSED
+
+    resume_args = build_argument_parser().parse_args(["--resume", "clip-1"])
+    run_command(resume_args, credentials_factory=lambda: "token", config=config, ig_user_id="ig-user-1")
+    assert load_queue(queue_path)["entries"][0]["status"] == QUEUED
+
+
+def test_help_flag_lists_seven_flags(capsys):
+    parser = build_argument_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--help"])
+    out = capsys.readouterr().out
+    for flag in ["--check", "--now", "--pause", "--kill", "--resume", "--list", "--ig-user-id"]:
+        assert flag in out
+
+
+def test_run_command_signature_takes_ig_user_id_positionally_after_config():
+    import inspect
+
+    sig = inspect.signature(run_command)
+    assert list(sig.parameters) == ["args", "credentials_factory", "config", "ig_user_id", "session"]
