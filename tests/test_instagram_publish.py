@@ -18,10 +18,12 @@ from scripts.instagram_publish import (
     QUEUED,
     UPLOADING,
     VALID_STATUSES,
+    PUBLISHED,
     InstagramAccessError,
     _capture_oauth_redirect_code,
     _check_meta_permission_error,
     _find_entry,
+    _upload_one,
     build_media_container_params,
     create_resumable_container,
     enqueue,
@@ -30,10 +32,13 @@ from scripts.instagram_publish import (
     pause_item,
     poll_container_status,
     publish_container,
+    reconcile_all_uploading,
+    reconcile_uploading,
     resume_item,
     run_instagram_oauth_consent,
     save_queue,
     select_next_due,
+    upload_and_publish,
     upload_local_video,
     validate_caption,
 )
@@ -521,3 +526,400 @@ def test_check_meta_permission_error_no_op_on_success_response():
     response = FakeResponse({"id": "container-1"}, status_code=200)
 
     _check_meta_permission_error(response)  # must not raise
+
+
+# --- Task 3: orchestration (dry-run gate, attempt-then-fail-closed, write-ahead), reconcile --
+
+
+class FakeInstagramPublishConfig:
+    """Minimal stand-in for scripts.config.PublishConfig - only the fields
+    upload_and_publish/_upload_one actually read."""
+
+    def __init__(self, instagram_enabled, instagram_queue_path="instagram_queue.json",
+                 notifications_path="notifications.log"):
+        self.instagram_enabled = instagram_enabled
+        self.instagram_queue_path = instagram_queue_path
+        self.notifications_path = notifications_path
+
+
+class SpyingSession(FakeSession):
+    """Extends FakeSession to snapshot the on-disk queue file at the moment
+    the first POST to rupload.facebook.com fires - proves write-ahead
+    persistence (container_id persisted before the byte upload starts)
+    actually landed on disk before the upload call (mirrors
+    tests/test_tiktok_publish.py's spying-PUT test technique)."""
+
+    def __init__(self, responses, queue_path):
+        super().__init__(responses)
+        self.queue_path = queue_path
+        self.container_id_at_first_rupload_post = "NOT_YET_CALLED"
+
+    def post(self, url, **kwargs):
+        if "rupload.facebook.com" in url and self.container_id_at_first_rupload_post == "NOT_YET_CALLED":
+            saved = json.loads(Path(self.queue_path).read_text(encoding="utf-8"))
+            self.container_id_at_first_rupload_post = saved["entries"][0].get("container_id")
+        return super().post(url, **kwargs)
+
+
+def make_instagram_entry(**overrides):
+    entry = {
+        "seq": 1,
+        "clip_id": "clip-1",
+        "video_path": "clip1.mp4",
+        "metadata_path": "clip1.txt",
+        "caption": "caption 1",
+        "status": QUEUED,
+        "container_id": None,
+        "media_id": None,
+        "enqueued_at": "2026-07-10T00:00:00Z",
+        "updated_at": "2026-07-10T00:00:00Z",
+    }
+    entry.update(overrides)
+    return entry
+
+
+def test_dry_run_default_no_upload(tmp_path):
+    queue_path = tmp_path / "instagram_queue.json"
+    queue = load_queue(str(queue_path))
+    entry = enqueue(queue, clip_id="clip-1", video_path="c.mp4", metadata_path="c.txt", caption="cap")
+    config = FakeInstagramPublishConfig(instagram_enabled=False, instagram_queue_path=str(queue_path))
+    session = FakeSession([])
+
+    def credentials_factory():
+        raise AssertionError("credentials_factory must not be called during dry-run")
+
+    result = upload_and_publish(
+        queue, entry, credentials_factory, config, ig_user_id="ig-user-1",
+        session=session, queue_path=str(queue_path),
+    )
+
+    assert result == {"dry_run": True}
+    assert session.calls == []
+    assert entry["status"] == QUEUED
+
+
+def test_upload_and_publish_full_success_flow_persists_write_ahead(tmp_path):
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"0123456789")
+    queue_path = tmp_path / "instagram_queue.json"
+
+    queue = load_queue(str(queue_path))
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(video_path), metadata_path="c.txt", caption="cap"
+    )
+    save_queue(queue, str(queue_path))
+
+    config = FakeInstagramPublishConfig(instagram_enabled=True, instagram_queue_path=str(queue_path))
+
+    session = SpyingSession([
+        FakeResponse({"id": "container-1"}),  # create_resumable_container
+        FakeResponse({}),                      # upload_local_video (rupload)
+        FakeResponse({"status_code": "FINISHED"}),  # poll_container_status
+        FakeResponse({"id": "media-1"}),       # publish_container
+    ], queue_path=str(queue_path))
+
+    result = upload_and_publish(
+        queue, entry, lambda: "access-token-123", config, ig_user_id="ig-user-1",
+        session=session, queue_path=str(queue_path),
+    )
+
+    assert result == {"media_id": "media-1"}
+    assert entry["status"] == PUBLISHED
+    assert entry["media_id"] == "media-1"
+    # Write-ahead #2: container_id must be on disk BEFORE upload_local_video's
+    # POST to rupload.facebook.com starts, so a crash mid-upload is
+    # reconcilable rather than silently duplicated.
+    assert session.container_id_at_first_rupload_post == "container-1"
+
+
+def test_upload_and_publish_no_pre_publish_gating_call(tmp_path):
+    """The single most important behavioral test in this plan: no
+    creator_info/query-equivalent call precedes create_resumable_container -
+    the very first session call must be the real container-create POST."""
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"0123456789")
+    queue_path = tmp_path / "instagram_queue.json"
+
+    queue = load_queue(str(queue_path))
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(video_path), metadata_path="c.txt", caption="cap"
+    )
+    save_queue(queue, str(queue_path))
+
+    config = FakeInstagramPublishConfig(instagram_enabled=True, instagram_queue_path=str(queue_path))
+
+    session = FakeSession([
+        FakeResponse({"id": "container-1"}),
+        FakeResponse({}),
+        FakeResponse({"status_code": "FINISHED"}),
+        FakeResponse({"id": "media-1"}),
+    ])
+
+    upload_and_publish(
+        queue, entry, lambda: "access-token-123", config, ig_user_id="ig-user-1",
+        session=session, queue_path=str(queue_path),
+    )
+
+    first_call_method, first_call_url, _ = session.calls[0]
+    assert first_call_method == "POST"
+    assert first_call_url == f"https://graph.facebook.com/{GRAPH_API_VERSION}/ig-user-1/media"
+    assert "creator_info" not in first_call_url
+
+
+def test_upload_and_publish_poll_then_publish_sequencing(tmp_path):
+    """publish_container must never be called before poll_container_status
+    returns FINISHED."""
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"0123456789")
+    queue_path = tmp_path / "instagram_queue.json"
+
+    queue = load_queue(str(queue_path))
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(video_path), metadata_path="c.txt", caption="cap"
+    )
+    save_queue(queue, str(queue_path))
+
+    config = FakeInstagramPublishConfig(instagram_enabled=True, instagram_queue_path=str(queue_path))
+
+    session = FakeSession([
+        FakeResponse({"id": "container-1"}),
+        FakeResponse({}),
+        FakeResponse({"status_code": "IN_PROGRESS"}),
+        FakeResponse({"status_code": "FINISHED"}),
+        FakeResponse({"id": "media-1"}),
+    ])
+
+    result = upload_and_publish(
+        queue, entry, lambda: "access-token-123", config, ig_user_id="ig-user-1",
+        session=session, queue_path=str(queue_path), poll_interval_seconds=0,
+    )
+
+    assert result == {"media_id": "media-1"}
+    urls = [url for _, url, _ in session.calls]
+    media_publish_index = next(i for i, u in enumerate(urls) if u.endswith("/media_publish"))
+    finished_poll_index = max(
+        i for i, (_, u, _) in enumerate(session.calls)
+        if u == f"https://graph.facebook.com/{GRAPH_API_VERSION}/container-1"
+    )
+    assert finished_poll_index < media_publish_index
+
+
+def test_upload_and_publish_container_error_raises_runtime_error_stays_uploading(tmp_path):
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"0123456789")
+    queue_path = tmp_path / "instagram_queue.json"
+
+    queue = load_queue(str(queue_path))
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(video_path), metadata_path="c.txt", caption="cap"
+    )
+    save_queue(queue, str(queue_path))
+
+    config = FakeInstagramPublishConfig(instagram_enabled=True, instagram_queue_path=str(queue_path))
+
+    session = FakeSession([
+        FakeResponse({"id": "container-1"}),
+        FakeResponse({}),
+        FakeResponse({"status_code": "ERROR"}),
+    ])
+
+    with pytest.raises(RuntimeError):
+        upload_and_publish(
+            queue, entry, lambda: "access-token-123", config, ig_user_id="ig-user-1",
+            session=session, queue_path=str(queue_path),
+        )
+
+    assert entry["status"] == UPLOADING
+
+
+def test_upload_and_publish_instagram_access_error_propagates_unchanged(tmp_path):
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"0123456789")
+    queue_path = tmp_path / "instagram_queue.json"
+
+    queue = load_queue(str(queue_path))
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(video_path), metadata_path="c.txt", caption="cap"
+    )
+    save_queue(queue, str(queue_path))
+
+    config = FakeInstagramPublishConfig(instagram_enabled=True, instagram_queue_path=str(queue_path))
+
+    session = FakeSession([
+        FakeResponse(
+            {"error": {"message": "requires advanced access", "type": "OAuthException", "code": 10}},
+            status_code=403,
+        ),
+    ])
+
+    with pytest.raises(InstagramAccessError):
+        upload_and_publish(
+            queue, entry, lambda: "access-token-123", config, ig_user_id="ig-user-1",
+            session=session, queue_path=str(queue_path),
+        )
+
+
+def test_upload_one_instagram_access_error_notified_and_reraised(tmp_path):
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"0123456789")
+    queue_path = tmp_path / "instagram_queue.json"
+    notifications_path = tmp_path / "notifications.log"
+
+    queue = load_queue(str(queue_path))
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(video_path), metadata_path="c.txt", caption="cap"
+    )
+    save_queue(queue, str(queue_path))
+
+    config = FakeInstagramPublishConfig(
+        instagram_enabled=True, instagram_queue_path=str(queue_path),
+        notifications_path=str(notifications_path),
+    )
+
+    session = FakeSession([
+        FakeResponse(
+            {"error": {"message": "requires advanced access", "type": "OAuthException", "code": 10}},
+            status_code=403,
+        ),
+    ])
+
+    with pytest.raises(InstagramAccessError):
+        _upload_one(entry, queue, lambda: "access-token-123", config, ig_user_id="ig-user-1", session=session)
+
+    log_text = notifications_path.read_text(encoding="utf-8")
+    assert "advanced access" in log_text.lower() or "permission" in log_text.lower()
+
+
+def test_upload_one_success_appends_normal_notification(tmp_path):
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"0123456789")
+    queue_path = tmp_path / "instagram_queue.json"
+    notifications_path = tmp_path / "notifications.log"
+
+    queue = load_queue(str(queue_path))
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(video_path), metadata_path="c.txt", caption="cap"
+    )
+    save_queue(queue, str(queue_path))
+
+    config = FakeInstagramPublishConfig(
+        instagram_enabled=True, instagram_queue_path=str(queue_path),
+        notifications_path=str(notifications_path),
+    )
+
+    session = FakeSession([
+        FakeResponse({"id": "container-1"}),
+        FakeResponse({}),
+        FakeResponse({"status_code": "FINISHED"}),
+        FakeResponse({"id": "media-1"}),
+    ])
+
+    _upload_one(entry, queue, lambda: "access-token-123", config, ig_user_id="ig-user-1", session=session)
+
+    log_text = notifications_path.read_text(encoding="utf-8")
+    assert "залил 1 в Instagram" in log_text
+
+
+def test_reconcile_uploading_no_container_id_resets_to_queued_without_api_call():
+    entry = make_instagram_entry(status=UPLOADING, container_id=None)
+    queue = {"entries": [entry]}
+    session = FakeSession([])
+
+    def credentials_factory():
+        raise AssertionError("credentials_factory must not be called when no container_id recorded")
+
+    reconcile_uploading(queue, entry, credentials_factory, ig_user_id="ig-user-1", session=session)
+
+    assert entry["status"] == QUEUED
+    assert session.calls == []
+
+
+def test_reconcile_uploading_already_has_media_id_is_noop():
+    entry = make_instagram_entry(status=UPLOADING, container_id="container-1", media_id="media-1")
+    queue = {"entries": [entry]}
+    session = FakeSession([])
+
+    def credentials_factory():
+        raise AssertionError("credentials_factory must not be called when already terminal")
+
+    reconcile_uploading(queue, entry, credentials_factory, ig_user_id="ig-user-1", session=session)
+
+    assert entry["status"] == UPLOADING  # untouched
+    assert session.calls == []
+
+
+def test_reconcile_uploading_finished_completes_publish_no_duplicate_container_create():
+    entry = make_instagram_entry(status=UPLOADING, container_id="container-1")
+    queue = {"entries": [entry]}
+    session = FakeSession([
+        FakeResponse({"status_code": "FINISHED"}),
+        FakeResponse({"id": "media-1"}),
+    ])
+
+    reconcile_uploading(queue, entry, lambda: "token", ig_user_id="ig-user-1", session=session)
+
+    assert entry["status"] == PUBLISHED
+    assert entry["media_id"] == "media-1"
+    urls_called = [url for _, url, _ in session.calls]
+    assert f"https://graph.facebook.com/{GRAPH_API_VERSION}/ig-user-1/media" not in urls_called
+
+
+def test_reconcile_uploading_error_resets_to_queued_clears_container_id():
+    entry = make_instagram_entry(status=UPLOADING, container_id="container-1")
+    queue = {"entries": [entry]}
+    session = FakeSession([
+        FakeResponse({"status_code": "ERROR"}),
+    ])
+
+    reconcile_uploading(queue, entry, lambda: "token", ig_user_id="ig-user-1", session=session)
+
+    assert entry["status"] == QUEUED
+    assert entry["container_id"] is None
+
+
+def test_reconcile_uploading_still_in_flight_is_left_untouched():
+    entry = make_instagram_entry(status=UPLOADING, container_id="container-1")
+    queue = {"entries": [entry]}
+    session = FakeSession([
+        FakeResponse({"status_code": "IN_PROGRESS"}),
+    ])
+
+    reconcile_uploading(queue, entry, lambda: "token", ig_user_id="ig-user-1", session=session)
+
+    assert entry["status"] == UPLOADING
+    assert entry["container_id"] == "container-1"
+
+
+def test_reconcile_all_uploading_skips_non_uploading_entries():
+    queued_entry = make_instagram_entry(clip_id="clip-1", status=QUEUED)
+    uploading_entry = make_instagram_entry(
+        clip_id="clip-2", seq=2, status=UPLOADING, container_id=None
+    )
+    queue = {"entries": [queued_entry, uploading_entry]}
+    session = FakeSession([])
+
+    reconcile_all_uploading(queue, lambda: "token", ig_user_id="ig-user-1", session=session)
+
+    assert queued_entry["status"] == QUEUED
+    assert uploading_entry["status"] == QUEUED  # reset, no container_id, no api call
+
+
+def test_no_daily_slots_utc_reference_anywhere_in_module():
+    """06-RESEARCH.md Open Question 3: Instagram's media_publish is
+    immediate, no publishAt-equivalent to schedule against - this module
+    must never read config.daily_slots_utc."""
+    import inspect
+
+    source = inspect.getsource(instagram_publish)
+    assert "daily_slots_utc" not in source
+
+
+def test_no_pre_publish_gating_function_exists_in_module():
+    """Grep-equivalent check: no creator_info/query-equivalent gating
+    function exists anywhere in this module (the single most important
+    constraint of this plan)."""
+    import inspect
+
+    source = inspect.getsource(instagram_publish)
+    assert "creator_info" not in source
+    assert "publish_gate" not in source
