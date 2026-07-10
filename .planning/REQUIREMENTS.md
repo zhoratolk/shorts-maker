@@ -48,7 +48,7 @@
 
 ### AUDIO — Profanity Auto-Bleep
 
-- [ ] **AUDIO-01**: Swear words are identified from the existing word-level Whisper transcript for every clip before render
+- [x] **AUDIO-01**: Swear words are identified from the existing word-level Whisper transcript for every clip before render
 - [ ] **AUDIO-02**: Each identified span gets a quiet overlay tone applied at render time (via `render.py`'s audio filter chain) — audio keeps playing, no dead-silence gap
 - [ ] **AUDIO-03**: Overlay is quiet/garbled enough to defeat platform speech-to-text moderation scanning of the masked word, without sounding like an abrupt cut
 
@@ -100,7 +100,7 @@
 | COMP-03 | Phase 5 | Complete |
 | PUB-06 | Phase 6 | Complete — CR-01 gap found+fixed during verification (71a6131), re-verified passed |
 | PUB-07 | Phase 6 | Complete |
-| AUDIO-01 | Phase 7 | Pending |
+| AUDIO-01 | Phase 7 | Complete |
 | AUDIO-02 | Phase 7 | Pending |
 | AUDIO-03 | Phase 7 | Pending |
 

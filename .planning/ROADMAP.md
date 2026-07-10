@@ -198,7 +198,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 4. Context-Driven Transitions | 6/6 | Complete   | 2026-07-09 |
 | 5. Sub-Threshold Highlight Compilation | 5/5 | Complete    | 2026-07-10 |
 | 6. TikTok & Instagram Auto-Publish | 7/7 | Complete    | 2026-07-10 |
-| 7. Profanity Auto-Bleep | 0/5 | Planned | - |
+| 7. Profanity Auto-Bleep | 1/5 | In Progress|  |
 
 ### Phase 7: Profanity Auto-Bleep
 
@@ -211,11 +211,11 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
   2. Each identified swear word's audio span gets a quiet overlay tone applied instead of being cut to silence or left untouched — the clip's audio track keeps playing underneath
   3. The masked span is quiet/garbled enough that a platform's automated speech-to-text moderation pass would not transcribe the word cleanly, without being so loud/abrupt that it reads as an obvious edit
 
-**Plans**: 5 plans
+**Plans**: 1/5 plans executed
 
 **Wave 1** *(parallel — no shared files)*
 
-- [ ] 07-01-PLAN.md — Detection module: scripts/profanity.py (load_wordlist/normalize_word/compile_patterns/find_profane_spans + CLI) + committed data/profanity_wordlist.yaml + tests [AUDIO-01] (wave 1)
+- [x] 07-01-PLAN.md — Detection module: scripts/profanity.py (load_wordlist/normalize_word/compile_patterns/find_profane_spans + CLI) + committed data/profanity_wordlist.yaml + tests [AUDIO-01] (wave 1)
 - [ ] 07-02-PLAN.md — render.py masking builders: build_profanity_mask_filter (duck+bandreject+tremolo, live-verified) + build_audio_filter_chain extension (after loudnorm, before afade) + render_clip profanity_spans wiring + --profanity-* flags [AUDIO-02, AUDIO-03] (wave 1)
 - [ ] 07-03-PLAN.md — ProfanityConfig dataclass (fail-open, default-off) + _validate + config.example.yaml section [AUDIO-01, AUDIO-02, AUDIO-03] (wave 1)
 
