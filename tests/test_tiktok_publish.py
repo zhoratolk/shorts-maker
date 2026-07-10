@@ -1,6 +1,7 @@
 import json
 import threading
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -168,8 +169,89 @@ def test_isolation_pause_tiktok_queue_never_touches_youtube_queue(tmp_path):
     assert after == before
 
 
+def test_isolation_pause_and_kill_tiktok_never_touches_instagram_or_youtube_queue(tmp_path):
+    """Success Criterion 3, proven structurally rather than by convention:
+    creates real tmp-dir manifests for all three platforms, calls
+    pause_item/kill_item against ONLY the TikTok queue object, saves ONLY
+    that queue back to tiktok_queue.json, then re-reads the other two
+    platforms' files from disk and asserts their bytes are byte-for-byte
+    unchanged - proving tiktok_publish.py's functions never open, read, or
+    write either other file.
+    """
+    from scripts.instagram_publish import enqueue as ig_enqueue
+    from scripts.instagram_publish import load_queue as ig_load_queue
+    from scripts.instagram_publish import save_queue as ig_save_queue
+    from scripts.publish_queue import enqueue as yt_enqueue
+    from scripts.publish_queue import load_queue as yt_load_queue
+    from scripts.publish_queue import save_queue as yt_save_queue
+
+    yt_queue_path = tmp_path / "queue.json"
+    yt_queue = yt_load_queue(str(yt_queue_path))
+    yt_enqueue(
+        yt_queue, clip_id="yt-clip-1", video_path="v.mp4", metadata_path="m.txt",
+        title="T", description="D", tags=["a"],
+    )
+    yt_save_queue(yt_queue, str(yt_queue_path))
+    yt_before = yt_queue_path.read_text(encoding="utf-8")
+
+    ig_queue_path = tmp_path / "instagram_queue.json"
+    ig_queue = ig_load_queue(str(ig_queue_path))
+    ig_enqueue(
+        ig_queue, clip_id="ig-clip-1", video_path="v.mp4", metadata_path="m.txt", caption="c",
+    )
+    ig_save_queue(ig_queue, str(ig_queue_path))
+    ig_before = ig_queue_path.read_text(encoding="utf-8")
+
+    tt_queue_path = tmp_path / "tiktok_queue.json"
+    tt_queue = load_queue(str(tt_queue_path))
+    enqueue(tt_queue, clip_id="tt-clip-1", video_path="v1.mp4", metadata_path="m1.txt", caption="c1")
+    enqueue(tt_queue, clip_id="tt-clip-2", video_path="v2.mp4", metadata_path="m2.txt", caption="c2")
+    save_queue(tt_queue, str(tt_queue_path))
+
+    # Both pause_item and kill_item, exercised against ONLY the in-memory
+    # TikTok queue object loaded via tiktok_publish.load_queue.
+    pause_item(tt_queue, "tt-clip-1")
+    kill_item(tt_queue, "tt-clip-2")
+    save_queue(tt_queue, str(tt_queue_path))
+
+    assert yt_queue_path.read_text(encoding="utf-8") == yt_before
+    assert ig_queue_path.read_text(encoding="utf-8") == ig_before
+
+
 def test_tiktok_scopes_are_minimal():
     assert TIKTOK_SCOPES == ["video.publish", "video.upload"]
+
+
+def test_tiktok_authorize_url_scope_param_is_exact_no_broader_scope(tmp_path, monkeypatch):
+    """V4: the authorize URL's scope query param must be exactly
+    'video.publish,video.upload' - no extra/broader scope ever appended."""
+    client_key_path = tmp_path / "tiktok_client_key.json"
+    client_key_path.write_text(json.dumps({"client_key": "ck", "client_secret": "cs"}), encoding="utf-8")
+    token_path = tmp_path / "tiktok_token.json"
+
+    opened_urls = []
+    monkeypatch.setattr(tiktok_publish.webbrowser, "open", lambda url: opened_urls.append(url))
+
+    port = 8796
+
+    def hit_redirect():
+        time.sleep(0.2)
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/callback?code=abc123&state=xyz", timeout=5)
+
+    thread = threading.Thread(target=hit_redirect)
+    thread.start()
+
+    session = FakeSession([
+        FakeResponse({"access_token": "tok", "refresh_token": "ref", "expires_in": 86400}),
+    ])
+
+    run_tiktok_oauth_consent(str(client_key_path), str(token_path), port=port, session=session)
+    thread.join()
+
+    assert opened_urls
+    parsed = urllib.parse.urlparse(opened_urls[0])
+    scope_param = urllib.parse.parse_qs(parsed.query)["scope"][0]
+    assert scope_param == "video.publish,video.upload"
 
 
 # --- Fake HTTP layer (shared by Task 1 credential tests and later tasks) --

@@ -1,6 +1,7 @@
 import json
 import threading
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -173,8 +174,92 @@ def test_isolation_pause_instagram_queue_never_touches_youtube_queue(tmp_path):
     assert after == before
 
 
+def test_isolation_pause_and_kill_instagram_never_touches_tiktok_or_youtube_queue(tmp_path):
+    """Success Criterion 3, proven structurally rather than by convention:
+    creates real tmp-dir manifests for all three platforms, calls
+    pause_item/kill_item against ONLY the Instagram queue object, saves
+    ONLY that queue back to instagram_queue.json, then re-reads the other
+    two platforms' files from disk and asserts their bytes are
+    byte-for-byte unchanged - proving instagram_publish.py's functions
+    never open, read, or write either other file.
+    """
+    from scripts.publish_queue import enqueue as yt_enqueue
+    from scripts.publish_queue import load_queue as yt_load_queue
+    from scripts.publish_queue import save_queue as yt_save_queue
+    from scripts.tiktok_publish import enqueue as tt_enqueue
+    from scripts.tiktok_publish import load_queue as tt_load_queue
+    from scripts.tiktok_publish import save_queue as tt_save_queue
+
+    yt_queue_path = tmp_path / "queue.json"
+    yt_queue = yt_load_queue(str(yt_queue_path))
+    yt_enqueue(
+        yt_queue, clip_id="yt-clip-1", video_path="v.mp4", metadata_path="m.txt",
+        title="T", description="D", tags=["a"],
+    )
+    yt_save_queue(yt_queue, str(yt_queue_path))
+    yt_before = yt_queue_path.read_text(encoding="utf-8")
+
+    tt_queue_path = tmp_path / "tiktok_queue.json"
+    tt_queue = tt_load_queue(str(tt_queue_path))
+    tt_enqueue(
+        tt_queue, clip_id="tt-clip-1", video_path="v.mp4", metadata_path="m.txt", caption="c",
+    )
+    tt_save_queue(tt_queue, str(tt_queue_path))
+    tt_before = tt_queue_path.read_text(encoding="utf-8")
+
+    ig_queue_path = tmp_path / "instagram_queue.json"
+    ig_queue = load_queue(str(ig_queue_path))
+    enqueue(ig_queue, clip_id="ig-clip-1", video_path="v1.mp4", metadata_path="m1.txt", caption="c1")
+    enqueue(ig_queue, clip_id="ig-clip-2", video_path="v2.mp4", metadata_path="m2.txt", caption="c2")
+    save_queue(ig_queue, str(ig_queue_path))
+
+    # Both pause_item and kill_item, exercised against ONLY the in-memory
+    # Instagram queue object loaded via instagram_publish.load_queue.
+    pause_item(ig_queue, "ig-clip-1")
+    kill_item(ig_queue, "ig-clip-2")
+    save_queue(ig_queue, str(ig_queue_path))
+
+    assert yt_queue_path.read_text(encoding="utf-8") == yt_before
+    assert tt_queue_path.read_text(encoding="utf-8") == tt_before
+
+
 def test_instagram_scopes_are_minimal():
     assert INSTAGRAM_SCOPES == ["instagram_business_basic", "instagram_business_content_publish"]
+
+
+def test_instagram_authorize_url_scope_param_is_exact_no_broader_scope(tmp_path, monkeypatch):
+    """V4: the authorize URL's scope query param must be exactly
+    'instagram_business_basic,instagram_business_content_publish' - no
+    extra/broader scope (e.g. instagram_business_manage_messages/
+    instagram_business_manage_comments) ever appended."""
+    client_secret_path = tmp_path / "instagram_client_secret.json"
+    client_secret_path.write_text(json.dumps({"client_id": "cid", "client_secret": "csecret"}), encoding="utf-8")
+    token_path = tmp_path / "instagram_token.json"
+
+    opened_urls = []
+    monkeypatch.setattr(instagram_publish.webbrowser, "open", lambda url: opened_urls.append(url))
+
+    port = 8767
+
+    def hit_redirect():
+        time.sleep(0.2)
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/callback?code=abc123&state=xyz", timeout=5)
+
+    thread = threading.Thread(target=hit_redirect)
+    thread.start()
+
+    session = FakeSession([
+        FakeResponse({"access_token": "short-lived-tok", "user_id": "u1"}),
+        FakeResponse({"access_token": "long-lived-tok", "token_type": "bearer", "expires_in": 60 * 24 * 3600}),
+    ])
+
+    run_instagram_oauth_consent(str(client_secret_path), str(token_path), port=port, session=session)
+    thread.join()
+
+    assert opened_urls
+    parsed = urllib.parse.urlparse(opened_urls[0])
+    scope_param = urllib.parse.parse_qs(parsed.query)["scope"][0]
+    assert scope_param == "instagram_business_basic,instagram_business_content_publish"
 
 
 # --- Task 1: kill_item (Pitfall 4 divergence from YouTube's revert+verify) -
