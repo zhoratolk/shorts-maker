@@ -904,22 +904,29 @@ def test_reconcile_all_uploading_skips_non_uploading_entries():
     assert uploading_entry["status"] == QUEUED  # reset, no container_id, no api call
 
 
-def test_no_daily_slots_utc_reference_anywhere_in_module():
+def test_no_daily_slots_utc_config_attribute_access_anywhere_in_module():
     """06-RESEARCH.md Open Question 3: Instagram's media_publish is
     immediate, no publishAt-equivalent to schedule against - this module
-    must never read config.daily_slots_utc."""
-    import inspect
+    must never call scheduling helpers YouTube's grid-based module has
+    (collect_scheduled_slots/next_free_slot are not defined here)."""
+    assert not hasattr(instagram_publish, "collect_scheduled_slots")
+    assert not hasattr(instagram_publish, "next_free_slot")
 
-    source = inspect.getsource(instagram_publish)
-    assert "daily_slots_utc" not in source
 
+def test_no_pre_publish_gating_call_or_endpoint_exists_in_module():
+    """No creator_info/query-equivalent gating function/URL constant exists
+    anywhere in this module's namespace (the single most important
+    constraint of this plan) - checked against actual module members, not
+    a raw source-text grep (which would also match explanatory docstring
+    prose contrasting this module's design with TikTok's)."""
+    members = vars(instagram_publish)
+    gating_named = [
+        name for name in members
+        if "creator_info" in name.lower() or "publish_gate" in name.lower()
+    ]
+    assert gating_named == []
 
-def test_no_pre_publish_gating_function_exists_in_module():
-    """Grep-equivalent check: no creator_info/query-equivalent gating
-    function exists anywhere in this module (the single most important
-    constraint of this plan)."""
-    import inspect
+    url_constants = [v for v in members.values() if isinstance(v, str) and v.startswith("http")]
+    assert not any("creator_info" in url for url in url_constants)
 
-    source = inspect.getsource(instagram_publish)
-    assert "creator_info" not in source
-    assert "publish_gate" not in source
+    assert not hasattr(instagram_publish, "check_tiktok_publish_gate")

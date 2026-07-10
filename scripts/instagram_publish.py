@@ -546,3 +546,205 @@ def publish_container(
     _check_meta_permission_error(response)
     response.raise_for_status()
     return response.json()["id"]
+
+
+# --- Orchestration (dry-run gate, attempt-then-fail-closed, write-ahead) --
+
+
+def upload_and_publish(
+    queue: dict[str, Any],
+    entry: dict[str, Any],
+    credentials_factory,
+    config,
+    ig_user_id: str,
+    session=requests,
+    queue_path: str = DEFAULT_QUEUE_PATH,
+    poll_interval_seconds: float = 2.0,
+) -> dict[str, Any]:
+    """Orchestrates the dry-run gate -> write-ahead uploading -> container
+    create -> write-ahead container_id -> byte upload -> poll -> publish
+    flow for one queue entry.
+
+    If not config.instagram_enabled, this is the LITERAL FIRST statement -
+    before load_credentials or any requests call - so dry-run makes NO
+    credential load and NO network call (PUB-03 parity). Returns
+    {"dry_run": True} and leaves entry["status"] untouched.
+
+    If enabled: sets entry["status"]=UPLOADING and persists (write-ahead
+    #1, before create_resumable_container). Per the user's explicit
+    decision, create_resumable_container is called directly with NO prior
+    gating/permission-check call, unlike TikTok's creator_info/query.
+    entry["container_id"] is persisted (write-ahead #2, before
+    upload_local_video's byte upload starts). Polls poll_container_status
+    in a loop until status_code is terminal (FINISHED or ERROR/EXPIRED) -
+    publish_container is never called before FINISHED is observed.
+
+    On FINISHED: publish_container publishes, entry["status"]=PUBLISHED,
+    entry["media_id"] set, persisted, returns {"media_id": media_id}. On
+    ERROR/EXPIRED: raises RuntimeError describing the container's failed
+    state, entry status stays UPLOADING for the next reconcile pass.
+
+    Any InstagramAccessError raised by create_resumable_container/
+    upload_local_video/publish_container propagates up through this
+    function unchanged (it is a ValueError subclass, callers catch it same
+    as any other Exception) - it is never caught/reinterpreted here.
+
+    Deliberately does NOT read config.daily_slots_utc anywhere (06-RESEARCH
+    Open Question 3): Instagram's media_publish is immediate once invoked,
+    with no publishAt-equivalent to schedule against.
+    """
+    if not config.instagram_enabled:
+        return {"dry_run": True}
+
+    access_token = credentials_factory()
+
+    entry["status"] = UPLOADING
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    save_queue(queue, queue_path)
+
+    params = build_media_container_params(entry["caption"])
+    container_id = create_resumable_container(ig_user_id, access_token, params, session)
+
+    entry["container_id"] = container_id
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    save_queue(queue, queue_path)
+
+    upload_local_video(container_id, access_token, entry["video_path"], session)
+
+    status_code = poll_container_status(container_id, access_token, session)
+    while status_code not in TERMINAL_CONTAINER_STATUSES:
+        time.sleep(poll_interval_seconds)
+        status_code = poll_container_status(container_id, access_token, session)
+
+    if status_code != "FINISHED":
+        raise RuntimeError(
+            f"Instagram media container failed for clip_id={entry['clip_id']!r}: "
+            f"status_code={status_code!r}"
+        )
+
+    media_id = publish_container(ig_user_id, access_token, container_id, session)
+    entry["status"] = PUBLISHED
+    entry["media_id"] = media_id
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    save_queue(queue, queue_path)
+
+    return {"media_id": media_id}
+
+
+def _success_notification_text(entry: dict[str, Any]) -> str:
+    return f"залил {entry['seq']} в Instagram"
+
+
+def _error_notification_text(entry: dict[str, Any], reason: str) -> str:
+    return f"[error] Instagram {entry['seq']}: {reason}"
+
+
+def _upload_one(
+    entry: dict[str, Any],
+    queue: dict[str, Any],
+    credentials_factory,
+    config,
+    ig_user_id: str,
+    session=requests,
+) -> None:
+    """Mirrors scripts/publish_queue.py::_upload_one's error-vs-success
+    branching. Wraps upload_and_publish in try/except, appends an error
+    notification (using str(error), which for an InstagramAccessError
+    already contains the actionable Advanced-Access-may-be-needed guidance)
+    and re-raises on any Exception - this is the "fail closed with a
+    clear, actionable error message, not a silent skip, not a crash"
+    behavior the user explicitly required: the error is loud (notified +
+    raised), never silently swallowed. On a dry-run result, prints/returns
+    without notifying. On success, appends a "залил {seq} в Instagram"
+    style success notification (no SELF_ONLY-equivalent branch - Instagram
+    has no analog to TikTok's D-05 trap, per 06-CONTEXT.md D-05's
+    TikTok-only scope).
+    """
+    try:
+        result = upload_and_publish(
+            queue, entry, credentials_factory, config, ig_user_id,
+            session=session, queue_path=config.instagram_queue_path,
+        )
+    except Exception as error:
+        append_notification(
+            _error_notification_text(entry, str(error)), config.notifications_path
+        )
+        raise
+
+    if isinstance(result, dict) and result.get("dry_run"):
+        print("dry-run: skipped (instagram_enabled disabled)")
+        return
+
+    append_notification(_success_notification_text(entry), config.notifications_path)
+    print(_success_notification_text(entry))
+
+
+# --- Reconciliation of a stuck UPLOADING entry ---------------------------
+
+
+def reconcile_uploading(
+    queue: dict[str, Any],
+    entry: dict[str, Any],
+    credentials_factory,
+    ig_user_id: str,
+    session=requests,
+) -> dict[str, Any]:
+    """Resolves a manifest entry stuck in UPLOADING.
+
+    - Already has a media_id: nothing to do (already terminal), untouched.
+    - No container_id recorded (crash before create_resumable_container
+      returned): reset to QUEUED directly, no API call - nothing was
+      created on Instagram's side.
+    - Has a container_id but no media_id: polls poll_container_status.
+      FINISHED -> calls publish_container to complete the interrupted flow
+      (status=PUBLISHED, save). Meta's behavior on a media_publish retry
+      against an already-published creation_id is unverified against a
+      live account (06-RESEARCH.md never captured this from a real call),
+      so this is a best-effort completion, not a guaranteed-safe
+      idempotent replay. ERROR/EXPIRED -> reset to QUEUED, clear
+      container_id. Any other in-flight status -> left untouched
+      (legitimately still processing).
+    - A poll_container_status call error (expired/invalid container_id)
+      resets to QUEUED and clears container_id so a clean retry can happen.
+    """
+    if entry.get("media_id"):
+        return entry
+
+    if not entry.get("container_id"):
+        entry["status"] = QUEUED
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return entry
+
+    access_token = credentials_factory()
+    try:
+        status_code = poll_container_status(entry["container_id"], access_token, session)
+    except Exception:
+        entry["status"] = QUEUED
+        entry["container_id"] = None
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return entry
+
+    if status_code == "FINISHED":
+        media_id = publish_container(ig_user_id, access_token, entry["container_id"], session)
+        entry["status"] = PUBLISHED
+        entry["media_id"] = media_id
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    elif status_code in ("ERROR", "EXPIRED"):
+        entry["status"] = QUEUED
+        entry["container_id"] = None
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    # else: still in-flight - leave untouched, this is legitimately not
+    # done yet.
+    return entry
+
+
+def reconcile_all_uploading(
+    queue: dict[str, Any], credentials_factory, ig_user_id: str, session=requests
+) -> None:
+    """Reconciles every UPLOADING entry before any new selection happens -
+    wired as the mandatory first step before select_next_due is ever
+    called (mirrors scripts/publish_queue.py::reconcile_all_uploading).
+    """
+    for entry in queue["entries"]:
+        if entry["status"] == UPLOADING:
+            reconcile_uploading(queue, entry, credentials_factory, ig_user_id, session)
