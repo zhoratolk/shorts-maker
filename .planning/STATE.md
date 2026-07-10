@@ -4,17 +4,17 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 06
 current_phase_name: tiktok-instagram-auto-publish
-status: executing
+status: verifying
 stopped_at: Completed 06-01-PLAN.md
-last_updated: "2026-07-10T11:55:50.877Z"
+last_updated: "2026-07-10T16:11:28.907Z"
 last_activity: 2026-07-10
 last_activity_desc: Phase 06 execution started
 progress:
   total_phases: 7
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 27
-  completed_plans: 25
-  percent: 71
+  completed_plans: 27
+  percent: 86
 ---
 
 # Project State
@@ -29,8 +29,8 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 ## Current Position
 
 Phase: 06 (tiktok-instagram-auto-publish) — EXECUTING
-Plan: 6 of 7
-Status: Ready to execute
+Plan: 7 of 7
+Status: Phase complete — ready for verification
 Last activity: 2026-07-10 — Phase 06 execution started
 
 Note: Phase 2 (LLM Title & Tag Generation) has plan 02-02 still pending — Phase 3 planning/execution proceeded per project workflow while 02-02 remains open; see Pending Todos.
@@ -81,6 +81,7 @@ Progress: [███░░░░░░░] 17% (1/6 phases)
 | Phase 06 P03 | 25min | 3 tasks | 2 files |
 | Phase 06 P04 | 6min | 3 tasks | 2 files |
 | Phase 06 P05 | 9min | 2 tasks | 2 files |
+| Phase 06 P07 | 20min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -114,6 +115,9 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 06-04]: no-pre-publish-gating-call verification tests assert against instagram_publish's module namespace rather than raw source-text grep, avoiding false positives from explanatory docstring prose
 - [Phase ?]: [Phase 06-05]: kill_item takes no service_factory/credentials_factory parameter - every branch is either local-only or a hard RuntimeError raise, never a network call
 - [Phase ?]: [Phase 06-05]: sys.path.insert workaround added to scripts/tiktok_publish.py (matching scripts/transitions.py/scripts/render.py precedent) so the module runs standalone via python scripts/tiktok_publish.py, not just under pytest
+- [Phase ?]: [Phase 06-07]: Isolation tests are additive to the existing pause-only/YouTube-only isolation tests from Plans 06-03/06-04 (not a replacement) - the new tests cover all three files plus both pause_item and kill_item
+- [Phase ?]: [Phase 06-07]: Scope-minimization tests assert exact equality on the parsed authorize-URL scope query param via urllib.parse.parse_qs rather than only a substring check, exceeding the plan's literal wording with a stronger guarantee
+- [Phase ?]: [Phase 06-07]: TikTok/Instagram Task Scheduler entries documented as sibling tasks (own /tn), not folded into shorts-maker-publish, since schtasks /tr accepts exactly one command per task and folding would break the isolation design at the OS scheduling layer too
 
 ### Roadmap Evolution
 
@@ -183,6 +187,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-10T11:55:15.336Z
+Last session: 2026-07-10T16:11:03.249Z
 Stopped at: Completed 06-01-PLAN.md
 Resume file: None
