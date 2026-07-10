@@ -18,6 +18,7 @@ from scripts.tiktok_publish import (
     VALID_STATUSES,
     _capture_oauth_redirect_code,
     _find_entry,
+    _upload_one,
     build_direct_post_body,
     check_tiktok_publish_gate,
     enqueue,
@@ -26,10 +27,13 @@ from scripts.tiktok_publish import (
     load_credentials,
     load_queue,
     pause_item,
+    reconcile_all_uploading,
+    reconcile_uploading,
     resume_item,
     run_tiktok_oauth_consent,
     save_queue,
     select_next_due,
+    upload_and_publish,
     upload_video_chunks,
     validate_title_length,
 )
@@ -450,3 +454,311 @@ def test_check_tiktok_publish_gate_self_only():
 
     assert privacy_level == "SELF_ONLY"
     assert is_still_gated is True
+
+
+# --- Task 3: orchestration (dry-run gate, D-05, write-ahead), reconcile --
+
+
+class FakeTikTokPublishConfig:
+    """Minimal stand-in for scripts.config.PublishConfig - only the fields
+    upload_and_publish/_upload_one actually read."""
+
+    def __init__(self, tiktok_enabled, tiktok_queue_path="tiktok_queue.json",
+                 notifications_path="notifications.log"):
+        self.tiktok_enabled = tiktok_enabled
+        self.tiktok_queue_path = tiktok_queue_path
+        self.notifications_path = notifications_path
+
+
+class SpyingSession(FakeSession):
+    """Extends FakeSession to snapshot the on-disk queue file at the moment
+    the first PUT (chunk upload) call fires - proves write-ahead
+    persistence (Pitfall 5) actually landed on disk before the byte-upload
+    loop started (mirrors publish_queue.py's spying-insert test technique).
+    """
+
+    def __init__(self, responses, queue_path):
+        super().__init__(responses)
+        self.queue_path = queue_path
+        self.publish_id_at_first_put = "NOT_YET_CALLED"
+
+    def put(self, url, **kwargs):
+        if self.publish_id_at_first_put == "NOT_YET_CALLED":
+            saved = json.loads(Path(self.queue_path).read_text(encoding="utf-8"))
+            self.publish_id_at_first_put = saved["entries"][0].get("publish_id")
+        return super().put(url, **kwargs)
+
+
+def make_tiktok_entry(**overrides):
+    entry = {
+        "seq": 1,
+        "clip_id": "clip-1",
+        "video_path": "clip1.mp4",
+        "metadata_path": "clip1.txt",
+        "caption": "caption 1",
+        "status": QUEUED,
+        "publish_id": None,
+        "video_share_url": None,
+        "enqueued_at": "2026-07-10T00:00:00Z",
+        "updated_at": "2026-07-10T00:00:00Z",
+    }
+    entry.update(overrides)
+    return entry
+
+
+def test_dry_run_default_no_upload(tmp_path):
+    queue_path = tmp_path / "tiktok_queue.json"
+    queue = load_queue(str(queue_path))
+    entry = enqueue(queue, clip_id="clip-1", video_path="c.mp4", metadata_path="c.txt", caption="cap")
+    config = FakeTikTokPublishConfig(tiktok_enabled=False, tiktok_queue_path=str(queue_path))
+    session = FakeSession([])
+
+    def credentials_factory():
+        raise AssertionError("credentials_factory must not be called during dry-run")
+
+    result = upload_and_publish(
+        queue, entry, credentials_factory, config, session=session, queue_path=str(queue_path)
+    )
+
+    assert result == {"dry_run": True}
+    assert session.calls == []
+    assert entry["status"] == QUEUED
+
+
+def test_upload_and_publish_full_success_flow_persists_write_ahead(tmp_path):
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"0123456789")
+    queue_path = tmp_path / "tiktok_queue.json"
+
+    queue = load_queue(str(queue_path))
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(video_path), metadata_path="c.txt", caption="cap"
+    )
+    save_queue(queue, str(queue_path))
+
+    config = FakeTikTokPublishConfig(tiktok_enabled=True, tiktok_queue_path=str(queue_path))
+
+    session = SpyingSession([
+        FakeResponse({"data": {"privacy_level_options": ["PUBLIC_TO_EVERYONE", "SELF_ONLY"]}}),
+        FakeResponse({"data": {"publish_id": "pub-1", "upload_url": "https://upload.example/put"}}),
+        FakeResponse({}),
+        FakeResponse({"data": {
+            "status": "PUBLISH_COMPLETE", "fail_reason": "",
+            "publicaly_available_post_id": ["share-1"],
+        }}),
+    ], queue_path=str(queue_path))
+
+    result = upload_and_publish(
+        queue, entry, lambda: "access-token-123", config,
+        session=session, queue_path=str(queue_path),
+    )
+
+    assert result == {"publish_id": "pub-1", "is_still_gated": False}
+    assert entry["status"] == PUBLISHED
+    assert entry["publish_id"] == "pub-1"
+    # Write-ahead #2 (Pitfall 5): publish_id must be on disk BEFORE the
+    # chunk PUT loop starts, so a crash mid-upload is reconcilable.
+    assert session.publish_id_at_first_put == "pub-1"
+
+
+def test_idempotent_retry_no_duplicate_init_on_reconcile():
+    entry = make_tiktok_entry(status=UPLOADING, publish_id="pub-1")
+    queue = {"entries": [entry]}
+    session = FakeSession([
+        FakeResponse({"data": {
+            "status": "PUBLISH_COMPLETE", "fail_reason": "",
+            "publicaly_available_post_id": ["share-1"],
+        }}),
+    ])
+
+    reconcile_uploading(queue, entry, lambda: "access-token-123", session=session)
+
+    assert entry["status"] == PUBLISHED
+    urls_called = [url for _, url, _ in session.calls]
+    assert tiktok_publish.TIKTOK_INIT_URL not in urls_called
+    assert session.calls[0][1] == tiktok_publish.TIKTOK_STATUS_URL
+
+
+def test_reconcile_uploading_no_publish_id_resets_to_queued_without_api_call():
+    entry = make_tiktok_entry(status=UPLOADING, publish_id=None)
+    queue = {"entries": [entry]}
+    session = FakeSession([])
+
+    def credentials_factory():
+        raise AssertionError("credentials_factory must not be called when no publish_id recorded")
+
+    reconcile_uploading(queue, entry, credentials_factory, session=session)
+
+    assert entry["status"] == QUEUED
+    assert session.calls == []
+
+
+def test_reconcile_uploading_failed_resets_to_queued_and_clears_publish_id():
+    entry = make_tiktok_entry(status=UPLOADING, publish_id="pub-1")
+    queue = {"entries": [entry]}
+    session = FakeSession([
+        FakeResponse({"data": {"status": "FAILED", "fail_reason": "oops"}}),
+    ])
+
+    reconcile_uploading(queue, entry, lambda: "token", session=session)
+
+    assert entry["status"] == QUEUED
+    assert entry["publish_id"] is None
+
+
+def test_reconcile_uploading_still_in_flight_is_left_untouched():
+    entry = make_tiktok_entry(status=UPLOADING, publish_id="pub-1")
+    queue = {"entries": [entry]}
+    session = FakeSession([
+        FakeResponse({"data": {"status": "PROCESSING_UPLOAD", "fail_reason": ""}}),
+    ])
+
+    reconcile_uploading(queue, entry, lambda: "token", session=session)
+
+    assert entry["status"] == UPLOADING
+    assert entry["publish_id"] == "pub-1"
+
+
+def test_reconcile_uploading_status_fetch_error_resets_to_queued():
+    entry = make_tiktok_entry(status=UPLOADING, publish_id="pub-1")
+    queue = {"entries": [entry]}
+    session = FakeSession([FakeResponse({}, status_code=404)])
+
+    reconcile_uploading(queue, entry, lambda: "token", session=session)
+
+    assert entry["status"] == QUEUED
+    assert entry["publish_id"] is None
+
+
+def test_reconcile_all_uploading_skips_non_uploading_entries():
+    queued_entry = make_tiktok_entry(clip_id="clip-1", status=QUEUED)
+    uploading_entry = make_tiktok_entry(
+        clip_id="clip-2", seq=2, status=UPLOADING, publish_id=None
+    )
+    queue = {"entries": [queued_entry, uploading_entry]}
+    session = FakeSession([])
+
+    reconcile_all_uploading(queue, lambda: "token", session=session)
+
+    assert queued_entry["status"] == QUEUED
+    assert uploading_entry["status"] == QUEUED  # reset, no publish_id, no api call
+
+
+def test_upload_one_self_only_appends_distinct_notification_not_normal_success(tmp_path):
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"0123456789")
+    queue_path = tmp_path / "tiktok_queue.json"
+    notifications_path = tmp_path / "notifications.log"
+
+    queue = load_queue(str(queue_path))
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(video_path), metadata_path="c.txt", caption="cap"
+    )
+    save_queue(queue, str(queue_path))
+
+    config = FakeTikTokPublishConfig(
+        tiktok_enabled=True, tiktok_queue_path=str(queue_path),
+        notifications_path=str(notifications_path),
+    )
+
+    session = FakeSession([
+        FakeResponse({"data": {"privacy_level_options": ["SELF_ONLY"]}}),
+        FakeResponse({"data": {"publish_id": "pub-1", "upload_url": "https://upload.example/put"}}),
+        FakeResponse({}),
+        FakeResponse({"data": {
+            "status": "PUBLISH_COMPLETE", "fail_reason": "",
+            "publicaly_available_post_id": ["share-1"],
+        }}),
+    ])
+
+    _upload_one(entry, queue, lambda: "token", config, session=session)
+
+    log_text = notifications_path.read_text(encoding="utf-8")
+    assert "SELF_ONLY" in log_text
+    assert "залил 1 в TikTok" not in log_text
+
+
+def test_upload_one_success_appends_normal_notification_when_public(tmp_path):
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"0123456789")
+    queue_path = tmp_path / "tiktok_queue.json"
+    notifications_path = tmp_path / "notifications.log"
+
+    queue = load_queue(str(queue_path))
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(video_path), metadata_path="c.txt", caption="cap"
+    )
+    save_queue(queue, str(queue_path))
+
+    config = FakeTikTokPublishConfig(
+        tiktok_enabled=True, tiktok_queue_path=str(queue_path),
+        notifications_path=str(notifications_path),
+    )
+
+    session = FakeSession([
+        FakeResponse({"data": {"privacy_level_options": ["PUBLIC_TO_EVERYONE", "SELF_ONLY"]}}),
+        FakeResponse({"data": {"publish_id": "pub-1", "upload_url": "https://upload.example/put"}}),
+        FakeResponse({}),
+        FakeResponse({"data": {
+            "status": "PUBLISH_COMPLETE", "fail_reason": "",
+            "publicaly_available_post_id": ["share-1"],
+        }}),
+    ])
+
+    _upload_one(entry, queue, lambda: "token", config, session=session)
+
+    log_text = notifications_path.read_text(encoding="utf-8")
+    assert "залил 1 в TikTok" in log_text
+    assert "SELF_ONLY" not in log_text
+
+
+def test_upload_one_appends_error_notification_and_reraises_on_failure(tmp_path):
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"0123456789")
+    queue_path = tmp_path / "tiktok_queue.json"
+    notifications_path = tmp_path / "notifications.log"
+
+    queue = load_queue(str(queue_path))
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(video_path), metadata_path="c.txt", caption="cap"
+    )
+    save_queue(queue, str(queue_path))
+
+    config = FakeTikTokPublishConfig(
+        tiktok_enabled=True, tiktok_queue_path=str(queue_path),
+        notifications_path=str(notifications_path),
+    )
+
+    session = FakeSession([
+        FakeResponse({"data": {"privacy_level_options": ["PUBLIC_TO_EVERYONE"]}}),
+        FakeResponse({"data": {"publish_id": "pub-1", "upload_url": "https://upload.example/put"}}),
+        FakeResponse({}),
+        FakeResponse({"data": {"status": "FAILED", "fail_reason": "video too long"}}),
+    ])
+
+    with pytest.raises(RuntimeError):
+        _upload_one(entry, queue, lambda: "token", config, session=session)
+
+    log_text = notifications_path.read_text(encoding="utf-8")
+    assert "[error]" in log_text
+
+
+def test_upload_one_dry_run_does_not_notify(tmp_path):
+    queue_path = tmp_path / "tiktok_queue.json"
+    notifications_path = tmp_path / "notifications.log"
+    queue = load_queue(str(queue_path))
+    entry = enqueue(queue, clip_id="clip-1", video_path="c.mp4", metadata_path="c.txt", caption="cap")
+    save_queue(queue, str(queue_path))
+
+    config = FakeTikTokPublishConfig(
+        tiktok_enabled=False, tiktok_queue_path=str(queue_path),
+        notifications_path=str(notifications_path),
+    )
+    session = FakeSession([])
+
+    def credentials_factory():
+        raise AssertionError("credentials_factory must not be called during dry-run")
+
+    _upload_one(entry, queue, credentials_factory, config, session=session)
+
+    assert not notifications_path.exists()
