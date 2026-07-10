@@ -9,6 +9,7 @@ import requests
 
 import scripts.tiktok_publish as tiktok_publish
 from scripts.tiktok_publish import (
+    MAX_TITLE_LENGTH,
     PAUSED,
     PUBLISHED,
     QUEUED,
@@ -17,7 +18,11 @@ from scripts.tiktok_publish import (
     VALID_STATUSES,
     _capture_oauth_redirect_code,
     _find_entry,
+    build_direct_post_body,
+    check_tiktok_publish_gate,
     enqueue,
+    fetch_post_status,
+    init_direct_post,
     load_credentials,
     load_queue,
     pause_item,
@@ -25,6 +30,8 @@ from scripts.tiktok_publish import (
     run_tiktok_oauth_consent,
     save_queue,
     select_next_due,
+    upload_video_chunks,
+    validate_title_length,
 )
 
 
@@ -314,3 +321,132 @@ def test_run_tiktok_oauth_consent_full_flow(tmp_path, monkeypatch):
     assert saved["access_token"] == "tok"
     assert saved["refresh_token"] == "ref"
     assert "expires_at" in saved
+
+
+# --- Task 2: TikTok HTTP upload layer ------------------------------------
+
+
+def test_validate_title_length_raises_for_oversized_title():
+    with pytest.raises(ValueError):
+        validate_title_length("x" * (MAX_TITLE_LENGTH + 1))
+
+
+def test_validate_title_length_allows_max_length_title():
+    validate_title_length("x" * MAX_TITLE_LENGTH)  # must not raise
+
+
+def test_build_direct_post_body_shapes_file_upload_source():
+    body = build_direct_post_body(
+        title="My Clip", privacy_level="SELF_ONLY",
+        video_size=1000, chunk_size=1000, total_chunk_count=1,
+    )
+
+    assert body == {
+        "post_info": {"title": "My Clip", "privacy_level": "SELF_ONLY"},
+        "source_info": {
+            "source": "FILE_UPLOAD",
+            "video_size": 1000,
+            "chunk_size": 1000,
+            "total_chunk_count": 1,
+        },
+    }
+
+
+def test_build_direct_post_body_raises_before_any_session_call_on_oversized_title():
+    session = FakeSession([])
+
+    with pytest.raises(ValueError):
+        build_direct_post_body(
+            title="x" * (MAX_TITLE_LENGTH + 1), privacy_level="SELF_ONLY",
+            video_size=1000, chunk_size=1000, total_chunk_count=1,
+        )
+
+    assert session.calls == []
+
+
+def test_init_direct_post_posts_body_and_returns_data():
+    session = FakeSession([
+        FakeResponse({"data": {"publish_id": "pub-1", "upload_url": "https://upload.example/put"}}),
+    ])
+    body = {"post_info": {"title": "t", "privacy_level": "SELF_ONLY"}, "source_info": {}}
+
+    data = init_direct_post("token-123", body, session=session)
+
+    assert data == {"publish_id": "pub-1", "upload_url": "https://upload.example/put"}
+    method, url, kwargs = session.calls[0]
+    assert method == "POST"
+    assert url == tiktok_publish.TIKTOK_INIT_URL
+    assert kwargs["headers"]["Authorization"] == "Bearer token-123"
+    assert kwargs["json"] == body
+
+
+def test_upload_video_chunks_single_chunk_covers_whole_file(tmp_path):
+    video_path = tmp_path / "clip.mp4"
+    content = b"0123456789"
+    video_path.write_bytes(content)
+
+    session = FakeSession([FakeResponse({})])
+    upload_video_chunks("https://upload.example/put", str(video_path), chunk_size=1024, session=session)
+
+    assert len(session.calls) == 1
+    method, url, kwargs = session.calls[0]
+    assert method == "PUT"
+    assert url == "https://upload.example/put"
+    assert kwargs["data"] == content
+    assert kwargs["headers"]["Content-Range"] == f"bytes 0-{len(content) - 1}/{len(content)}"
+    assert kwargs["headers"]["Content-Length"] == str(len(content))
+
+
+def test_upload_video_chunks_multi_chunk_covers_whole_file(tmp_path):
+    video_path = tmp_path / "clip.mp4"
+    content = bytes(range(256)) * 4  # 1024 bytes
+    video_path.write_bytes(content)
+
+    session = FakeSession([FakeResponse({}), FakeResponse({}), FakeResponse({})])
+    upload_video_chunks("https://upload.example/put", str(video_path), chunk_size=400, session=session)
+
+    assert len(session.calls) == 3
+    ranges = [kwargs["headers"]["Content-Range"] for _, _, kwargs in session.calls]
+    assert ranges == [
+        "bytes 0-399/1024",
+        "bytes 400-799/1024",
+        "bytes 800-1023/1024",
+    ]
+    reconstructed = b"".join(kwargs["data"] for _, _, kwargs in session.calls)
+    assert reconstructed == content
+
+
+def test_fetch_post_status_posts_publish_id_and_returns_data():
+    session = FakeSession([
+        FakeResponse({"data": {"status": "PUBLISH_COMPLETE", "fail_reason": ""}}),
+    ])
+
+    data = fetch_post_status("token-123", "pub-1", session=session)
+
+    assert data == {"status": "PUBLISH_COMPLETE", "fail_reason": ""}
+    method, url, kwargs = session.calls[0]
+    assert method == "POST"
+    assert url == tiktok_publish.TIKTOK_STATUS_URL
+    assert kwargs["json"] == {"publish_id": "pub-1"}
+
+
+def test_check_tiktok_publish_gate_public_available():
+    session = FakeSession([
+        FakeResponse({"data": {"privacy_level_options": ["PUBLIC_TO_EVERYONE", "SELF_ONLY"]}}),
+    ])
+
+    privacy_level, is_still_gated = check_tiktok_publish_gate("token-123", session=session)
+
+    assert privacy_level == "PUBLIC_TO_EVERYONE"
+    assert is_still_gated is False
+
+
+def test_check_tiktok_publish_gate_self_only():
+    session = FakeSession([
+        FakeResponse({"data": {"privacy_level_options": ["SELF_ONLY"]}}),
+    ])
+
+    privacy_level, is_still_gated = check_tiktok_publish_gate("token-123", session=session)
+
+    assert privacy_level == "SELF_ONLY"
+    assert is_still_gated is True
