@@ -221,6 +221,40 @@ visual:
   # miss (a death screen, a clutch play, a visual gag).
   detect_visual_candidates: true
 
+profanity:
+  # Detects swear words (RU+EN, incl. obfuscated spellings) in the Whisper
+  # word-level transcript and masks them at render time with a duck+garble
+  # audio effect (not silence, not a hard cut) so platform speech-to-text
+  # moderation can't pick them up. Off by default (opt-in) and fail-open:
+  # missing/malformed config or wordlist degrades to "no masking applied",
+  # never fails the pipeline (D-04).
+  enabled: false
+  # RU+EN swear-stem wordlist YAML. Edit this file directly to add/adjust
+  # entries - fail-open at load time (missing/malformed file -> no masking).
+  wordlist_path: data/profanity_wordlist.yaml
+  # Pads every detected word span this many seconds on each side before
+  # masking, to absorb Whisper's own word-timestamp alignment drift so the
+  # mask doesn't clip the onset/tail of the actual spoken word.
+  pad_seconds: 0.08
+  # Fail-open defensive cap on masked spans per clip - an unrealistically
+  # large match count skips masking (warn + continue) instead of growing
+  # the ffmpeg filter graph unbounded.
+  max_masked_spans_per_clip: 40
+  # How far the masked word's own volume is ducked (0-1 exclusive) - audio
+  # keeps flowing under the mask instead of a hard silence cut.
+  duck_volume: 0.12
+  # Center frequency (Hz) of the bandreject formant-removal filter applied
+  # only inside masked spans - targets speech-intelligibility frequencies to
+  # defeat STT without sounding like a jarring cut.
+  garble_freq: 1800.0
+  # Width (in octaves) of the bandreject filter around garble_freq.
+  garble_width_octaves: 4.0
+  # Tremolo (amplitude warble) rate in Hz layered onto the masked span -
+  # further garbles the word without silencing it.
+  warble_freq: 18.0
+  # Tremolo modulation depth (0-1] - how pronounced the warble effect is.
+  warble_depth: 0.7
+
 transitions:
   # Context-driven transitions (crossfade/whip pan/mask-wipe/glitch/match cut)
   # at jumpcut boundaries instead of always a plain cut. Off by default -
