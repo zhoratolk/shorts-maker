@@ -182,6 +182,40 @@ def test_forced_crossfade_transition_renders_playable_output(test_video, tmp_pat
     assert audio_stream is not None  # acrossfade produced a playable audio stream
 
 
+def test_compilation_of_non_contiguous_members_renders_playable_output(test_video, tmp_path):
+    """Three separately-seeked, non-contiguous member windows drawn from the
+    fixture's own 6s span - genuinely exercises independent per-member
+    -ss/-i seeks (build_compilation_command) rather than one contiguous
+    decode window. The 6s fixture is reused rather than adding a new,
+    larger synthetic video, since what's under test - multiple independent
+    inputs stitched together - doesn't require the members to be minutes
+    apart, only non-contiguous."""
+    plan_entry = {
+        "type": "compilation",
+        "crop_style": "zoom",
+        "segments": [
+            {"start": 0.0, "end": 1.0},
+            {"start": 2.0, "end": 3.0},
+            {"start": 4.5, "end": 5.5},
+        ],
+    }
+    output_path = tmp_path / "out_compilation.mp4"
+
+    command = render_clip(
+        str(test_video), str(output_path), plan_entry,
+        video_duration=SRC_DURATION, src_width=SRC_WIDTH, src_height=SRC_HEIGHT,
+    )
+
+    assert command.count("-i") == 3
+
+    info = probe(output_path)
+    video_stream = next(s for s in info["streams"] if s["codec_type"] == "video")
+    audio_stream = next(s for s in info["streams"] if s["codec_type"] == "audio")
+    assert video_stream["width"] == 1080
+    assert video_stream["height"] == 1920
+    assert audio_stream is not None  # playable output
+
+
 def test_silence_detection_finds_real_pause(test_video):
     pauses = find_pauses(str(test_video), min_duration=0.3)
 

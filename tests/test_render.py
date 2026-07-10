@@ -1127,6 +1127,65 @@ def test_render_clip_computes_frame_relative_margin_for_pad_crop_style(tmp_path)
     assert "10,10,380,1\n" in ass_content
 
 
+def test_render_clip_dispatches_to_build_compilation_command_for_type_compilation():
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    plan_entry = {
+        "type": "compilation",
+        "crop_style": "zoom",
+        "segments": [
+            {"start": 10.0, "end": 15.0},
+            {"start": 50.0, "end": 55.0},
+        ],
+    }
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=lambda command, capture_output, text: FakeResult(),
+    )
+
+    assert command.count("-i") == 2
+
+
+def test_render_clip_compilation_entry_without_top_level_start_end_does_not_raise_key_error():
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    # deliberately no top-level "start"/"end" keys - regression proof for the
+    # render_clip reordering (compilation entries only have per-member bounds)
+    plan_entry = {
+        "type": "compilation",
+        "crop_style": "zoom",
+        "segments": [
+            {"start": 10.0, "end": 15.0},
+            {"start": 50.0, "end": 55.0},
+        ],
+    }
+
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=lambda command, capture_output, text: FakeResult(),
+    )
+
+
+def test_render_clip_compilation_entry_with_empty_segments_raises_render_error():
+    plan_entry = {"type": "compilation", "crop_style": "zoom", "segments": []}
+
+    with pytest.raises(RenderError, match="segments"):
+        render_clip(
+            "in.mp4", "out.mp4", plan_entry,
+            video_duration=100.0, src_width=1920, src_height=1080,
+            runner=lambda command, capture_output, text: FakeResult(),
+        )
+
+
 def test_render_clip_raises_on_ffmpeg_failure():
     class FakeResult:
         returncode = 1

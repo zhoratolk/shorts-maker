@@ -889,7 +889,6 @@ def render_clip(
     min_overlap_seconds: float = 0.12,
     runner=subprocess.run,
 ) -> list[str]:
-    start, end = clamp_clip_bounds(plan_entry["start"], plan_entry["end"], video_duration)
     crop_style = plan_entry["crop_style"]
     crop_filter = compute_crop_filter(crop_style, src_width, src_height)
     punch_zoom_at = plan_entry.get("punch_zoom_at")
@@ -933,37 +932,72 @@ def render_clip(
         Path(subtitles_path).write_text(ass_content, encoding="utf-8")
         subtitle_style = None  # baked into the .ass style block already; no force_style needed
 
-    keep_segments_raw = plan_entry.get("keep_segments")
-    if keep_segments_raw is not None:
-        keep_segments = [(segment[0], segment[1]) for segment in keep_segments_raw]
-        boundary_transitions = plan_entry.get("boundary_transitions")
-        boundary_gaps = None
-        if boundary_transitions is not None:
-            expected_length = len(keep_segments) - 1
-            if len(boundary_transitions) != expected_length:
-                raise RenderError(
-                    f"boundary_transitions length ({len(boundary_transitions)}) must equal "
-                    f"len(keep_segments) - 1 ({expected_length})"
-                )
-            import sys
+    if plan_entry.get("type") == "compilation":
+        # Compilation entries (COMP-02, Plan 05-02's build_compilation_entry)
+        # have no top-level start/end - each member carries its own, clamped
+        # individually below rather than once for the whole compilation.
+        segments = plan_entry.get("segments")
+        if not segments:
+            raise RenderError("compilation plan_entry must have a non-empty 'segments' list")
 
-            sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-            from scripts.jumpcuts import compute_boundary_gaps
+        members: list[dict] = []
+        for segment in segments:
+            member_start, member_end = clamp_clip_bounds(segment["start"], segment["end"], video_duration)
+            member: dict = {"start": member_start, "end": member_end}
+            if segment.get("keep_segments"):
+                member["keep_segments"] = [(seg[0], seg[1]) for seg in segment["keep_segments"]]
+            members.append(member)
 
-            boundary_gaps = compute_boundary_gaps(keep_segments)
-        command = build_jumpcut_command(
-            input_path, output_path, start, end, keep_segments, crop_filter, subtitles_path,
-            fade_seconds, subtitle_style, denoise, loudnorm,
-            vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
-            denoise_strength, boundary_transitions, boundary_gaps, transition_duration, min_overlap_seconds,
+        command = build_compilation_command(
+            input_path, output_path, members, crop_filter,
+            boundary_transitions=plan_entry.get("boundary_transitions"),
+            transition_duration=transition_duration,
+            min_overlap_seconds=min_overlap_seconds,
+            subtitles_path=subtitles_path,
+            fade_seconds=fade_seconds,
+            subtitle_style=subtitle_style,
+            denoise=denoise,
+            loudnorm=loudnorm,
+            vignette=vignette,
+            grain_strength=grain_strength,
+            punch_zoom_at=punch_zoom_at,
+            punch_zoom_amount=punch_zoom_amount,
+            punch_zoom_ramp=punch_zoom_ramp,
+            denoise_strength=denoise_strength,
         )
     else:
-        command = build_ffmpeg_command(
-            input_path, output_path, start, end, crop_filter, subtitles_path,
-            fade_seconds, video_duration, subtitle_style, denoise, loudnorm,
-            vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
-            denoise_strength,
-        )
+        start, end = clamp_clip_bounds(plan_entry["start"], plan_entry["end"], video_duration)
+        keep_segments_raw = plan_entry.get("keep_segments")
+        if keep_segments_raw is not None:
+            keep_segments = [(segment[0], segment[1]) for segment in keep_segments_raw]
+            boundary_transitions = plan_entry.get("boundary_transitions")
+            boundary_gaps = None
+            if boundary_transitions is not None:
+                expected_length = len(keep_segments) - 1
+                if len(boundary_transitions) != expected_length:
+                    raise RenderError(
+                        f"boundary_transitions length ({len(boundary_transitions)}) must equal "
+                        f"len(keep_segments) - 1 ({expected_length})"
+                    )
+                import sys
+
+                sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+                from scripts.jumpcuts import compute_boundary_gaps
+
+                boundary_gaps = compute_boundary_gaps(keep_segments)
+            command = build_jumpcut_command(
+                input_path, output_path, start, end, keep_segments, crop_filter, subtitles_path,
+                fade_seconds, subtitle_style, denoise, loudnorm,
+                vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
+                denoise_strength, boundary_transitions, boundary_gaps, transition_duration, min_overlap_seconds,
+            )
+        else:
+            command = build_ffmpeg_command(
+                input_path, output_path, start, end, crop_filter, subtitles_path,
+                fade_seconds, video_duration, subtitle_style, denoise, loudnorm,
+                vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
+                denoise_strength,
+            )
 
     result = runner(command, capture_output=True, text=True)
     if result.returncode != 0:
