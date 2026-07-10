@@ -11,3 +11,6 @@ google-auth-httplib2>=0.2
 # optional, only needed when transitions.enabled is true (Phase 4 boundary analysis)
 opencv-python-headless>=5.0
 librosa>=0.11
+# used directly by scripts/tiktok_publish.py and scripts/instagram_publish.py
+# (TikTok/Instagram publish API calls) - previously only a transitive dependency
+requests>=2.32
