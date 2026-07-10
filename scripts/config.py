@@ -204,6 +204,18 @@ class PublishConfig:
     notifications_path: str = "work/_publish/notifications.log"
     client_secret_path: str = "client_secret.json"
     upload_token_path: str = "upload_token.json"
+    # TikTok (PUB-06) and Instagram (PUB-07) per-platform fields - each with
+    # its own independent enabled flag (D-01), never a shared/repurposed
+    # `enabled`, so toggling one platform live can never accidentally flip
+    # another.
+    tiktok_enabled: bool = False
+    tiktok_queue_path: str = "work/_publish/tiktok_queue.json"
+    tiktok_client_key_path: str = "tiktok_client_key.json"
+    tiktok_token_path: str = "tiktok_token.json"
+    instagram_enabled: bool = False
+    instagram_queue_path: str = "work/_publish/instagram_queue.json"
+    instagram_client_secret_path: str = "instagram_client_secret.json"
+    instagram_token_path: str = "instagram_token.json"
 
 
 @dataclasses.dataclass
