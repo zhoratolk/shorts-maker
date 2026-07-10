@@ -219,6 +219,43 @@ class PublishConfig:
 
 
 @dataclasses.dataclass
+class ProfanityConfig:
+    # Opt-in, off by default (D-04) - this is a new optional feature (like
+    # diarization/audio_energy), not a mandatory safety gate.
+    enabled: bool = False
+    # Path to the RU+EN swear-stem wordlist YAML. Fail-open at load time
+    # (scripts/profanity.py::load_wordlist): missing/malformed file degrades
+    # to "no masking applied", never raises.
+    wordlist_path: str = "data/profanity_wordlist.yaml"
+    # Pads every detected word span by this many seconds on each side before
+    # masking, to absorb Whisper's inherent word-boundary alignment drift
+    # (measured ~100-400ms in published Whisper-family comparisons) so the
+    # mask doesn't clip the onset/tail of the actual spoken word
+    # (07-RESEARCH.md Pitfall 2).
+    pad_seconds: float = 0.08
+    # Fail-open defensive cap on spans masked per clip - an unrealistically
+    # large match count (pathological wordlist, normalization bug, or a
+    # genuinely very sweary clip) skips masking (warn + continue) instead of
+    # growing the ffmpeg `enable` expression unbounded (07-RESEARCH.md
+    # Pitfall 5).
+    max_masked_spans_per_clip: int = 40
+    # How far the masked word's own volume is ducked (0-1 exclusive, D-03) -
+    # audio keeps flowing under the mask rather than a hard silence cut.
+    duck_volume: float = 0.12
+    # Center frequency (Hz) of the bandreject formant-removal filter applied
+    # only inside masked spans - targets speech-intelligibility frequencies
+    # to defeat STT without reading as a jarring cut (D-03/AUDIO-03).
+    garble_freq: float = 1800.0
+    # Width (in octaves) of the bandreject filter around garble_freq.
+    garble_width_octaves: float = 4.0
+    # Tremolo (amplitude warble) rate in Hz layered onto the masked span -
+    # further garbles the word without silencing it.
+    warble_freq: float = 18.0
+    # Tremolo modulation depth (0-1] - how pronounced the warble effect is.
+    warble_depth: float = 0.7
+
+
+@dataclasses.dataclass
 class Config:
     input_dir: str
     output_dir: str
@@ -239,6 +276,7 @@ class Config:
     visual: VisualConfig = dataclasses.field(default_factory=VisualConfig)
     publish: PublishConfig = dataclasses.field(default_factory=PublishConfig)
     transitions: TransitionsConfig = dataclasses.field(default_factory=TransitionsConfig)
+    profanity: ProfanityConfig = dataclasses.field(default_factory=ProfanityConfig)
 
 
 def _build(section_cls, data: dict, section_name: str):
@@ -277,6 +315,7 @@ def load_config(path: str) -> Config:
         visual=_build(VisualConfig, data.get("visual", {}), "visual"),
         publish=_build(PublishConfig, data.get("publish", {}), "publish"),
         transitions=_build(TransitionsConfig, data.get("transitions", {}), "transitions"),
+        profanity=_build(ProfanityConfig, data.get("profanity", {}), "profanity"),
     )
     _validate(config)
     return config
@@ -426,4 +465,34 @@ def _validate(config: Config) -> None:
         raise ConfigError(
             f"transitions.match_cut_similarity must be between 0 and 1, "
             f"got {config.transitions.match_cut_similarity}"
+        )
+    if config.profanity.pad_seconds < 0:
+        raise ConfigError(
+            f"profanity.pad_seconds must be >= 0, got {config.profanity.pad_seconds}"
+        )
+    if config.profanity.max_masked_spans_per_clip <= 0:
+        raise ConfigError(
+            f"profanity.max_masked_spans_per_clip must be > 0, got "
+            f"{config.profanity.max_masked_spans_per_clip}"
+        )
+    if not (0 < config.profanity.duck_volume < 1):
+        raise ConfigError(
+            f"profanity.duck_volume must be between 0 and 1 (exclusive), got {config.profanity.duck_volume}"
+        )
+    if config.profanity.garble_freq <= 0:
+        raise ConfigError(
+            f"profanity.garble_freq must be > 0, got {config.profanity.garble_freq}"
+        )
+    if config.profanity.garble_width_octaves <= 0:
+        raise ConfigError(
+            f"profanity.garble_width_octaves must be > 0, got {config.profanity.garble_width_octaves}"
+        )
+    if config.profanity.warble_freq <= 0:
+        raise ConfigError(
+            f"profanity.warble_freq must be > 0, got {config.profanity.warble_freq}"
+        )
+    if not (0 < config.profanity.warble_depth <= 1):
+        raise ConfigError(
+            f"profanity.warble_depth must be between 0 (exclusive) and 1 (inclusive), got "
+            f"{config.profanity.warble_depth}"
         )
