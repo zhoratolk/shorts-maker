@@ -25,6 +25,7 @@ lightweight, always-installed dependency, not an optional extra.
 
 import http.server
 import json
+import os
 import random
 import string
 import time
@@ -61,6 +62,22 @@ TIKTOK_AUTHORIZE_URL = "https://www.tiktok.com/v2/auth/authorize/"
 TIKTOK_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/"
 TIKTOK_STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
 TIKTOK_CREATOR_INFO_URL = "https://open.tiktokapis.com/v2/post/publish/creator_info/query/"
+
+# TikTok's own field limit (V5 input validation, 06-RESEARCH Security
+# Domain) - a violation fails this one queue item, not the whole run. This
+# is a UTF-16-rune limit, approximated via Python str length per this
+# project's existing len()-based limit-check convention
+# (scripts/publish_queue.py::build_insert_body).
+MAX_TITLE_LENGTH = 2200
+
+# Within TikTok's documented 5MB-64MB per-chunk range. This project's clips
+# are short (30-150s vertical shorts), so most uploads will be a single
+# chunk in practice, but upload_video_chunks must still handle a genuinely
+# multi-chunk file correctly.
+CHUNK_SIZE_DEFAULT = 10 * 1024 * 1024
+
+# fetch_post_status's documented terminal states (06-RESEARCH.md Pattern 1).
+TERMINAL_STATUSES = frozenset({"PUBLISH_COMPLETE", "FAILED"})
 
 
 class TikTokPublishError(ValueError):
@@ -308,3 +325,113 @@ def run_tiktok_oauth_consent(
         json.dumps(token_data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return token_data["access_token"]
+
+
+# --- Content Posting API HTTP layer ---------------------------------------
+
+
+def validate_title_length(title: str) -> None:
+    """Raises ValueError if title exceeds MAX_TITLE_LENGTH."""
+    if len(title) > MAX_TITLE_LENGTH:
+        raise ValueError(
+            f"title exceeds TikTok's {MAX_TITLE_LENGTH}-char limit ({len(title)} chars)"
+        )
+
+
+def build_direct_post_body(
+    title: str,
+    privacy_level: str,
+    video_size: int,
+    chunk_size: int,
+    total_chunk_count: int,
+) -> dict[str, Any]:
+    """Pure function - builds the exact video/init request body
+    (06-RESEARCH.md Pattern 1). No network call. privacy_level MUST come
+    from a prior check_tiktok_publish_gate call - never hardcode
+    PUBLIC_TO_EVERYONE (06-RESEARCH.md Anti-Patterns).
+    """
+    validate_title_length(title)
+    return {
+        "post_info": {"title": title, "privacy_level": privacy_level},
+        "source_info": {
+            "source": "FILE_UPLOAD",
+            "video_size": video_size,
+            "chunk_size": chunk_size,
+            "total_chunk_count": total_chunk_count,
+        },
+    }
+
+
+def init_direct_post(access_token: str, body: dict[str, Any], session=requests) -> dict[str, Any]:
+    """POSTs body to video/init, returns response.json()["data"]
+    ({"publish_id", "upload_url"}).
+    """
+    response = session.post(
+        TIKTOK_INIT_URL,
+        headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+        json=body,
+    )
+    response.raise_for_status()
+    return response.json()["data"]
+
+
+def upload_video_chunks(
+    upload_url: str, video_path: str, chunk_size: int, session=requests
+) -> None:
+    """PUTs the local file to upload_url in chunk_size pieces (5MB-64MB per
+    chunk per TikTok's docs), with correct Content-Range headers covering
+    the whole file - works correctly for both a single-chunk file under
+    chunk_size and a genuinely multi-chunk file (06-RESEARCH.md Pattern 1).
+    upload_url is valid for 1 hour.
+    """
+    total_size = os.path.getsize(video_path)
+    with open(video_path, "rb") as handle:
+        offset = 0
+        while offset < total_size:
+            chunk = handle.read(chunk_size)
+            end = offset + len(chunk) - 1
+            response = session.put(
+                upload_url,
+                headers={
+                    "Content-Type": "video/mp4",
+                    "Content-Length": str(len(chunk)),
+                    "Content-Range": f"bytes {offset}-{end}/{total_size}",
+                },
+                data=chunk,
+            )
+            response.raise_for_status()
+            offset += len(chunk)
+
+
+def fetch_post_status(access_token: str, publish_id: str, session=requests) -> dict[str, Any]:
+    """POSTs {"publish_id": publish_id} to status/fetch, returns
+    response.json()["data"]. NOTE: does NOT return the achieved
+    privacy_level - that must be inferred from check_tiktok_publish_gate,
+    not from this endpoint (06-RESEARCH.md Pitfall 1).
+    """
+    response = session.post(
+        TIKTOK_STATUS_URL,
+        headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+        json={"publish_id": publish_id},
+    )
+    response.raise_for_status()
+    return response.json()["data"]
+
+
+def check_tiktok_publish_gate(access_token: str, session=requests) -> tuple[str, bool]:
+    """Returns (privacy_level_to_use, is_still_gated). is_still_gated=True
+    means PUBLIC_TO_EVERYONE is not an available option right now (unaudited
+    client and/or account set to private) - D-05's trigger for the chat
+    notification. Checked BEFORE every video/init call (06-RESEARCH.md
+    Pattern 4) - status/fetch has no achieved-privacy-level field to infer
+    this from after the fact (Pitfall 1).
+    """
+    response = session.post(
+        TIKTOK_CREATOR_INFO_URL,
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    response.raise_for_status()
+    options = response.json()["data"]["privacy_level_options"]
+    if "PUBLIC_TO_EVERYONE" in options:
+        return "PUBLIC_TO_EVERYONE", False
+    return "SELF_ONLY", True
