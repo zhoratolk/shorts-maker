@@ -10,6 +10,7 @@ from scripts.render import (
     build_compilation_command,
     build_ffmpeg_command,
     build_jumpcut_command,
+    build_profanity_mask_filter,
     build_punch_zoom_filter,
     build_subtitle_force_style,
     build_transition_filter,
@@ -345,6 +346,44 @@ def test_build_punch_zoom_filter_rejects_non_positive_ramp():
 def test_build_punch_zoom_filter_rejects_negative_punch_at():
     with pytest.raises(RenderError, match="punch_at must be >= 0"):
         build_punch_zoom_filter(punch_at=-1.0)
+
+
+def test_build_profanity_mask_filter_returns_none_for_empty_spans():
+    assert build_profanity_mask_filter([]) is None
+
+
+def test_build_profanity_mask_filter_two_spans_shape():
+    result = build_profanity_mask_filter(
+        [(2.0, 2.4), (5.0, 5.6)],
+        duck_volume=0.12, garble_freq=1800.0, garble_width_octaves=4.0,
+        warble_freq=18.0, warble_depth=0.7,
+    )
+
+    assert result == (
+        "volume=enable='between(t,2.0,2.4)+between(t,5.0,5.6)':volume=0.12,"
+        "bandreject=enable='between(t,2.0,2.4)+between(t,5.0,5.6)':f=1800.0:width_type=o:w=4.0,"
+        "tremolo=enable='between(t,2.0,2.4)+between(t,5.0,5.6)':f=18.0:d=0.7"
+    )
+
+
+def test_build_profanity_mask_filter_rejects_duck_volume_out_of_range():
+    with pytest.raises(RenderError, match="duck_volume must be between 0 and 1"):
+        build_profanity_mask_filter([(2.0, 2.4)], duck_volume=1.0)
+
+
+def test_build_profanity_mask_filter_rejects_duck_volume_zero():
+    with pytest.raises(RenderError, match="duck_volume must be between 0 and 1"):
+        build_profanity_mask_filter([(2.0, 2.4)], duck_volume=0.0)
+
+
+def test_build_profanity_mask_filter_rejects_negative_span_start():
+    with pytest.raises(RenderError, match="invalid profanity span"):
+        build_profanity_mask_filter([(-1.0, 2.4)])
+
+
+def test_build_profanity_mask_filter_rejects_end_before_start():
+    with pytest.raises(RenderError, match="invalid profanity span"):
+        build_profanity_mask_filter([(2.4, 2.0)])
 
 
 def test_build_ffmpeg_command_punch_zoom_at_applies_before_effects_and_subtitles():

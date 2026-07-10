@@ -312,6 +312,43 @@ def build_transition_filter(
     return f"[{in_a}][{in_b}]xfade=transition={xfade_name}:duration={duration}:offset={offset}[{out_label}]"
 
 
+def build_profanity_mask_filter(
+    spans: list[tuple[float, float]],
+    duck_volume: float = 0.12,
+    garble_freq: float = 1800.0,
+    garble_width_octaves: float = 4.0,
+    warble_freq: float = 18.0,
+    warble_depth: float = 0.7,
+) -> str | None:
+    """A time-windowed duck+garble mask (AUDIO-02/AUDIO-03, D-03: duck the
+    word's volume down and layer a bandreject+tremolo garble on top - not a
+    clean beep, not a silence cut) gated by a shared `enable` timeline
+    expression so it applies only inside the given clip-relative spans and
+    passes the rest of the clip's audio through unmodified (07-RESEARCH.md
+    Pattern 1, live-verified against ffmpeg 8.1.2).
+
+    Multiple spans are OR-composed into one `between(t,s,e)+...` expression
+    reused across all three filters, keeping the filter graph flat (3 nodes
+    regardless of span count - 07-RESEARCH.md Pitfall 5).
+
+    Returns None when spans is empty (no masking needed).
+    """
+    if not spans:
+        return None
+    if not (0.0 < duck_volume < 1.0):
+        raise RenderError(f"duck_volume must be between 0 and 1 (exclusive), got {duck_volume}")
+    for start, end in spans:
+        if start < 0 or end <= start:
+            raise RenderError(f"invalid profanity span ({start}, {end})")
+
+    enable_expr = "+".join(f"between(t,{start},{end})" for start, end in spans)
+    return (
+        f"volume=enable='{enable_expr}':volume={duck_volume},"
+        f"bandreject=enable='{enable_expr}':f={garble_freq}:width_type=o:w={garble_width_octaves},"
+        f"tremolo=enable='{enable_expr}':f={warble_freq}:d={warble_depth}"
+    )
+
+
 def build_audio_filter_chain(
     denoise: bool, loudnorm: bool, fade_filter: str | None, denoise_strength: float = 6.0
 ) -> str | None:
