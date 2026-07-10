@@ -6,14 +6,14 @@ current_phase: 06
 current_phase_name: tiktok-instagram-auto-publish
 status: executing
 stopped_at: Completed 06-01-PLAN.md
-last_updated: "2026-07-10T11:14:56.686Z"
+last_updated: "2026-07-10T11:31:44.611Z"
 last_activity: 2026-07-10
 last_activity_desc: Phase 06 execution started
 progress:
   total_phases: 7
   completed_phases: 5
   total_plans: 27
-  completed_plans: 22
+  completed_plans: 23
   percent: 71
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 ## Current Position
 
 Phase: 06 (tiktok-instagram-auto-publish) — EXECUTING
-Plan: 3 of 7
+Plan: 4 of 7
 Status: Ready to execute
 Last activity: 2026-07-10 — Phase 06 execution started
 
@@ -78,6 +78,7 @@ Progress: [███░░░░░░░] 17% (1/6 phases)
 | Phase 05 P05 | 15min | 3 tasks | 5 files |
 | Phase 06 P01 | 1min | 2 tasks | 1 files |
 | Phase 06 P02 | 5min | 2 tasks | 3 files |
+| Phase 06 P03 | 25min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -104,6 +105,8 @@ Recent decisions affecting current work:
 - [Phase 06]: [Phase 06-01]: Legitimacy checkpoint for requests resolved via live pypi.org verification performed by the orchestrating session (github.com/psf/requests confirmed, no typosquat, version 2.34.2 matches current stable release) rather than a literal interactive human reply - documented as the audit trail per T-06-SC
 - [Phase 06-02]: Extended flat PublishConfig in place with tiktok_*/instagram_* fields rather than sibling TikTokPublishConfig/InstagramPublishConfig dataclasses, per D-01 per-platform enable-flag wording
 - [Phase 06-02]: No new _validate() rule added for the 8 new PublishConfig fields (bool/path fields need no extra validation), matching MonetizationConfig precedent
+- [Phase ?]: [Phase 06-03]: kill_item and the CLI wrapper are deliberately out of scope for this plan (deferred to 06-05) - only pause_item/resume_item are implemented, matching the must_haves artifact list
+- [Phase ?]: [Phase 06-03]: video_share_url populated from status/fetch's publicaly_available_post_id on both the direct-success and reconcile-adopts-PUBLISH_COMPLETE paths
 
 ### Roadmap Evolution
 
@@ -173,6 +176,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-10T11:14:32.260Z
+Last session: 2026-07-10T11:31:36.030Z
 Stopped at: Completed 06-01-PLAN.md
 Resume file: None
