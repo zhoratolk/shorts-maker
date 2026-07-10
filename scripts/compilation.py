@@ -86,6 +86,15 @@ def build_compilation_entry(
 
     if boundary_transitions is not None:
         expected_length = flattened_segment_count - 1
+        # boundary_transitions is computed pre-cap by SKILL.md step 5b bullet 5
+        # (against the full uncapped flattened segment list), before this
+        # function's own length-ceiling capping above ever runs. Capping only
+        # ever drops a contiguous trailing run of members under D-04's literal
+        # strongest-first ordering, so the pre-cap list's own prefix is exactly
+        # the boundaries that survive - truncate down to reconcile, but never
+        # pad, so a genuinely too-short list still raises below (CR-01).
+        if len(boundary_transitions) > expected_length:
+            boundary_transitions = boundary_transitions[:expected_length]
         if len(boundary_transitions) != expected_length:
             raise CompilationError(
                 f"boundary_transitions must have length {expected_length} "

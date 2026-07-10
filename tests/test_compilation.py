@@ -78,6 +78,39 @@ def test_build_compilation_entry_rejects_boundary_transitions_length_mismatch():
         build_compilation_entry(members, 150, "zoom", boundary_transitions=["cut"])
 
 
+def test_build_compilation_entry_caps_and_truncates_boundary_transitions():
+    # Same 60/60/60 setup as the capping-only test above: cap 150 drops the
+    # third member, leaving 2 fitted members (1 boundary). boundary_transitions
+    # is sized for the PRE-cap 3-member list (2 boundaries), exactly as
+    # SKILL.md step 5b bullet 5 computes it today, before capping ever runs.
+    members = [
+        make_member("mystream", 0, 60),
+        make_member("mystream", 100, 160),
+        make_member("mystream", 200, 260),
+    ]
+
+    entry = build_compilation_entry(
+        members, 150, "zoom", boundary_transitions=["crossfade", "whip_pan"]
+    )
+
+    assert len(entry["segments"]) == 2
+    assert entry["boundary_transitions"] == ["crossfade"]
+
+
+def test_build_compilation_entry_still_rejects_too_short_boundary_transitions():
+    # Same 3-member/cap-150 setup, but boundary_transitions=[] is genuinely
+    # too short even after truncation (fewer than the fitted list's 1
+    # required boundary) - truncation must never pad, only shrink.
+    members = [
+        make_member("mystream", 0, 60),
+        make_member("mystream", 100, 160),
+        make_member("mystream", 200, 260),
+    ]
+
+    with pytest.raises(CompilationError, match="boundary_transitions"):
+        build_compilation_entry(members, 150, "zoom", boundary_transitions=[])
+
+
 def test_build_compilation_entry_omits_optional_fields_when_none():
     members = [make_member("mystream", 0, 20), make_member("mystream", 30, 45)]
 
