@@ -43,7 +43,7 @@
 - [x] **PUB-03**: Dry-run mode is the default; explicit opt-in required before any platform goes live
 - [x] **PUB-04**: Pause/kill mechanism to halt scheduled publishing at any time
 - [x] **PUB-05**: Idempotency/already-published manifest prevents duplicate posts on retry
-- [x] **PUB-06**: TikTok Content Posting API integration — built and shipped as its own gated sub-phase, after YouTube, since unaudited clients are restricted to private-only posting until TikTok's app audit completes (start the audit application early, in parallel with Phase 1)
+- [ ] **PUB-06**: TikTok Content Posting API integration — built and shipped as its own gated sub-phase, after YouTube, since unaudited clients are restricted to private-only posting until TikTok's app audit completes (start the audit application early, in parallel with Phase 1). Core integration built and tested (queue, OAuth, chunked upload, dry-run, kill, isolation); blocked pending gap closure — 06-VERIFICATION.md CR-01: the SELF_ONLY/gated safety signal is not preserved on the crash-recovery (`reconcile_uploading`) path, so a crash mid-poll can silently mark an entry PUBLISHED without recording whether it actually cleared the pre-audit private-only restriction.
 - [x] **PUB-07**: Instagram Graph API Reels integration — requires a Business account + Meta app review; same gated-sub-phase treatment as TikTok
 
 ### AUDIO — Profanity Auto-Bleep
@@ -98,7 +98,7 @@
 | COMP-01 | Phase 5 | Complete |
 | COMP-02 | Phase 5 | Complete |
 | COMP-03 | Phase 5 | Complete |
-| PUB-06 | Phase 6 | Complete |
+| PUB-06 | Phase 6 | Blocked — CR-01 crash-recovery gap (06-VERIFICATION.md), gap-closure plan needed |
 | PUB-07 | Phase 6 | Complete |
 | AUDIO-01 | Phase 7 | Pending |
 | AUDIO-02 | Phase 7 | Pending |

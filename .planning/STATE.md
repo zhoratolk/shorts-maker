@@ -4,17 +4,17 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 06
 current_phase_name: tiktok-instagram-auto-publish
-status: verifying
-stopped_at: Completed 06-01-PLAN.md
-last_updated: "2026-07-10T16:11:28.907Z"
+status: gaps_found
+stopped_at: Completed 06-07-PLAN.md; verification found gaps
+last_updated: "2026-07-10T16:36:35.000Z"
 last_activity: 2026-07-10
-last_activity_desc: Phase 06 execution started
+last_activity_desc: Phase 06 verified — gaps found (PUB-06/CR-01), see 06-VERIFICATION.md
 progress:
   total_phases: 7
-  completed_phases: 6
+  completed_phases: 5
   total_plans: 27
   completed_plans: 27
-  percent: 86
+  percent: 71
 ---
 
 # Project State
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 
 ## Current Position
 
-Phase: 06 (tiktok-instagram-auto-publish) — EXECUTING
-Plan: 7 of 7
-Status: Phase complete — ready for verification
-Last activity: 2026-07-10 — Phase 06 execution started
+Phase: 06 (tiktok-instagram-auto-publish) — GAPS FOUND
+Plan: 7 of 7 executed; phase-level verification found 1 blocking gap (PUB-06/CR-01)
+Status: Verified with gaps — run /gsd-plan-phase 06 --gaps to close CR-01 before phase is complete
+Last activity: 2026-07-10 — Phase 06 verified, see 06-VERIFICATION.md
 
 Note: Phase 2 (LLM Title & Tag Generation) has plan 02-02 still pending — Phase 3 planning/execution proceeded per project workflow while 02-02 remains open; see Pending Todos.
 

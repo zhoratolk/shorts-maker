@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: YouTube Scheduled Auto-Publish** - Finished shorts can be queued and auto-published to YouTube on a schedule, safely (dry-run default, pause/kill, no duplicate posts) (completed 2026-07-08)
 - [x] **Phase 4: Context-Driven Transitions** - Clip boundaries get a transition chosen from scene/audio context (not just a fixed cut/punch-zoom) when stitching multiple segments together (completed 2026-07-09)
 - [x] **Phase 5: Sub-Threshold Highlight Compilation** - Moments too short to stand alone are grouped by similarity and stitched into one coherent full-length short instead of being discarded (completed 2026-07-10)
-- [x] **Phase 6: TikTok & Instagram Auto-Publish** - The same scheduled auto-publish flow extends to TikTok and Instagram Reels once each platform's app-review/audit gate is cleared (completed 2026-07-10)
+- [ ] **Phase 6: TikTok & Instagram Auto-Publish** - The same scheduled auto-publish flow extends to TikTok and Instagram Reels once each platform's app-review/audit gate is cleared (gaps found 2026-07-10 — see 06-VERIFICATION.md; PUB-06/SC1 blocked on CR-01 crash-recovery gap, PUB-07/SC2/SC3 satisfied)
 
 ## Phase Details
 
@@ -197,7 +197,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 3. YouTube Scheduled Auto-Publish | 4/4 | Complete   | 2026-07-08 |
 | 4. Context-Driven Transitions | 6/6 | Complete   | 2026-07-09 |
 | 5. Sub-Threshold Highlight Compilation | 5/5 | Complete    | 2026-07-10 |
-| 6. TikTok & Instagram Auto-Publish | 7/7 | Complete   | 2026-07-10 |
+| 6. TikTok & Instagram Auto-Publish | 7/7 | Gaps Found | - |
 | 7. Profanity Auto-Bleep | 0/TBD | Not started | - |
 
 ### Phase 7: Profanity Auto-Bleep
