@@ -6,14 +6,14 @@ current_phase: 07
 current_phase_name: profanity-auto-bleep
 status: executing
 stopped_at: Phase 7 context gathered
-last_updated: "2026-07-10T22:05:43.850Z"
+last_updated: "2026-07-10T22:31:13.167Z"
 last_activity: 2026-07-10
 last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 32
-  completed_plans: 30
+  completed_plans: 31
   percent: 86
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 ## Current Position
 
 Phase: 07 (profanity-auto-bleep) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
 Last activity: 2026-07-10 — Phase 07 execution started
 
@@ -86,6 +86,7 @@ Progress: [███░░░░░░░] 17% (1/6 phases)
 | Phase 07 P01 | 25min | 3 tasks | 3 files |
 | Phase 07-profanity-auto-bleep P02 | 20min | 3 tasks | 2 files |
 | Phase 07 P03 | 15min | 2 tasks | 3 files |
+| Phase 07-profanity-auto-bleep P04 | 24min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -126,6 +127,8 @@ Recent decisions affecting current work:
 - [Phase 07-profanity-auto-bleep]: Plan 07-02: build_profanity_mask_filter placed immediately before build_audio_filter_chain (not next to build_punch_zoom_filter, its structural analog) since both are read together at the mask's single render_clip call site
 - [Phase 07-profanity-auto-bleep]: Plan 07-02: profanity_filter param appended as the last positional param on build_ffmpeg_command/build_jumpcut_command/build_compilation_command to avoid disturbing existing positional call sites
 - [Phase 07-profanity-auto-bleep]: Plan 07-03: ProfanityConfig field names/defaults/validation ranges implemented exactly per plan spec, cross-checked against Plan 07-01/07-02 SUMMARY.md for parameter-name alignment with find_profane_spans and build_profanity_mask_filter
+- [Phase 07-profanity-auto-bleep]: Plan 07-04: Kept scripts/render.py/config.py's shipped default garble parameters unchanged; empirically found they don't reliably defeat faster-whisper's own contextual re-transcription for a highly-predictable word, documented as a follow-up tuning item rather than a silent default change (out of this plan's files_modified scope, would break Plan 07-03's exact-value tests)
+- [Phase 07-profanity-auto-bleep]: Plan 07-04: SKILL.md step 5b bullet 7 restructured from subtitles-only gating to 'subtitles OR profanity' gating, so compilation-level profanity detection doesn't depend on subtitles being enabled (D-04 independent toggles), matching the already-correct single-clip behavior
 
 ### Roadmap Evolution
 
@@ -195,6 +198,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-10T22:05:07.109Z
+Last session: 2026-07-10T22:30:15.210Z
 Stopped at: Phase 7 context gathered
 Resume file: .planning/phases/07-profanity-auto-bleep/07-CONTEXT.md

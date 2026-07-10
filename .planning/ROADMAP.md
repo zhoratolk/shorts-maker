@@ -198,7 +198,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 4. Context-Driven Transitions | 6/6 | Complete   | 2026-07-09 |
 | 5. Sub-Threshold Highlight Compilation | 5/5 | Complete    | 2026-07-10 |
 | 6. TikTok & Instagram Auto-Publish | 7/7 | Complete    | 2026-07-10 |
-| 7. Profanity Auto-Bleep | 3/5 | In Progress|  |
+| 7. Profanity Auto-Bleep | 4/5 | In Progress|  |
 
 ### Phase 7: Profanity Auto-Bleep
 
@@ -211,7 +211,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
   2. Each identified swear word's audio span gets a quiet overlay tone applied instead of being cut to silence or left untouched — the clip's audio track keeps playing underneath
   3. The masked span is quiet/garbled enough that a platform's automated speech-to-text moderation pass would not transcribe the word cleanly, without being so loud/abrupt that it reads as an obvious edit
 
-**Plans**: 3/5 plans executed
+**Plans**: 4/5 plans executed
 
 **Wave 1** *(parallel — no shared files)*
 
@@ -221,7 +221,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 **Wave 2** *(blocked on Wave 1)*
 
-- [ ] 07-04-PLAN.md — Real-ffmpeg loudness-delta + faster-whisper self-transcription integration tests + SKILL.md orchestration (profanity_spans in PLAN.json, step-5/5b bullets, step-6 flags, recall-gap note) [AUDIO-01, AUDIO-02, AUDIO-03] (wave 2)
+- [x] 07-04-PLAN.md — Real-ffmpeg loudness-delta + faster-whisper self-transcription integration tests + SKILL.md orchestration (profanity_spans in PLAN.json, step-5/5b bullets, step-6 flags, recall-gap note) [AUDIO-01, AUDIO-02, AUDIO-03] (wave 2)
 
 **Wave 3** *(blocked on Wave 2)*
 
