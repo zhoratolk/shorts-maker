@@ -153,6 +153,7 @@ def enqueue(
         "caption": caption,
         "status": QUEUED,
         "publish_id": None,
+        "privacy_level_achieved": None,
         "video_share_url": None,
         "enqueued_at": now,
         "updated_at": now,
@@ -560,6 +561,7 @@ def upload_and_publish(
     data = init_direct_post(access_token, body, session)
 
     entry["publish_id"] = data["publish_id"]
+    entry["privacy_level_achieved"] = privacy_level
     entry["updated_at"] = datetime.now(timezone.utc).isoformat()
     save_queue(queue, queue_path)
 
@@ -577,11 +579,20 @@ def upload_and_publish(
         )
 
     entry["status"] = PUBLISHED
-    entry["video_share_url"] = status_data.get("publicaly_available_post_id")
+    entry["video_share_url"] = _extract_share_url(status_data)
     entry["updated_at"] = datetime.now(timezone.utc).isoformat()
     save_queue(queue, queue_path)
 
     return {"publish_id": entry["publish_id"], "is_still_gated": is_still_gated}
+
+
+def _extract_share_url(status_data: dict[str, Any]) -> str | None:
+    """TikTok's status/fetch returns `publicaly_available_post_id` as a list
+    of URLs (per its API, confirmed by test fixtures), not a single string -
+    this takes the first element (or None) so entry["video_share_url"] is
+    never a raw list under a singular-named key (WR-03)."""
+    post_ids = status_data.get("publicaly_available_post_id") or []
+    return post_ids[0] if post_ids else None
 
 
 def _success_notification_text(entry: dict[str, Any]) -> str:
@@ -641,7 +652,11 @@ def _upload_one(
 
 
 def reconcile_uploading(
-    queue: dict[str, Any], entry: dict[str, Any], credentials_factory, session=requests
+    queue: dict[str, Any],
+    entry: dict[str, Any],
+    credentials_factory,
+    session=requests,
+    notifications_path: str = DEFAULT_NOTIFICATIONS_PATH,
 ) -> dict[str, Any]:
     """Resolves a manifest entry stuck in UPLOADING via status/fetch using
     the recorded publish_id - no blind re-init (T-06-04).
@@ -651,7 +666,14 @@ def reconcile_uploading(
       TikTok's side.
     - publish_id recorded, status/fetch errors (expired/invalid publish_id):
       reset to QUEUED, clear publish_id, so a clean retry can happen.
-    - publish_id recorded, PUBLISH_COMPLETE: adopt - status=PUBLISHED.
+    - publish_id recorded, PUBLISH_COMPLETE: adopt - status=PUBLISHED, and
+      (CR-01) notifies using the same SELF_ONLY-vs-success branching
+      upload_and_publish's primary path uses, keyed off
+      entry["privacy_level_achieved"] (persisted by upload_and_publish's
+      write-ahead #2, alongside publish_id) - so a crash between
+      init_direct_post and the poll loop finishing can never silently
+      resolve to PUBLISHED with no trace of whether the account was still
+      pre-audit SELF_ONLY (D-05).
     - publish_id recorded, FAILED: reset to QUEUED, clear publish_id.
     - publish_id recorded, still PROCESSING_UPLOAD/PROCESSING_DOWNLOAD:
       leave untouched - legitimately still in flight.
@@ -673,8 +695,12 @@ def reconcile_uploading(
     status = status_data.get("status")
     if status == "PUBLISH_COMPLETE":
         entry["status"] = PUBLISHED
-        entry["video_share_url"] = status_data.get("publicaly_available_post_id")
+        entry["video_share_url"] = _extract_share_url(status_data)
         entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+        if entry.get("privacy_level_achieved") == "SELF_ONLY":
+            append_notification(_self_only_notification_text(entry), notifications_path)
+        else:
+            append_notification(_success_notification_text(entry), notifications_path)
     elif status == "FAILED":
         entry["status"] = QUEUED
         entry["publish_id"] = None
@@ -684,14 +710,19 @@ def reconcile_uploading(
     return entry
 
 
-def reconcile_all_uploading(queue: dict[str, Any], credentials_factory, session=requests) -> None:
+def reconcile_all_uploading(
+    queue: dict[str, Any],
+    credentials_factory,
+    session=requests,
+    notifications_path: str = DEFAULT_NOTIFICATIONS_PATH,
+) -> None:
     """Reconciles every UPLOADING entry before any new selection happens -
     wired as the mandatory first step before select_next_due is ever called
     (mirrors scripts/publish_queue.py::reconcile_all_uploading).
     """
     for entry in queue["entries"]:
         if entry["status"] == UPLOADING:
-            reconcile_uploading(queue, entry, credentials_factory, session)
+            reconcile_uploading(queue, entry, credentials_factory, session, notifications_path)
 
 
 # --- CLI (--check / --now / --pause / --kill / --resume / --list) --------
@@ -794,7 +825,9 @@ def run_command(args: argparse.Namespace, credentials_factory, config, session=r
         # Reconcile-first: any crash-mid-upload entry must be resolved
         # before a fresh item is ever selected. Happens even in dry-run
         # mode - only the actual upload is gated by tiktok_enabled.
-        reconcile_all_uploading(queue, credentials_factory, session=session)
+        reconcile_all_uploading(
+            queue, credentials_factory, session=session, notifications_path=config.notifications_path
+        )
         save_queue(queue, queue_path)
 
         if not config.tiktok_enabled:

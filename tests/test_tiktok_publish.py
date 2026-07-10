@@ -700,6 +700,12 @@ def test_upload_and_publish_full_success_flow_persists_write_ahead(tmp_path):
     # Write-ahead #2 (Pitfall 5): publish_id must be on disk BEFORE the
     # chunk PUT loop starts, so a crash mid-upload is reconcilable.
     assert session.publish_id_at_first_put == "pub-1"
+    # WR-03: TikTok returns publicaly_available_post_id as a list - the
+    # entry must store the URL string, not the raw list.
+    assert entry["video_share_url"] == "share-1"
+    # CR-01: the gate result must be persisted so a crash-then-reconcile
+    # pass can recover whether the account was still SELF_ONLY.
+    assert entry["privacy_level_achieved"] == "PUBLIC_TO_EVERYONE"
 
 
 def test_idempotent_retry_no_duplicate_init_on_reconcile():
@@ -718,6 +724,8 @@ def test_idempotent_retry_no_duplicate_init_on_reconcile():
     urls_called = [url for _, url, _ in session.calls]
     assert tiktok_publish.TIKTOK_INIT_URL not in urls_called
     assert session.calls[0][1] == tiktok_publish.TIKTOK_STATUS_URL
+    # WR-03: string, not the raw ["share-1"] list TikTok's API returns.
+    assert entry["video_share_url"] == "share-1"
 
 
 def test_reconcile_uploading_no_publish_id_resets_to_queued_without_api_call():
@@ -769,6 +777,82 @@ def test_reconcile_uploading_status_fetch_error_resets_to_queued():
 
     assert entry["status"] == QUEUED
     assert entry["publish_id"] is None
+
+
+def test_reconcile_uploading_crash_recovery_self_only_appends_gated_notification_not_silent(tmp_path):
+    # CR-01: simulates a process crashing after upload_and_publish's
+    # write-ahead #2 (publish_id + privacy_level_achieved persisted) but
+    # before the poll loop finished. The next --check's reconcile_uploading
+    # must not silently resolve to PUBLISHED with no trace of the account
+    # still being pre-audit SELF_ONLY (D-05) - it must notify using the same
+    # distinct wording _upload_one's primary path uses.
+    entry = make_tiktok_entry(
+        status=UPLOADING, publish_id="pub-1", privacy_level_achieved="SELF_ONLY"
+    )
+    queue = {"entries": [entry]}
+    notifications_path = tmp_path / "notifications.log"
+    session = FakeSession([
+        FakeResponse({"data": {
+            "status": "PUBLISH_COMPLETE", "fail_reason": "",
+            "publicaly_available_post_id": ["share-1"],
+        }}),
+    ])
+
+    reconcile_uploading(
+        queue, entry, lambda: "token", session=session,
+        notifications_path=str(notifications_path),
+    )
+
+    assert entry["status"] == PUBLISHED
+    assert entry["video_share_url"] == "share-1"
+    log_text = notifications_path.read_text(encoding="utf-8")
+    assert "SELF_ONLY" in log_text
+    assert "залил 1 в TikTok" not in log_text
+
+
+def test_reconcile_uploading_crash_recovery_public_appends_normal_notification(tmp_path):
+    entry = make_tiktok_entry(
+        status=UPLOADING, publish_id="pub-1", privacy_level_achieved="PUBLIC_TO_EVERYONE"
+    )
+    queue = {"entries": [entry]}
+    notifications_path = tmp_path / "notifications.log"
+    session = FakeSession([
+        FakeResponse({"data": {
+            "status": "PUBLISH_COMPLETE", "fail_reason": "",
+            "publicaly_available_post_id": ["share-1"],
+        }}),
+    ])
+
+    reconcile_uploading(
+        queue, entry, lambda: "token", session=session,
+        notifications_path=str(notifications_path),
+    )
+
+    assert entry["status"] == PUBLISHED
+    log_text = notifications_path.read_text(encoding="utf-8")
+    assert "залил 1 в TikTok" in log_text
+    assert "SELF_ONLY" not in log_text
+
+
+def test_reconcile_all_uploading_threads_notifications_path_to_reconcile_uploading(tmp_path):
+    entry = make_tiktok_entry(
+        status=UPLOADING, publish_id="pub-1", privacy_level_achieved="SELF_ONLY"
+    )
+    queue = {"entries": [entry]}
+    notifications_path = tmp_path / "notifications.log"
+    session = FakeSession([
+        FakeResponse({"data": {
+            "status": "PUBLISH_COMPLETE", "fail_reason": "",
+            "publicaly_available_post_id": ["share-1"],
+        }}),
+    ])
+
+    reconcile_all_uploading(
+        queue, lambda: "token", session=session, notifications_path=str(notifications_path)
+    )
+
+    log_text = notifications_path.read_text(encoding="utf-8")
+    assert "SELF_ONLY" in log_text
 
 
 def test_reconcile_all_uploading_skips_non_uploading_entries():
