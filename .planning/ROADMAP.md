@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: LLM Title/Tag Generation** - Pipeline proposes ready-to-use titles and tags per clip, grounded in the creator's own voice via few-shot style-profile examples (completed 2026-07-08)
 - [x] **Phase 3: YouTube Scheduled Auto-Publish** - Finished shorts can be queued and auto-published to YouTube on a schedule, safely (dry-run default, pause/kill, no duplicate posts) (completed 2026-07-08)
 - [x] **Phase 4: Context-Driven Transitions** - Clip boundaries get a transition chosen from scene/audio context (not just a fixed cut/punch-zoom) when stitching multiple segments together (completed 2026-07-09)
-- [ ] **Phase 5: Sub-Threshold Highlight Compilation** - Moments too short to stand alone are grouped by similarity and stitched into one coherent full-length short instead of being discarded
+- [x] **Phase 5: Sub-Threshold Highlight Compilation** - Moments too short to stand alone are grouped by similarity and stitched into one coherent full-length short instead of being discarded (completed 2026-07-10)
 - [ ] **Phase 6: TikTok & Instagram Auto-Publish** - The same scheduled auto-publish flow extends to TikTok and Instagram Reels once each platform's app-review/audit gate is cleared
 
 ## Phase Details
@@ -137,7 +137,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Similar-tagged sub-threshold candidates (same gameplay situation or same joke/theme) from the same source video/session get grouped together and rendered as one full-length short, joined via Phase 4's transition engine
   3. Compilation groups never mix candidates from different source videos/sessions in this version
 
-**Plans**: 3/4 plans executed
+**Plans**: 4/4 plans complete
 
 **Wave 1**
 
@@ -147,7 +147,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 05-04-PLAN.md — SKILL.md orchestration wiring: sub-threshold tagging, grouping pass, compilation.py/candidates.py/render.py end-to-end [COMP-01, COMP-02, COMP-03] (wave 2)
+- [x] 05-04-PLAN.md — SKILL.md orchestration wiring: sub-threshold tagging, grouping pass, compilation.py/candidates.py/render.py end-to-end [COMP-01, COMP-02, COMP-03] (wave 2)
 
 ### Phase 6: TikTok & Instagram Auto-Publish
 
@@ -192,7 +192,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 2. LLM Title/Tag Generation | 2/2 | Complete   | 2026-07-08 |
 | 3. YouTube Scheduled Auto-Publish | 4/4 | Complete   | 2026-07-08 |
 | 4. Context-Driven Transitions | 6/6 | Complete   | 2026-07-09 |
-| 5. Sub-Threshold Highlight Compilation | 3/4 | In Progress|  |
+| 5. Sub-Threshold Highlight Compilation | 4/4 | Complete   | 2026-07-10 |
 | 6. TikTok & Instagram Auto-Publish | 0/7 | Not started | - |
 | 7. Profanity Auto-Bleep | 0/TBD | Not started | - |
 

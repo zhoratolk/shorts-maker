@@ -4,17 +4,17 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 05
 current_phase_name: sub-threshold-highlight-compilation
-status: executing
-stopped_at: Completed 05-03-PLAN.md
-last_updated: "2026-07-10T04:50:56.618Z"
+status: verifying
+stopped_at: Completed 05-04-PLAN.md
+last_updated: "2026-07-10T05:00:41.348Z"
 last_activity: 2026-07-10
 last_activity_desc: Phase 05 execution started
 progress:
   total_phases: 7
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 26
-  completed_plans: 18
-  percent: 57
+  completed_plans: 19
+  percent: 71
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 
 Phase: 05 (sub-threshold-highlight-compilation) — EXECUTING
 Plan: 4 of 4
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-10 — Phase 05 execution started
 
 Note: Phase 2 (LLM Title & Tag Generation) has plan 02-02 still pending — Phase 3 planning/execution proceeded per project workflow while 02-02 remains open; see Pending Todos.
@@ -73,6 +73,7 @@ Progress: [███░░░░░░░] 17% (1/6 phases)
 | Phase 05 P01 | 5min | 2 tasks | 2 files |
 | Phase 05-sub-threshold-highlight-compilation P02 | 2min | 2 tasks | 5 files |
 | Phase 05-sub-threshold-highlight-compilation P03 | 20min | 2 tasks | 3 files |
+| Phase 05-sub-threshold-highlight-compilation P04 | 15min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -91,6 +92,8 @@ Recent decisions affecting current work:
 - [Phase 05-sub-threshold-highlight-compilation]: Plan 05-02: build_compilation_entry takes plain member dicts (not a Candidate-typed object), matching the plan's explicit signature and Plan 05-01's dict-based precedent at this hand-off boundary
 - [Phase ?]: [Phase 05-03]: _build_compilation_fold returns only (fold_stages, total_duration) - trim_stages are built once upfront in build_compilation_command (not per-branch) since compilation trims are never extended into a gap, unlike _build_transition_fold's own trim_stages construction
 - [Phase ?]: [Phase 05-03]: render_clip's clamp_clip_bounds call moved below the hoisted crop/punch-zoom/subtitles block and only runs in the non-compilation else-branch; each compilation member is clamped individually inside the compilation branch instead
+- [Phase ?]: [Phase 05-04]: .claude/ is gitignored project-wide, so both tasks' SKILL.md edits (sub-threshold detection/tagging bullet + step 5b grouping-pass subsection) live on disk only, not in git history - same convention as 02-01/04-06
+- [Phase ?]: [Phase 05-04]: The compilation PLAN.json entry (scripts/compilation.py CLI call) is documented as built once at the end of step 5b, after crop_style/punch-zoom/title/subtitles/metadata are all decided - mirrors the single-clip 'write merged results' final-assembly pattern rather than the plan's raw bullet-listing order
 
 ### Roadmap Evolution
 
@@ -160,6 +163,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-10T04:50:30.659Z
-Stopped at: Completed 05-03-PLAN.md
+Last session: 2026-07-10T05:00:41.335Z
+Stopped at: Completed 05-04-PLAN.md
 Resume file: None
