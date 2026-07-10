@@ -1013,6 +1013,56 @@ def test_load_config_transitions_match_cut_similarity_negative_raises(tmp_path):
         load_config(path)
 
 
+def test_default_config_tiktok_and_instagram_enabled_is_false():
+    from scripts.config import Config
+
+    config = Config(input_dir="F:/in", output_dir="F:/out")
+
+    assert config.publish.tiktok_enabled is False
+    assert config.publish.instagram_enabled is False
+
+
+def test_load_config_tiktok_instagram_defaults_when_section_missing(tmp_path):
+    path = write_config(tmp_path, 'input_dir: "F:/in"\noutput_dir: "F:/out"\n')
+
+    config = load_config(path)
+
+    assert config.publish.tiktok_enabled is False
+    assert config.publish.instagram_enabled is False
+    assert config.publish.tiktok_queue_path == "work/_publish/tiktok_queue.json"
+    assert config.publish.instagram_queue_path == "work/_publish/instagram_queue.json"
+    assert config.publish.tiktok_client_key_path == "tiktok_client_key.json"
+    assert config.publish.tiktok_token_path == "tiktok_token.json"
+    assert config.publish.instagram_client_secret_path == "instagram_client_secret.json"
+    assert config.publish.instagram_token_path == "instagram_token.json"
+
+
+def test_load_config_tiktok_instagram_custom_values_round_trip(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        publish:
+          tiktok_enabled: true
+          instagram_enabled: true
+          tiktok_queue_path: "work/_publish/custom_tiktok.json"
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.publish.tiktok_enabled is True
+    assert config.publish.instagram_enabled is True
+    assert config.publish.tiktok_queue_path == "work/_publish/custom_tiktok.json"
+    # Unspecified fields keep their defaults
+    assert config.publish.instagram_queue_path == "work/_publish/instagram_queue.json"
+    assert config.publish.tiktok_client_key_path == "tiktok_client_key.json"
+    assert config.publish.tiktok_token_path == "tiktok_token.json"
+    assert config.publish.instagram_client_secret_path == "instagram_client_secret.json"
+    assert config.publish.instagram_token_path == "instagram_token.json"
+
+
 def test_load_config_transitions_unknown_field_raises(tmp_path):
     path = write_config(
         tmp_path,
