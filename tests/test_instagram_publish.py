@@ -11,6 +11,7 @@ import scripts.instagram_publish as instagram_publish
 from scripts.instagram_publish import (
     GRAPH_API_VERSION,
     INSTAGRAM_SCOPES,
+    KILLED,
     MAX_CAPTION_LENGTH,
     MAX_HASHTAGS,
     MAX_MENTIONS,
@@ -27,6 +28,7 @@ from scripts.instagram_publish import (
     build_media_container_params,
     create_resumable_container,
     enqueue,
+    kill_item,
     load_credentials,
     load_queue,
     pause_item,
@@ -171,6 +173,79 @@ def test_isolation_pause_instagram_queue_never_touches_youtube_queue(tmp_path):
 
 def test_instagram_scopes_are_minimal():
     assert INSTAGRAM_SCOPES == ["instagram_business_basic", "instagram_business_content_publish"]
+
+
+# --- Task 1: kill_item (Pitfall 4 divergence from YouTube's revert+verify) -
+
+
+def _kill_test_entry(**overrides):
+    entry = {
+        "seq": 1,
+        "clip_id": "clip-1",
+        "video_path": "clip1.mp4",
+        "metadata_path": "clip1.txt",
+        "caption": "caption 1",
+        "status": QUEUED,
+        "container_id": None,
+        "media_id": None,
+        "enqueued_at": "2026-07-10T00:00:00Z",
+        "updated_at": "2026-07-10T00:00:00Z",
+    }
+    entry.update(overrides)
+    return entry
+
+
+def test_kill_item_queued_is_local_only_no_media_id():
+    queue = {"entries": [_kill_test_entry(status=QUEUED, media_id=None)]}
+
+    kill_item(queue, "clip-1")
+
+    assert queue["entries"][0]["status"] == KILLED
+
+
+def test_kill_item_paused_is_local_only():
+    queue = {"entries": [_kill_test_entry(status=PAUSED, media_id=None)]}
+
+    kill_item(queue, "clip-1")
+
+    assert queue["entries"][0]["status"] == KILLED
+
+
+def test_kill_item_uploading_no_container_id_no_media_id_is_local_only():
+    queue = {"entries": [_kill_test_entry(status=UPLOADING, container_id=None, media_id=None)]}
+
+    kill_item(queue, "clip-1")
+
+    assert queue["entries"][0]["status"] == KILLED
+
+
+def test_kill_item_uploading_with_container_id_no_media_id_is_still_local_only():
+    # A created-but-not-yet-published container has nothing public on
+    # Instagram - kill must remain local-only, no network call attempted
+    # (Pitfall 4).
+    queue = {"entries": [_kill_test_entry(status=UPLOADING, container_id="container-1", media_id=None)]}
+
+    kill_item(queue, "clip-1")
+
+    assert queue["entries"][0]["status"] == KILLED
+
+
+def test_kill_item_published_raises_runtime_error_and_leaves_status_untouched():
+    queue = {"entries": [_kill_test_entry(status=PUBLISHED, container_id="container-1", media_id="media-1")]}
+
+    with pytest.raises(RuntimeError):
+        kill_item(queue, "clip-1")
+
+    # A PUBLISHED entry must never be silently marked KILLED - this is the
+    # one behavior that must NOT silently succeed (Pitfall 4).
+    assert queue["entries"][0]["status"] == PUBLISHED
+
+
+def test_kill_item_takes_no_credentials_factory_parameter():
+    import inspect
+
+    sig = inspect.signature(kill_item)
+    assert list(sig.parameters) == ["queue", "clip_id"]
 
 
 # --- Fake HTTP layer (shared by Task 1 credential tests and later tasks) --

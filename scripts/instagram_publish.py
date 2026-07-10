@@ -234,6 +234,59 @@ def resume_item(queue: dict[str, Any], clip_id: str) -> dict[str, Any]:
     return entry
 
 
+# --- Kill (PUB-04, Instagram's Pitfall-4 divergence) ------------------------
+
+# Statuses a kill treats as "not yet live" - no Reel has actually gone public
+# on Instagram yet, so a kill of these is purely local: no API call, just
+# flip the manifest. Same shape as publish_queue.py's/tiktok_publish.py's
+# _NOT_YET_UPLOADED_STATUSES - UPLOADING stays local-only even once a
+# container_id has been recorded (write-ahead #2), since a created-but-not-
+# yet-published container has nothing public on Instagram (06-RESEARCH.md
+# Pitfall 4).
+_NOT_YET_UPLOADED_STATUSES = frozenset({QUEUED, PAUSED, UPLOADING})
+
+
+def kill_item(queue: dict[str, Any], clip_id: str) -> dict[str, Any]:
+    """Kills a queue entry (PUB-04), diverging from publish_queue.py's
+    revert-then-verify PUBLISHED branch:
+
+    - status in QUEUED/PAUSED/UPLOADING (with or without a container_id
+      already recorded - only media_id matters): local-only - flips status
+      to KILLED, no API call. A created-but-not-yet-published media
+      container has nothing public on Instagram to revert.
+    - status is PUBLISHED (media_id recorded): raises RuntimeError rather
+      than silently succeeding or pretending to revert it - Instagram's
+      Graph API has no un-publish/cancel endpoint for an already-published
+      Reel (06-RESEARCH.md Pitfall 4). The entry's status is left untouched,
+      never marked KILLED, so an operator can never be misled into thinking
+      a live Instagram Reel was pulled down when it wasn't.
+
+    Unlike publish_queue.py's kill_item, this function takes no
+    service_factory/credentials_factory parameter at all - it never makes a
+    network call in any branch, since no equivalent "cancel a published
+    Reel" API call exists for Instagram either.
+    """
+    entry = _find_entry(queue, clip_id)
+
+    if entry["status"] in _NOT_YET_UPLOADED_STATUSES and not entry.get("media_id"):
+        entry["status"] = KILLED
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return entry
+
+    if entry["status"] == PUBLISHED:
+        raise RuntimeError(
+            f"kill_item: clip_id={clip_id!r} is already PUBLISHED to Instagram - "
+            "Instagram's Graph API has no un-publish/cancel endpoint for an "
+            "already-published Reel (06-RESEARCH.md Pitfall 4); the entry's "
+            "status is left untouched, not silently marked KILLED"
+        )
+
+    # Already KILLED - idempotent no-op re-flip, no API call either way.
+    entry["status"] = KILLED
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return entry
+
+
 # --- OAuth credential handling --------------------------------------------
 
 
