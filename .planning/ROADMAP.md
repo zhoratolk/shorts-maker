@@ -164,12 +164,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. A queued short can be auto-published to Instagram Reels via the Graph API (Business account + app review in place), following the same safety mechanism
   3. Each platform integration is isolated enough that one platform's audit/review delay (e.g. TikTok's SELF_ONLY restriction pre-audit) does not block the other platform or YouTube from publishing
 
-**Plans**: 1/7 plans executed
+**Plans**: 2/7 plans executed
 
 **Wave 1**
 
 - [x] 06-01-PLAN.md — Legitimacy checkpoint for `requests` + direct-dependency registration in requirements.txt [PUB-06, PUB-07] (wave 1)
-- [ ] 06-02-PLAN.md — PublishConfig extension (tiktok_enabled/instagram_enabled + paths) + .gitignore for new credential files [PUB-06, PUB-07] (wave 1)
+- [x] 06-02-PLAN.md — PublishConfig extension (tiktok_enabled/instagram_enabled + paths) + .gitignore for new credential files [PUB-06, PUB-07] (wave 1)
 
 **Wave 2** *(blocked on Wave 1)*
 
@@ -197,7 +197,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 3. YouTube Scheduled Auto-Publish | 4/4 | Complete   | 2026-07-08 |
 | 4. Context-Driven Transitions | 6/6 | Complete   | 2026-07-09 |
 | 5. Sub-Threshold Highlight Compilation | 5/5 | Complete    | 2026-07-10 |
-| 6. TikTok & Instagram Auto-Publish | 1/7 | In Progress|  |
+| 6. TikTok & Instagram Auto-Publish | 2/7 | In Progress|  |
 | 7. Profanity Auto-Bleep | 0/TBD | Not started | - |
 
 ### Phase 7: Profanity Auto-Bleep

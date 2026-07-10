@@ -6,14 +6,14 @@ current_phase: 06
 current_phase_name: tiktok-instagram-auto-publish
 status: executing
 stopped_at: Completed 06-01-PLAN.md
-last_updated: "2026-07-10T11:11:31.883Z"
+last_updated: "2026-07-10T11:14:56.686Z"
 last_activity: 2026-07-10
 last_activity_desc: Phase 06 execution started
 progress:
   total_phases: 7
   completed_phases: 5
   total_plans: 27
-  completed_plans: 21
+  completed_plans: 22
   percent: 71
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 ## Current Position
 
 Phase: 06 (tiktok-instagram-auto-publish) — EXECUTING
-Plan: 2 of 7
+Plan: 3 of 7
 Status: Ready to execute
 Last activity: 2026-07-10 — Phase 06 execution started
 
@@ -77,6 +77,7 @@ Progress: [███░░░░░░░] 17% (1/6 phases)
 | Phase 05-sub-threshold-highlight-compilation P04 | 15min | 2 tasks | 1 files |
 | Phase 05 P05 | 15min | 3 tasks | 5 files |
 | Phase 06 P01 | 1min | 2 tasks | 1 files |
+| Phase 06 P02 | 5min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -101,6 +102,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 05-05]: WR-01/WR-02 SKILL.md edits are disk-only (not committed) - .claude/ is gitignored project-wide, same pre-existing convention as Plans 02-01/04-06
 - [Phase 06]: [Phase 06-01]: requests documented as an unconditional direct dependency (not a feature-flagged optional block), matching the google-api-python-client wording convention, since it is imported unconditionally at module top level by scripts/tiktok_publish.py and scripts/instagram_publish.py in later plans
 - [Phase 06]: [Phase 06-01]: Legitimacy checkpoint for requests resolved via live pypi.org verification performed by the orchestrating session (github.com/psf/requests confirmed, no typosquat, version 2.34.2 matches current stable release) rather than a literal interactive human reply - documented as the audit trail per T-06-SC
+- [Phase 06-02]: Extended flat PublishConfig in place with tiktok_*/instagram_* fields rather than sibling TikTokPublishConfig/InstagramPublishConfig dataclasses, per D-01 per-platform enable-flag wording
+- [Phase 06-02]: No new _validate() rule added for the 8 new PublishConfig fields (bool/path fields need no extra validation), matching MonetizationConfig precedent
 
 ### Roadmap Evolution
 
@@ -170,6 +173,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-10T11:11:31.869Z
+Last session: 2026-07-10T11:14:32.260Z
 Stopped at: Completed 06-01-PLAN.md
 Resume file: None
