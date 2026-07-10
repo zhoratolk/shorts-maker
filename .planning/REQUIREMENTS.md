@@ -49,8 +49,8 @@
 ### AUDIO — Profanity Auto-Bleep
 
 - [x] **AUDIO-01**: Swear words are identified from the existing word-level Whisper transcript for every clip before render
-- [ ] **AUDIO-02**: Each identified span gets a quiet overlay tone applied at render time (via `render.py`'s audio filter chain) — audio keeps playing, no dead-silence gap
-- [ ] **AUDIO-03**: Overlay is quiet/garbled enough to defeat platform speech-to-text moderation scanning of the masked word, without sounding like an abrupt cut
+- [x] **AUDIO-02**: Each identified span gets a quiet overlay tone applied at render time (via `render.py`'s audio filter chain) — audio keeps playing, no dead-silence gap
+- [x] **AUDIO-03**: Overlay is quiet/garbled enough to defeat platform speech-to-text moderation scanning of the masked word, without sounding like an abrupt cut
 
 ## v2 Requirements
 
@@ -101,8 +101,8 @@
 | PUB-06 | Phase 6 | Complete — CR-01 gap found+fixed during verification (71a6131), re-verified passed |
 | PUB-07 | Phase 6 | Complete |
 | AUDIO-01 | Phase 7 | Complete |
-| AUDIO-02 | Phase 7 | Pending |
-| AUDIO-03 | Phase 7 | Pending |
+| AUDIO-02 | Phase 7 | Complete |
+| AUDIO-03 | Phase 7 | Complete |
 
 > TAGS-01/TAGS-02 status reflects a deliberate architectural reframe confirmed during `/gsd-discuss-phase 2` (human sign-off) — see `.planning/phases/02-llm-title-tag-generation/02-CONTEXT.md` D-01/D-02/D-03 for the full rationale. This is not an oversight or a silently dropped requirement.
 
