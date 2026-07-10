@@ -137,7 +137,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Similar-tagged sub-threshold candidates (same gameplay situation or same joke/theme) from the same source video/session get grouped together and rendered as one full-length short, joined via Phase 4's transition engine
   3. Compilation groups never mix candidates from different source videos/sessions in this version
 
-**Plans**: 4/5 plans complete
+**Plans**: 5/5 plans complete
 
 **Wave 1**
 
@@ -151,7 +151,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 3** *(gap closure — 05-VERIFICATION.md/05-REVIEW.md CR-01 + WR-01/02/03)*
 
-- [ ] 05-05-PLAN.md — Fix CR-01 (build_compilation_entry boundary_transitions/capping mismatch) + SKILL.md groups.json/words.json doc gaps (WR-01/WR-02) + defensive dict access in append_compilation_sections_markdown (WR-03) [COMP-01, COMP-02] (wave 3)
+- [x] 05-05-PLAN.md — Fix CR-01 (build_compilation_entry boundary_transitions/capping mismatch) + SKILL.md groups.json/words.json doc gaps (WR-01/WR-02) + defensive dict access in append_compilation_sections_markdown (WR-03) [COMP-01, COMP-02] (wave 3)
 
 ### Phase 6: TikTok & Instagram Auto-Publish
 
@@ -196,7 +196,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 2. LLM Title/Tag Generation | 2/2 | Complete   | 2026-07-08 |
 | 3. YouTube Scheduled Auto-Publish | 4/4 | Complete   | 2026-07-08 |
 | 4. Context-Driven Transitions | 6/6 | Complete   | 2026-07-09 |
-| 5. Sub-Threshold Highlight Compilation | 4/4 | Complete   | 2026-07-10 |
+| 5. Sub-Threshold Highlight Compilation | 5/5 | Complete   | 2026-07-10 |
 | 6. TikTok & Instagram Auto-Publish | 0/7 | Not started | - |
 | 7. Profanity Auto-Bleep | 0/TBD | Not started | - |
 
