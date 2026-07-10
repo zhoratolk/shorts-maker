@@ -9,21 +9,33 @@ import requests
 
 import scripts.instagram_publish as instagram_publish
 from scripts.instagram_publish import (
+    GRAPH_API_VERSION,
     INSTAGRAM_SCOPES,
+    MAX_CAPTION_LENGTH,
+    MAX_HASHTAGS,
+    MAX_MENTIONS,
     PAUSED,
     QUEUED,
     UPLOADING,
     VALID_STATUSES,
+    InstagramAccessError,
     _capture_oauth_redirect_code,
+    _check_meta_permission_error,
     _find_entry,
+    build_media_container_params,
+    create_resumable_container,
     enqueue,
     load_credentials,
     load_queue,
     pause_item,
+    poll_container_status,
+    publish_container,
     resume_item,
     run_instagram_oauth_consent,
     save_queue,
     select_next_due,
+    upload_local_video,
+    validate_caption,
 )
 
 
@@ -318,3 +330,194 @@ def test_run_instagram_oauth_consent_full_flow(tmp_path, monkeypatch):
     assert session.calls[0][0] == "POST"
     assert session.calls[1][0] == "GET"
     assert session.calls[1][1] == instagram_publish.INSTAGRAM_LONG_LIVED_EXCHANGE_URL
+
+
+# --- Task 2: caption validation + pure body builder ----------------------
+
+
+def test_validate_caption_raises_for_oversized_caption():
+    with pytest.raises(ValueError):
+        validate_caption("x" * (MAX_CAPTION_LENGTH + 1))
+
+
+def test_validate_caption_allows_max_length_caption():
+    validate_caption("x" * MAX_CAPTION_LENGTH)  # must not raise
+
+
+def test_validate_caption_raises_for_too_many_hashtags():
+    caption = " ".join(f"#tag{i}" for i in range(MAX_HASHTAGS + 1))
+    with pytest.raises(ValueError):
+        validate_caption(caption)
+
+
+def test_validate_caption_allows_max_hashtags():
+    caption = " ".join(f"#tag{i}" for i in range(MAX_HASHTAGS))
+    validate_caption(caption)  # must not raise
+
+
+def test_validate_caption_raises_for_too_many_mentions():
+    caption = " ".join(f"@user{i}" for i in range(MAX_MENTIONS + 1))
+    with pytest.raises(ValueError):
+        validate_caption(caption)
+
+
+def test_validate_caption_allows_max_mentions():
+    caption = " ".join(f"@user{i}" for i in range(MAX_MENTIONS))
+    validate_caption(caption)  # must not raise
+
+
+def test_build_media_container_params_shapes_reels_resumable():
+    params = build_media_container_params("hello #wow @friend")
+
+    assert params == {
+        "media_type": "REELS",
+        "upload_type": "resumable",
+        "caption": "hello #wow @friend",
+    }
+
+
+def test_build_media_container_params_raises_before_any_session_call_on_oversized_caption():
+    session = FakeSession([])
+
+    with pytest.raises(ValueError):
+        build_media_container_params("x" * (MAX_CAPTION_LENGTH + 1))
+
+    assert session.calls == []
+
+
+# --- Task 2: resumable-upload HTTP layer ----------------------------------
+
+
+def test_create_resumable_container_posts_exact_params_and_returns_id():
+    session = FakeSession([
+        FakeResponse({"id": "container-1"}),
+    ])
+    params = {"media_type": "REELS", "upload_type": "resumable", "caption": "hi"}
+
+    container_id = create_resumable_container("ig-user-1", "token-123", params, session=session)
+
+    assert container_id == "container-1"
+    method, url, kwargs = session.calls[0]
+    assert method == "POST"
+    assert url == f"https://graph.facebook.com/{GRAPH_API_VERSION}/ig-user-1/media"
+    assert kwargs["params"]["media_type"] == "REELS"
+    assert kwargs["params"]["upload_type"] == "resumable"
+    assert kwargs["params"]["caption"] == "hi"
+    assert kwargs["params"]["access_token"] == "token-123"
+
+
+def test_upload_local_video_posts_bytes_to_rupload_not_graph(tmp_path):
+    video_path = tmp_path / "clip.mp4"
+    content = b"0123456789"
+    video_path.write_bytes(content)
+
+    session = FakeSession([FakeResponse({})])
+    upload_local_video("container-1", "token-123", str(video_path), session=session)
+
+    assert len(session.calls) == 1
+    method, url, kwargs = session.calls[0]
+    assert method == "POST"
+    assert url == f"https://rupload.facebook.com/ig-api-upload/{GRAPH_API_VERSION}/container-1"
+    assert "graph.facebook.com" not in url
+    assert kwargs["headers"]["offset"] == "0"
+    assert kwargs["headers"]["file_size"] == str(len(content))
+    assert kwargs["data"] == content
+
+
+def test_poll_container_status_returns_status_code():
+    session = FakeSession([
+        FakeResponse({"status_code": "FINISHED"}),
+    ])
+
+    status_code = poll_container_status("container-1", "token-123", session=session)
+
+    assert status_code == "FINISHED"
+    method, url, kwargs = session.calls[0]
+    assert method == "GET"
+    assert url == f"https://graph.facebook.com/{GRAPH_API_VERSION}/container-1"
+    assert kwargs["params"]["fields"] == "status_code"
+
+
+def test_publish_container_posts_creation_id_and_returns_media_id():
+    session = FakeSession([
+        FakeResponse({"id": "media-1"}),
+    ])
+
+    media_id = publish_container("ig-user-1", "token-123", "container-1", session=session)
+
+    assert media_id == "media-1"
+    method, url, kwargs = session.calls[0]
+    assert method == "POST"
+    assert url == f"https://graph.facebook.com/{GRAPH_API_VERSION}/ig-user-1/media_publish"
+    assert kwargs["params"]["creation_id"] == "container-1"
+
+
+# --- Task 2: fail-closed permission handling ------------------------------
+
+
+def test_check_meta_permission_error_403_raises_instagram_access_error():
+    response = FakeResponse(
+        {"error": {"message": "This account does not have permission to publish", "type": "OAuthException", "code": 10}},
+        status_code=403,
+    )
+
+    with pytest.raises(InstagramAccessError):
+        _check_meta_permission_error(response)
+
+
+def test_create_resumable_container_403_permission_error_raises_instagram_access_error():
+    session = FakeSession([
+        FakeResponse(
+            {"error": {"message": "requires advanced access", "type": "OAuthException", "code": 10}},
+            status_code=403,
+        ),
+    ])
+    params = {"media_type": "REELS", "upload_type": "resumable", "caption": "hi"}
+
+    with pytest.raises(InstagramAccessError) as exc_info:
+        create_resumable_container("ig-user-1", "token-123", params, session=session)
+
+    assert "advanced access" in str(exc_info.value).lower() or "permission" in str(exc_info.value).lower()
+
+
+def test_upload_local_video_403_permission_error_raises_instagram_access_error(tmp_path):
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"0123456789")
+
+    session = FakeSession([
+        FakeResponse(
+            {"error": {"message": "permission denied", "type": "OAuthException", "code": 10}},
+            status_code=403,
+        ),
+    ])
+
+    with pytest.raises(InstagramAccessError):
+        upload_local_video("container-1", "token-123", str(video_path), session=session)
+
+
+def test_publish_container_403_permission_error_raises_instagram_access_error():
+    session = FakeSession([
+        FakeResponse(
+            {"error": {"message": "permission denied", "type": "OAuthException", "code": 10}},
+            status_code=403,
+        ),
+    ])
+
+    with pytest.raises(InstagramAccessError):
+        publish_container("ig-user-1", "token-123", "container-1", session=session)
+
+
+def test_create_resumable_container_non_permission_500_propagates_as_http_error():
+    session = FakeSession([
+        FakeResponse({"error": {"message": "internal server error", "type": "ServerError", "code": 1}}, status_code=500),
+    ])
+    params = {"media_type": "REELS", "upload_type": "resumable", "caption": "hi"}
+
+    with pytest.raises(requests.HTTPError):
+        create_resumable_container("ig-user-1", "token-123", params, session=session)
+
+
+def test_check_meta_permission_error_no_op_on_success_response():
+    response = FakeResponse({"id": "container-1"}, status_code=200)
+
+    _check_meta_permission_error(response)  # must not raise
