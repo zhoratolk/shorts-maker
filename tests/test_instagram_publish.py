@@ -674,6 +674,22 @@ def test_publish_container_403_permission_error_raises_instagram_access_error():
         publish_container("ig-user-1", "token-123", "container-1", session=session)
 
 
+def test_poll_container_status_403_permission_error_raises_instagram_access_error():
+    # WR-01: poll_container_status was the one HTTP call in this module that
+    # skipped _check_meta_permission_error, breaking the "ONLY mechanism"
+    # invariant - a token revocation/access-tier change during polling must
+    # surface as InstagramAccessError, not a generic requests.HTTPError.
+    session = FakeSession([
+        FakeResponse(
+            {"error": {"message": "requires advanced access", "type": "OAuthException", "code": 10}},
+            status_code=403,
+        ),
+    ])
+
+    with pytest.raises(InstagramAccessError):
+        poll_container_status("container-1", "token-123", session=session)
+
+
 def test_create_resumable_container_non_permission_500_propagates_as_http_error():
     session = FakeSession([
         FakeResponse({"error": {"message": "internal server error", "type": "ServerError", "code": 1}}, status_code=500),

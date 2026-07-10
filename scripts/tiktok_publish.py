@@ -285,11 +285,18 @@ def load_credentials(client_key_path: str, token_path: str, session=requests) ->
     )
     response.raise_for_status()
     refreshed = response.json()
-    refreshed["expires_at"] = time.time() + refreshed["expires_in"]
+    # WR-02: merge into token_data rather than replacing the file wholesale
+    # - TikTok's refresh grant response is not guaranteed to repeat every
+    # field (e.g. refresh_token) on every call, and overwriting the whole
+    # file would permanently drop anything it omits (mirrors
+    # instagram_publish.py::load_credentials's merge pattern).
+    token_data["access_token"] = refreshed["access_token"]
+    token_data["refresh_token"] = refreshed.get("refresh_token", token_data["refresh_token"])
+    token_data["expires_at"] = time.time() + refreshed["expires_in"]
     token_file.write_text(
-        json.dumps(refreshed, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(token_data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    return refreshed["access_token"]
+    return token_data["access_token"]
 
 
 def _build_redirect_server(host: str, port: int):

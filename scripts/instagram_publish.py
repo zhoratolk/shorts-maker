@@ -586,12 +586,15 @@ def upload_local_video(
 
 
 def poll_container_status(container_id: str, access_token: str, session=requests) -> str:
-    """GETs /{container_id}?fields=status_code, returns
-    response.json()["status_code"]."""
+    """GETs /{container_id}?fields=status_code, routes any error response
+    through _check_meta_permission_error before raise_for_status() (the ONLY
+    mechanism this module uses to detect an access-tier problem - see this
+    module's docstring), returns response.json()["status_code"]."""
     response = session.get(
         f"https://graph.facebook.com/{GRAPH_API_VERSION}/{container_id}",
         params={"fields": "status_code", "access_token": access_token},
     )
+    _check_meta_permission_error(response)
     response.raise_for_status()
     return response.json()["status_code"]
 

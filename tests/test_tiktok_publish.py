@@ -341,6 +341,35 @@ def test_load_credentials_refreshes_expired_token(tmp_path):
     assert "expires_at" in saved
 
 
+def test_load_credentials_refresh_merges_missing_refresh_token_and_preserves_extra_fields(tmp_path):
+    # WR-02: TikTok's refresh grant response is not guaranteed to repeat
+    # refresh_token every time - a wholesale file overwrite would drop it
+    # (and any other on-disk field), breaking the *next* refresh with a
+    # KeyError. Must merge into token_data instead.
+    client_key_path = tmp_path / "tiktok_client_key.json"
+    client_key_path.write_text(json.dumps({"client_key": "ck", "client_secret": "cs"}), encoding="utf-8")
+
+    token_path = tmp_path / "tiktok_token.json"
+    token_path.write_text(json.dumps({
+        "access_token": "old-token",
+        "refresh_token": "original-refresh-token",
+        "expires_at": time.time() - 10,
+        "open_id": "user-123",  # any extra field a wholesale overwrite would drop
+    }), encoding="utf-8")
+
+    session = FakeSession([
+        FakeResponse({"access_token": "new-token", "expires_in": 86400}),  # no refresh_token in response
+    ])
+
+    access_token = load_credentials(str(client_key_path), str(token_path), session=session)
+
+    assert access_token == "new-token"
+    saved = json.loads(token_path.read_text(encoding="utf-8"))
+    assert saved["access_token"] == "new-token"
+    assert saved["refresh_token"] == "original-refresh-token"
+    assert saved["open_id"] == "user-123"
+
+
 def test_load_credentials_raises_file_not_found_when_no_cached_token(tmp_path):
     token_path = tmp_path / "does_not_exist.json"
 
