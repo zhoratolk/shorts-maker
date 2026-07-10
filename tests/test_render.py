@@ -1265,3 +1265,112 @@ def test_render_clip_raises_on_ffmpeg_failure():
             video_duration=100.0, src_width=1920, src_height=1080,
             runner=fake_runner,
         )
+
+
+def test_render_clip_masks_profanity_spans_in_plain_branch():
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "profanity_spans": [[2.0, 2.4], [5.0, 5.6]],
+    }
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=lambda command, capture_output, text: FakeResult(),
+    )
+
+    audio_filter = command[command.index("-af") + 1]
+    assert "bandreject=enable='between(t,2.0,2.4)+between(t,5.0,5.6)'" in audio_filter
+    assert "tremolo=" in audio_filter
+    assert "volume=enable='between(t,2.0,2.4)+between(t,5.0,5.6)':volume=0.12" in audio_filter
+
+
+def test_render_clip_without_profanity_spans_has_no_mask_in_plain_branch():
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom"}
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=lambda command, capture_output, text: FakeResult(),
+    )
+
+    assert "-af" not in command
+
+
+def test_render_clip_masks_profanity_spans_in_jumpcut_branch():
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "keep_segments": [[10.0, 20.0], [22.0, 40.0]],
+        "profanity_spans": [[2.0, 2.4]],
+    }
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=lambda command, capture_output, text: FakeResult(),
+    )
+
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "bandreject=enable='between(t,2.0,2.4)'" in filter_complex
+
+
+def test_render_clip_without_profanity_spans_jumpcut_branch_unchanged():
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "keep_segments": [[10.0, 20.0], [22.0, 40.0]],
+    }
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=lambda command, capture_output, text: FakeResult(),
+    )
+
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "bandreject" not in filter_complex
+
+
+def test_render_clip_masks_profanity_spans_in_compilation_branch():
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    plan_entry = {
+        "type": "compilation",
+        "crop_style": "zoom",
+        "segments": [
+            {"start": 10.0, "end": 15.0},
+            {"start": 50.0, "end": 55.0},
+        ],
+        "profanity_spans": [[1.0, 1.4]],
+    }
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=lambda command, capture_output, text: FakeResult(),
+    )
+
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "bandreject=enable='between(t,1.0,1.4)'" in filter_complex

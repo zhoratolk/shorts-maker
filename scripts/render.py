@@ -391,6 +391,7 @@ def build_ffmpeg_command(
     punch_zoom_amount: float = 1.15,
     punch_zoom_ramp: float = 0.25,
     denoise_strength: float = 6.0,
+    profanity_filter: str | None = None,
 ) -> list[str]:
     clip_duration = end - start
     tail_available = 0.0 if video_duration is None else max(0.0, video_duration - end)
@@ -420,7 +421,9 @@ def build_ffmpeg_command(
         video_filter = f"{video_filter},fade=t=out:st={fade_start}:d={fade_duration}"
         fade_filter = f"afade=t=out:st={fade_start}:d={fade_duration}"
 
-    audio_filter_chain = build_audio_filter_chain(denoise, loudnorm, fade_filter, denoise_strength)
+    audio_filter_chain = build_audio_filter_chain(
+        denoise, loudnorm, fade_filter, denoise_strength, profanity_filter
+    )
     audio_args = ["-af", audio_filter_chain] if audio_filter_chain else []
 
     return [
@@ -566,6 +569,7 @@ def build_jumpcut_command(
     boundary_gaps: list[float] | None = None,
     transition_duration: float = 0.35,
     min_overlap_seconds: float = 0.12,
+    profanity_filter: str | None = None,
 ) -> list[str]:
     """Like build_ffmpeg_command, but keep_segments (absolute source-file
     seconds, from jumpcuts.compute_keep_segments) are trimmed out of the
@@ -645,7 +649,9 @@ def build_jumpcut_command(
         video_ops.append(f"fade=t=out:st={fade_start}:d={fade_duration}")
         fade_filter = f"afade=t=out:st={fade_start}:d={fade_duration}"
 
-    audio_filter_chain = build_audio_filter_chain(denoise, loudnorm, fade_filter, denoise_strength) or "anull"
+    audio_filter_chain = build_audio_filter_chain(
+        denoise, loudnorm, fade_filter, denoise_strength, profanity_filter
+    ) or "anull"
 
     video_stage = f"[vcat]{','.join(video_ops)}[vout]"
     audio_stage = f"[acat]{audio_filter_chain}[aout]"
@@ -766,6 +772,7 @@ def build_compilation_command(
     punch_zoom_amount: float = 1.15,
     punch_zoom_ramp: float = 0.25,
     denoise_strength: float = 6.0,
+    profanity_filter: str | None = None,
 ) -> list[str]:
     """Multi-input ffmpeg command builder for a COMP-02 compilation entry:
     opens the source video once per compilation member (own -ss/-i/-t per
@@ -875,7 +882,9 @@ def build_compilation_command(
         video_ops.append(f"fade=t=out:st={fade_start}:d={fade_duration}")
         fade_filter = f"afade=t=out:st={fade_start}:d={fade_duration}"
 
-    audio_filter_chain = build_audio_filter_chain(denoise, loudnorm, fade_filter, denoise_strength) or "anull"
+    audio_filter_chain = build_audio_filter_chain(
+        denoise, loudnorm, fade_filter, denoise_strength, profanity_filter
+    ) or "anull"
 
     video_stage = f"[vcat]{','.join(video_ops)}[vout]"
     audio_stage = f"[acat]{audio_filter_chain}[aout]"
@@ -930,6 +939,11 @@ def render_clip(
     denoise_strength: float = 6.0,
     transition_duration: float = 0.35,
     min_overlap_seconds: float = 0.12,
+    profanity_duck_volume: float = 0.12,
+    profanity_garble_freq: float = 1800.0,
+    profanity_garble_width_octaves: float = 4.0,
+    profanity_warble_freq: float = 18.0,
+    profanity_warble_depth: float = 0.7,
     runner=subprocess.run,
 ) -> list[str]:
     crop_style = plan_entry["crop_style"]
@@ -946,6 +960,19 @@ def render_clip(
             "on pad/original-16:9 the punch-zoom crop cuts into real frame content, not just the letterbox bars"
         )
     subtitles_path = plan_entry.get("subtitles_path")
+
+    profanity_spans_raw = plan_entry.get("profanity_spans")
+    profanity_filter = None
+    if profanity_spans_raw:
+        profanity_spans = [(span[0], span[1]) for span in profanity_spans_raw]
+        profanity_filter = build_profanity_mask_filter(
+            profanity_spans,
+            duck_volume=profanity_duck_volume,
+            garble_freq=profanity_garble_freq,
+            garble_width_octaves=profanity_garble_width_octaves,
+            warble_freq=profanity_warble_freq,
+            warble_depth=profanity_warble_depth,
+        )
 
     if subtitles_path is not None and subtitle_style is not None:
         import sys
@@ -1007,6 +1034,7 @@ def render_clip(
             punch_zoom_amount=punch_zoom_amount,
             punch_zoom_ramp=punch_zoom_ramp,
             denoise_strength=denoise_strength,
+            profanity_filter=profanity_filter,
         )
     else:
         start, end = clamp_clip_bounds(plan_entry["start"], plan_entry["end"], video_duration)
@@ -1033,13 +1061,14 @@ def render_clip(
                 fade_seconds, subtitle_style, denoise, loudnorm,
                 vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
                 denoise_strength, boundary_transitions, boundary_gaps, transition_duration, min_overlap_seconds,
+                profanity_filter,
             )
         else:
             command = build_ffmpeg_command(
                 input_path, output_path, start, end, crop_filter, subtitles_path,
                 fade_seconds, video_duration, subtitle_style, denoise, loudnorm,
                 vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
-                denoise_strength,
+                denoise_strength, profanity_filter,
             )
 
     result = runner(command, capture_output=True, text=True)
@@ -1107,6 +1136,26 @@ def main() -> None:
         help="A boundary_transitions entry whose borrowed pause gap is below this many seconds "
         "falls back to a plain cut instead of a transition (TRANS-03)",
     )
+    parser.add_argument(
+        "--profanity-duck-volume", type=float, default=0.12,
+        help="Volume multiplier applied inside a plan entry's profanity_spans (AUDIO-02 duck depth)",
+    )
+    parser.add_argument(
+        "--profanity-garble-freq", type=float, default=1800.0,
+        help="bandreject center frequency (Hz) for the profanity mask's garble layer (AUDIO-03)",
+    )
+    parser.add_argument(
+        "--profanity-garble-width-octaves", type=float, default=4.0,
+        help="bandreject width, in octaves, for the profanity mask's garble layer (AUDIO-03)",
+    )
+    parser.add_argument(
+        "--profanity-warble-freq", type=float, default=18.0,
+        help="tremolo modulation frequency (Hz) for the profanity mask's garble layer (D-03)",
+    )
+    parser.add_argument(
+        "--profanity-warble-depth", type=float, default=0.7,
+        help="tremolo modulation depth for the profanity mask's garble layer (D-03)",
+    )
     args = parser.parse_args()
 
     subtitle_style = {
@@ -1144,6 +1193,11 @@ def main() -> None:
             punch_zoom_ramp=args.punch_zoom_ramp,
             transition_duration=args.transition_duration,
             min_overlap_seconds=args.min_overlap_seconds,
+            profanity_duck_volume=args.profanity_duck_volume,
+            profanity_garble_freq=args.profanity_garble_freq,
+            profanity_garble_width_octaves=args.profanity_garble_width_octaves,
+            profanity_warble_freq=args.profanity_warble_freq,
+            profanity_warble_depth=args.profanity_warble_depth,
         )
         print(output_path)
 
