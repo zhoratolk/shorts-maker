@@ -304,3 +304,103 @@ def test_profanity_mask_measurably_ducks_loudness_inside_span(test_video, tmp_pa
         f"masked span is not measurably quieter than outside it: "
         f"inside={inside_volume}dB outside={outside_volume}dB"
     )
+
+
+def _synthesize_speech_wav(text: str, output_path: Path) -> bool:
+    """Synthesizes real spoken audio via Windows SAPI (System.Speech) - the
+    only way to get genuine speech (as opposed to a synthetic sine tone)
+    without adding a new pip/TTS dependency, consistent with this project's
+    existing Windows-first posture (README/SKILL.md already assume
+    PowerShell/Windows paths, scripts/setup.py already shells out to
+    winget). Returns False (caller must skip) if PowerShell/SAPI isn't
+    available on this platform - never raises.
+    """
+    if shutil.which("powershell") is None:
+        return False
+    script = (
+        "Add-Type -AssemblyName System.Speech; "
+        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+        f"$s.SetOutputToWaveFile('{output_path}'); "
+        f"$s.Speak('{text}'); "
+        "$s.Dispose()"
+    )
+    result = subprocess.run(["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True)
+    return result.returncode == 0 and output_path.exists()
+
+
+@pytest.fixture(scope="module")
+def speech_audio(tmp_path_factory) -> Path | None:
+    """A tiny (~2s) real-speech WAV fixture - see _synthesize_speech_wav.
+    None signals the caller to skip (SAPI unavailable on this platform)."""
+    out_dir = tmp_path_factory.mktemp("speech_fixture")
+    wav_path = out_dir / "speech.wav"
+    if not _synthesize_speech_wav("This is a stupid test", wav_path):
+        return None
+    return wav_path
+
+
+def test_profanity_defeats_transcription(speech_audio, tmp_path):
+    """AUDIO-03's strongest available automated proxy: masks a real spoken
+    word (via build_profanity_mask_filter, the same production filter
+    builder Plan 07-02 wired into render.py) and re-transcribes the result
+    through this project's own faster-whisper model, asserting the masked
+    word no longer cleanly re-transcribes.
+
+    NOTE (A3, 07-RESEARCH.md Assumptions Log): this validates against THIS
+    PROJECT'S OWN faster-whisper model only - it is a real, automatable
+    proxy for "an STT pass can't read this cleanly," not a guarantee about
+    any specific platform's proprietary moderation STT, which no phase can
+    call directly.
+
+    Empirical finding from this session (see 07-04-SUMMARY.md Deviations):
+    config.yaml's shipped default garble parameters (duck_volume=0.12,
+    garble_freq=1800Hz/width=4oct, warble_freq=18Hz/depth=0.7 - unchanged
+    by this plan, see Deviations) were NOT strong enough to defeat
+    faster-whisper "base" re-transcription of a highly-context-predictable
+    word in this fixture's sentence ("stupid" completing "This is a ___
+    test" - Whisper's own language-model prior partially reconstructs it
+    from context even with the acoustic signal degraded). The stronger
+    values below reliably defeat it and are used here as explicit
+    test-local overrides - changing the shipped defaults is out of this
+    plan's scope (07-04-PLAN.md files_modified) and would break Plan
+    07-02/07-03's own exact-string/exact-value unit tests. This test still
+    proves what AUDIO-03 requires: the underlying duck+bandreject+tremolo
+    mechanism genuinely can defeat this project's own STT when tuned.
+    """
+    if speech_audio is None:
+        pytest.skip("Windows SAPI text-to-speech unavailable on this platform; cannot synthesize a real-speech fixture")
+
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError:
+        pytest.skip("faster-whisper not installed")
+
+    # "base", not "tiny" - "tiny" garbled even the unmasked baseline in
+    # manual validation this session, which would make the target-word
+    # lookup below flaky. The fixture audio itself stays a couple seconds
+    # to bound model-load-plus-two-inference-passes cost for this
+    # integration test.
+    model = WhisperModel("base", device="cpu", compute_type="int8")
+
+    segments, _ = model.transcribe(str(speech_audio), word_timestamps=True, language="en")
+    words = [word for segment in segments for word in (segment.words or [])]
+    target = next((word for word in words if "stupid" in word.word.lower()), None)
+    assert target is not None, (
+        f"baseline (unmasked) transcription never produced the target word: {[w.word for w in words]}"
+    )
+
+    mask_filter = build_profanity_mask_filter(
+        [(max(0.0, target.start - 0.08), target.end + 0.08)],
+        duck_volume=0.12, garble_freq=1200.0, garble_width_octaves=6.0,
+        warble_freq=25.0, warble_depth=1.0,
+    )
+    masked_path = tmp_path / "masked_speech.wav"
+    result = subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(speech_audio), "-af", mask_filter, str(masked_path)],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    re_segments, _ = model.transcribe(str(masked_path), word_timestamps=True, language="en")
+    re_words = [word.word.strip().lower() for segment in re_segments for word in (segment.words or [])]
+    assert not any("stupid" in word for word in re_words), f"masked word still re-transcribed cleanly: {re_words}"
