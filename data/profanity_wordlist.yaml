@@ -1,0 +1,43 @@
+# RU+EN profanity wordlist (advisory masking input only — scripts/profanity.py
+# never blocks a render, D-04). This is generic, non-channel-specific policy
+# data, on the same footing as data/monetization_rules.yaml (Plan 01-01
+# precedent) — safe to commit. Note: the content below is more visually
+# "loud" than the monetization ruleset's neutral category names, but this
+# does not change the commit-data-files convention (07-RESEARCH.md Security
+# Domain, info-disclosure row = accept).
+#
+# `updated` is a manual date stamp: bump it whenever the stem list below is
+# actually re-checked. scripts/profanity.py::load_wordlist copies it verbatim
+# via `data.setdefault("updated", "unknown")` handling, mirroring
+# data/monetization_rules.yaml's convention.
+updated: "2026-07-11"
+
+# Applied to each Whisper word token BEFORE stem matching (case-fold first,
+# then substitute, then strip censor chars, then collapse repeats) - this is
+# what makes "common obfuscated spellings" (D-02) tractable without
+# enumerating every variant.
+normalize:
+  substitutions:
+    "0": "о"
+    "3": "е"
+    "1": "и"
+    "4": "ч"
+    "@": "а"
+    "$": "с"
+  collapse_repeats: true   # "бляяя"/"fuuuuck" -> "бля"/"fuck" (run of 3+ same char -> 1)
+  strip_chars: "*_-."      # user-typed censoring chars stripped before matching
+
+ru:
+  - root: "бля"
+  - root: "хуй"
+  - root: "хер"
+  - root: "пизд"
+  - root: "еба"
+  - root: "сук"      # NOTE: broad stem - validate against real transcripts for
+                      # false positives (e.g. "сука" true positive vs some
+                      # unrelated declension) during Wave 0 test-writing
+en:
+  - root: "fuck"
+  - root: "shit"
+  - root: "bitch"
+  - root: "asshole"

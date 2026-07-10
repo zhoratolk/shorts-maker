@@ -232,3 +232,27 @@ def test_cli_prints_spans_json_and_capturable_last_line(tmp_path):
     spans = json.loads(lines[0])
     assert spans == [[1.0, 1.2]]
     assert lines[-1] == str(words_path)
+
+
+# --- shipped data/profanity_wordlist.yaml (D-01, committed data file) ------
+
+
+def test_shipped_wordlist_file_loads_with_normalize_ru_en():
+    wordlist = load_wordlist(WORDLIST_PATH)
+
+    assert wordlist["updated"] != "unknown"
+    assert "normalize" in wordlist
+    assert wordlist["ru"], "expected at least one RU stem"
+    assert wordlist["en"], "expected at least one EN stem"
+
+
+def test_shipped_wordlist_file_detects_known_stem_and_ignores_clean_word():
+    wordlist = load_wordlist(WORDLIST_PATH)
+    words = [
+        {"word": "fuck", "start": 1.0, "end": 1.3},
+        {"word": "clean", "start": 2.0, "end": 2.3},
+    ]
+
+    spans = find_profane_spans(words, wordlist, pad_seconds=0.0)
+
+    assert spans == [(1.0, 1.3)]
