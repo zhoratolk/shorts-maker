@@ -4,10 +4,13 @@ Turn long gameplay/stream recordings into vertical (9:16) short clips — fully 
 
 ## Requirements
 
-- Windows with [winget](https://learn.microsoft.com/windows/package-manager/winget/) available
+- Windows, macOS, or Linux (developed and battle-tested on Windows; `scripts/setup.py` knows winget/brew/apt for installing ffmpeg, everything else is plain cross-platform Python + ffmpeg)
+- [ffmpeg](https://ffmpeg.org/download.html) on `PATH` (`scripts/setup.py` offers to install it)
 - Python 3.11 or 3.12 recommended; 3.13 also works as long as `pip install` finds a prebuilt `ctranslate2` wheel for your Python version — if it tries to build from source, switch to 3.11/3.12
 - [Claude Code](https://claude.com/claude-code)
 - Optional: an NVIDIA GPU for faster transcription — the driver alone (`nvidia-smi` working) is enough to be *detected*, but actually running on GPU needs the CUDA runtime too; see [Troubleshooting](#troubleshooting) if it silently falls back to CPU
+
+> **Language note:** the pipeline itself is language-agnostic (Whisper auto-detects), but the bundled metadata/title-writing guidance (`docs/metadata-writing-ru.md`, `docs/register-ru.md`) and the default `hype_phrases` list are tuned for Russian-language streams. Everything works for other languages — swap `hype_phrases` for your language's equivalents in `config.yaml` (an English example is included in `config.example.yaml`) and titles/captions will simply be written without the Russian register rules.
 
 ## Setup
 
@@ -15,17 +18,30 @@ Turn long gameplay/stream recordings into vertical (9:16) short clips — fully 
 git clone <this-repo>
 cd shorts-maker
 python -m venv .venv
+# Windows:
 .venv\Scripts\activate
+# macOS/Linux:
+source .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
 python scripts/setup.py
 ```
 
-`scripts/setup.py` checks for ffmpeg and Python dependencies, offers to install anything missing, and reports whether it detected a CUDA GPU.
+`scripts/setup.py` checks for ffmpeg and Python dependencies, offers to install anything missing (via winget/brew/apt depending on OS), and reports whether it detected a CUDA GPU.
+
+Optional features live behind pip extras so the base install stays small — install only what you enable in `config.yaml`:
+
+```bash
+pip install -e ".[diarization]"   # speaker diarization (pyannote.audio + torch, heavy)
+pip install -e ".[transitions]"   # context-driven transitions (opencv, librosa)
+pip install -e ".[publish]"       # YouTube analytics/publish queue, TikTok/Instagram publish
+pip install -e ".[all]"           # everything
+```
 
 Copy the example config and fill in your paths:
 
 ```bash
-copy config.example.yaml config.yaml
+copy config.example.yaml config.yaml   # Windows
+cp config.example.yaml config.yaml     # macOS/Linux
 ```
 
 Edit `config.yaml` — see the comments in `config.example.yaml` for what each field does (recommended chunk size ranges, facecam mode cost tradeoffs, etc).
@@ -58,16 +74,7 @@ To actually use it:
 
 ## Making `/make-shorts` available in Claude Code
 
-Claude Code discovers skills from `.claude/skills/<name>/SKILL.md` in the project it's running in — it will not pick up the bare `SKILL.md` at this repo's root on its own. Since that file's instructions invoke `scripts/*.py` and read/write `work/` using paths relative to this repo, the skill only works correctly when Claude Code's working directory is this repo. Set it up once:
-
-```bash
-mkdir .claude\skills\make-shorts
-copy SKILL.md .claude\skills\make-shorts\SKILL.md
-```
-
-(On macOS/Linux: `mkdir -p .claude/skills/make-shorts && cp SKILL.md .claude/skills/make-shorts/SKILL.md`, or symlink it if you'd rather it stay in sync automatically.)
-
-Then always launch Claude Code from this repo's directory (`cd shorts-maker` and run `claude`) — that's what makes `/make-shorts` appear and lets its relative script paths resolve.
+Nothing to set up — the skill ships tracked at `.claude/skills/make-shorts/SKILL.md`, which is exactly where Claude Code discovers project skills. Just always launch Claude Code from this repo's directory (`cd shorts-maker` and run `claude`) — that's what makes `/make-shorts` appear and lets the skill's relative script paths (`scripts/*.py`, `work/`) resolve.
 
 ## Usage
 
@@ -91,7 +98,7 @@ Claude Code will transcribe (cached — only happens once per video ever), searc
 2. In that project, enable **YouTube Data API v3** and **YouTube Analytics API** (APIs & Services → Library → search each → Enable). Both are free, no billing account needed for this usage level.
 3. APIs & Services → OAuth consent screen → External → fill the required fields (app name, your email) → add both scopes (`.../auth/youtube.readonly`, `.../auth/yt-analytics.readonly`) → add yourself under **Test users**. The app stays in "Testing" mode (fine for personal use) — note that Google expires a testing-mode refresh token after 7 days of inactivity, so you may need to re-consent occasionally if you don't run this often; publishing the app removes that limit but isn't necessary for solo use.
 4. APIs & Services → Credentials → Create Credentials → OAuth client ID → Application type **Desktop app** → Create, then Download JSON. Save it as `client_secret.json` in this repo's root (gitignored — never commit it).
-5. `pip install google-api-python-client google-auth-oauthlib google-auth-httplib2`
+5. `pip install -e ".[publish]"`
 6. Run it:
    ```bash
    python scripts/youtube_analytics.py "<config.output_dir>/analytics/channel_performance.json"
@@ -115,7 +122,7 @@ The integration file skips itself automatically if ffmpeg/ffprobe aren't on `PAT
 
 ## Troubleshooting
 
-**`ModuleNotFoundError` / EOFError during `python scripts/setup.py`:** old clones may hit either issue — both are fixed as of this commit. If `setup.py` still asks `[y/N]` and hangs when run non-interactively (no terminal attached), it now defaults to "no" instead of crashing; install ffmpeg yourself with `winget install Gyan.FFmpeg` and re-run.
+**`ModuleNotFoundError` / EOFError during `python scripts/setup.py`:** old clones may hit either issue — both are fixed as of this commit. If `setup.py` still asks `[y/N]` and hangs when run non-interactively (no terminal attached), it now defaults to "no" instead of crashing; install ffmpeg yourself (`winget install Gyan.FFmpeg` / `brew install ffmpeg` / `sudo apt-get install ffmpeg`) and re-run.
 
 **GPU is detected but transcription still runs on CPU:** `scripts/setup.py`/`transcribe.py` only check that `nvidia-smi` works (i.e. a driver is installed), not that the CUDA runtime libraries `faster-whisper`'s backend (ctranslate2) actually needs are present. If `cublas64_12.dll` (or a cuDNN DLL) can't be loaded, `transcribe.py` prints a `[warn] failed to load Whisper model on GPU (...); falling back to CPU` line and keeps going — slower, but it won't crash the run. To get real GPU speed instead of the CPU fallback, install the CUDA runtime as Python wheels (no system-wide CUDA Toolkit install needed):
 
@@ -136,7 +143,11 @@ That's it — `transcribe.py` finds and registers those packages' DLL directorie
 ## Project layout
 
 - `scripts/` — the deterministic building blocks (config loading, transcript chunking, candidate merging, ffmpeg rendering, dependency setup) — each has a Python API and a CLI wrapper.
-- `SKILL.md` — the Claude Code skill that orchestrates the above plus the semantic analysis passes.
+- `.claude/skills/make-shorts/SKILL.md` — the Claude Code skill that orchestrates the above plus the semantic analysis passes.
 - `docs/` — reference material the skill reads during the semantic passes: [viral-clips-ru.md](docs/viral-clips-ru.md) (candidate-finding/trim lens), [metadata-writing-ru.md](docs/metadata-writing-ru.md) and [register-ru.md](docs/register-ru.md) (title/description/caption writing).
 - `<output_dir>/transcripts/` — cached Whisper output per video, next to the rendered clips.
 - `work/<video>/` — per-video working files: chunked transcript, candidate list, render plan (gitignored).
+
+## License
+
+[MIT](LICENSE)

@@ -1,3 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shorts-maker"
+version = "1.0.0"
+description = "Local pipeline turning long gameplay/stream recordings into vertical (9:16) short clips - Whisper transcription + ffmpeg rendering, orchestrated by a Claude Code skill"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+dependencies = [
+    "faster-whisper>=1.0.0",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+# Speaker diarization (config: diarization.enabled) - heavy, pulls in torch.
+diarization = ["pyannote.audio>=3.1"]
+# Context-driven transitions boundary analysis (config: transitions.enabled).
+transitions = ["opencv-python-headless>=4.8", "librosa>=0.10"]
+# YouTube analytics/publish queue + TikTok/Instagram publish scripts.
+publish = [
+    "google-api-python-client>=2.100",
+    "google-auth-oauthlib>=1.2",
+    "google-auth-httplib2>=0.2",
+    "requests>=2.32",
+]
+all = ["shorts-maker[diarization,transitions,publish]"]
+dev = ["pytest>=7.4.0"]
+
+[tool.setuptools]
+packages = ["scripts"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]

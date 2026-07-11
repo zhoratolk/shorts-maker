@@ -5,6 +5,7 @@ from scripts.setup import (
     check_fpcalc,
     check_gpu,
     check_python_deps,
+    ffmpeg_install_command,
     install_ffmpeg,
     install_python_deps,
 )
@@ -64,7 +65,19 @@ def test_check_python_deps_empty_when_all_present():
     assert missing == []
 
 
-def test_install_ffmpeg_calls_winget():
+def test_ffmpeg_install_command_windows_uses_winget():
+    assert ffmpeg_install_command("win32") == ["winget", "install", "-e", "--id", "Gyan.FFmpeg"]
+
+
+def test_ffmpeg_install_command_unknown_platform_without_apt(monkeypatch):
+    monkeypatch.setattr("scripts.setup.shutil.which", lambda name: None)
+    assert ffmpeg_install_command("freebsd") is None
+
+
+def test_install_ffmpeg_runs_platform_command(monkeypatch):
+    monkeypatch.setattr(
+        "scripts.setup.ffmpeg_install_command", lambda: ["pkgmgr", "install", "ffmpeg"]
+    )
     captured = {}
 
     def fake_runner(command, check):
@@ -72,7 +85,13 @@ def test_install_ffmpeg_calls_winget():
 
     install_ffmpeg(runner=fake_runner)
 
-    assert captured["command"] == ["winget", "install", "-e", "--id", "Gyan.FFmpeg"]
+    assert captured["command"] == ["pkgmgr", "install", "ffmpeg"]
+
+
+def test_install_ffmpeg_no_package_manager_skips(monkeypatch, capsys):
+    monkeypatch.setattr("scripts.setup.ffmpeg_install_command", lambda: None)
+    install_ffmpeg(runner=None)  # would raise if it tried to run anything
+    assert "[skip]" in capsys.readouterr().out
 
 
 def test_install_python_deps_maps_module_names_to_packages():

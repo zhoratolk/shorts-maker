@@ -1,9 +1,17 @@
 # Copy this file to config.yaml and fill in your paths.
 
-input_dir: "F:/Запись"
-output_dir: "F:/Готовое/Шортс"
+# Where your source recordings live and where finished clips + transcript
+# cache go. Absolute paths recommended (e.g. "D:/Recordings", "~/Videos").
+input_dir: "./input"
+output_dir: "./output"
 
 whisper:
+  # Model size vs. resources (approximate; VRAM figures are for GPU runs,
+  # CPU runs use system RAM instead and are several times slower):
+  #   tiny/base  ~1 GB   fast, noticeably worse word timestamps
+  #   small      ~2 GB   decent quality
+  #   medium     ~5 GB   good default on 6+ GB VRAM or a strong CPU
+  #   large-v3   ~10 GB  best quality, needs 8+ GB VRAM to be practical
   model: medium        # tiny | base | small | medium | large-v3
   device: auto          # auto | cuda | cpu
   language: auto        # auto, or a fixed language code like "ru"
@@ -27,6 +35,10 @@ analysis:
   # chat literally asking for a clip of this exact moment - the strongest
   # signal in the list, treat it as near-automatic inclusion (still subject
   # to the mature-content and manufactured-candidate rules in SKILL.md).
+  # The default list below is Russian streamer/chat slang - REPLACE it with
+  # your own language's equivalents if your streams aren't in Russian.
+  # English example:
+  # hype_phrases: ["no way", "clip it", "clip that", "lets go", "insane", "cracked", "poggers", "what just happened", "bro what"]
   hype_phrases: ["завоз", "ору", "кринж", "база", "это база", "мем вышел", "жиза", "воу-воу", "рофл", "дичь", "жесть", "разрыв", "го клип", "клипани", "красава", "топчик", "агонь"]
 
 clip:
@@ -140,7 +152,11 @@ facecam:
 subtitles:
   enabled: false
   # Arial Black: bold, full Cyrillic support, ships with Windows - reliable
-  # for burned-in captions over busy gameplay footage.
+  # for burned-in captions over busy gameplay footage. Not installed by
+  # default on macOS/Linux - set a locally available bold font there
+  # (e.g. "DejaVu Sans" or "Noto Sans" with weight via libass fallback);
+  # ffmpeg falls back to a default font with a warning if the name
+  # doesn't resolve, so a wrong name degrades, it doesn't crash.
   font: Arial Black
   size: 92
   color: white

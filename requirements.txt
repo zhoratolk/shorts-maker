@@ -1,16 +1,8 @@
+# Base install - enough for the core pipeline (transcribe, analyze, render).
+# Optional features are pip extras (see pyproject.toml [project.optional-dependencies]):
+#   pip install .[diarization]   # speaker diarization (pyannote.audio + torch, heavy)
+#   pip install .[transitions]   # context-driven transitions (opencv, librosa)
+#   pip install .[publish]       # YouTube analytics/publish queue, TikTok/Instagram publish
+#   pip install .[all]           # everything above
 faster-whisper>=1.0.0
 PyYAML>=6.0
-# optional, only needed when diarization.enabled is true - requires an
-# HF_TOKEN with pyannote/speaker-diarization-3.1 model terms accepted
-pyannote.audio>=3.1
-# optional, only needed by scripts/youtube_analytics.py - requires a Google
-# Cloud OAuth client (client_secret.json), see README
-google-api-python-client>=2.100
-google-auth-oauthlib>=1.2
-google-auth-httplib2>=0.2
-# optional, only needed when transitions.enabled is true (Phase 4 boundary analysis)
-opencv-python-headless>=5.0
-librosa>=0.11
-# used directly by scripts/tiktok_publish.py and scripts/instagram_publish.py
-# (TikTok/Instagram publish API calls) - previously only a transitive dependency
-requests>=2.32
