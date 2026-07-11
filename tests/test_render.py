@@ -12,6 +12,7 @@ from scripts.render import (
     build_ffmpeg_command,
     build_jumpcut_command,
     build_profanity_mask_filter,
+    build_profanity_sound_filter,
     build_punch_zoom_filter,
     build_subtitle_force_style,
     build_transition_filter,
@@ -407,6 +408,132 @@ def test_build_profanity_mask_filter_rejects_negative_span_start():
 def test_build_profanity_mask_filter_rejects_end_before_start():
     with pytest.raises(RenderError, match="invalid profanity span"):
         build_profanity_mask_filter([(2.4, 2.0)])
+
+
+def test_build_profanity_sound_filter_returns_none_for_empty_spans():
+    assert build_profanity_sound_filter([], sound_input_index=1) is None
+
+
+def test_build_profanity_sound_filter_single_span_shape():
+    mute_clause, censor_branches, num_extra_inputs = build_profanity_sound_filter(
+        [(2.0, 2.4)], sound_input_index=1
+    )
+
+    assert mute_clause == "volume=enable='between(t,2.0,2.4)':volume=0"
+    assert censor_branches == [
+        "[1:a]aloop=loop=-1:size=2e9,atrim=0:0.4,asetpts=PTS-STARTPTS,adelay=2000:all=1[c0]"
+    ]
+    assert num_extra_inputs == 1
+
+
+def test_build_profanity_sound_filter_multi_span_uses_asplit():
+    mute_clause, censor_branches, num_extra_inputs = build_profanity_sound_filter(
+        [(2.0, 2.4), (5.0, 5.6)], sound_input_index=1
+    )
+
+    assert mute_clause == "volume=enable='between(t,2.0,2.4)+between(t,5.0,5.6)':volume=0"
+    assert censor_branches == [
+        "[1:a]asplit=2[s0][s1]",
+        "[s0]aloop=loop=-1:size=2e9,atrim=0:0.4,asetpts=PTS-STARTPTS,adelay=2000:all=1[c0]",
+        "[s1]aloop=loop=-1:size=2e9,atrim=0:0.6,asetpts=PTS-STARTPTS,adelay=5000:all=1[c1]",
+    ]
+    assert num_extra_inputs == 1
+
+
+def test_build_profanity_sound_filter_rejects_negative_span_start():
+    with pytest.raises(RenderError, match="invalid profanity span"):
+        build_profanity_sound_filter([(-1.0, 2.4)], sound_input_index=1)
+
+
+def test_build_profanity_sound_filter_rejects_end_before_start():
+    with pytest.raises(RenderError, match="invalid profanity span"):
+        build_profanity_sound_filter([(2.4, 2.0)], sound_input_index=1)
+
+
+def test_build_ffmpeg_command_profanity_sound_adds_input_and_amix(tmp_path):
+    sound_path = tmp_path / "censor.wav"
+    sound_path.write_bytes(b"fake-wav")
+    mute_clause, censor_branches, _ = build_profanity_sound_filter([(2.0, 2.4)], sound_input_index=1)
+
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0, crop_filter="crop=1,scale=2",
+        profanity_sound=(str(sound_path), mute_clause, censor_branches),
+    )
+
+    assert "-vf" not in command
+    assert "-af" not in command
+    assert command[command.index("-i") + 1] == "in.mp4"
+    # extra sound input follows the main input/-t group
+    assert str(sound_path) in command
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "[0:v]crop=1,scale=2[vout]" in filter_complex
+    assert "[0:a]" in filter_complex and "[main]" in filter_complex
+    assert mute_clause in filter_complex
+    assert censor_branches[0] in filter_complex
+    assert "[main][c0]amix=inputs=2:duration=first:normalize=0[aout]" in filter_complex
+    assert command[command.index("-map") + 1] == "[vout]"
+    assert "[aout]" in command
+
+
+def test_build_ffmpeg_command_profanity_sound_missing_file_raises():
+    with pytest.raises(RenderError, match="profanity censor sound file not found"):
+        build_ffmpeg_command(
+            "in.mp4", "out.mp4", start=10.0, end=40.0, crop_filter="crop=1,scale=2",
+            profanity_sound=("does_not_exist.wav", "volume=enable='between(t,0,1)':volume=0", []),
+        )
+
+
+def test_build_ffmpeg_command_no_profanity_sound_stays_on_vf_af_path():
+    command = build_ffmpeg_command(
+        "in.mp4", "out.mp4", start=10.0, end=40.0, crop_filter="crop=1,scale=2",
+    )
+
+    assert "-vf" in command
+    assert "-filter_complex" not in command
+
+
+def test_build_jumpcut_command_profanity_sound_adds_input_and_amix(tmp_path):
+    sound_path = tmp_path / "censor.wav"
+    sound_path.write_bytes(b"fake-wav")
+    mute_clause, censor_branches, _ = build_profanity_sound_filter([(2.0, 2.4)], sound_input_index=1)
+
+    command = build_jumpcut_command(
+        "in.mp4", "out.mp4", clip_start=10.0, clip_end=40.0,
+        keep_segments=[(10.0, 20.0), (22.0, 40.0)], crop_filter="crop=1,scale=2",
+        profanity_sound=(str(sound_path), mute_clause, censor_branches),
+    )
+
+    assert str(sound_path) in command
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "[acat]" in filter_complex and "[main]" in filter_complex
+    assert mute_clause in filter_complex
+    assert "[main][c0]amix=inputs=2:duration=first:normalize=0[aout]" in filter_complex
+
+
+def test_build_compilation_command_profanity_sound_uses_member_count_as_sound_index(tmp_path):
+    sound_path = tmp_path / "censor.wav"
+    sound_path.write_bytes(b"fake-wav")
+    members = [{"start": 10.0, "end": 15.0}, {"start": 50.0, "end": 55.0}]
+    mute_clause, censor_branches, _ = build_profanity_sound_filter([(1.0, 1.4)], sound_input_index=len(members))
+
+    command = build_compilation_command(
+        "in.mp4", "out.mp4", members, crop_filter="crop=1,scale=2",
+        profanity_sound=(str(sound_path), mute_clause, censor_branches),
+    )
+
+    assert str(sound_path) in command
+    # sound input follows the two per-member inputs (index 2)
+    assert "[2:a]" in censor_branches[0]
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "[main][c0]amix=inputs=2:duration=first:normalize=0[aout]" in filter_complex
+
+
+def test_build_compilation_command_no_profanity_sound_unchanged():
+    members = [{"start": 10.0, "end": 15.0}, {"start": 50.0, "end": 55.0}]
+
+    command = build_compilation_command("in.mp4", "out.mp4", members, crop_filter="crop=1,scale=2")
+
+    assert "amix" not in " ".join(command)
 
 
 def test_build_ffmpeg_command_punch_zoom_at_applies_before_effects_and_subtitles():
@@ -1374,3 +1501,89 @@ def test_render_clip_masks_profanity_spans_in_compilation_branch():
 
     filter_complex = command[command.index("-filter_complex") + 1]
     assert "bandreject=enable='between(t,1.0,1.4)'" in filter_complex
+
+
+def test_render_clip_sound_mode_existing_file_uses_sound_filter_in_plain_branch(tmp_path):
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    sound_path = tmp_path / "censor.wav"
+    sound_path.write_bytes(b"fake-wav")
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "profanity_spans": [[2.0, 2.4]],
+    }
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        profanity_mask_mode="sound",
+        profanity_mask_sound_path=str(sound_path),
+        runner=lambda command, capture_output, text: FakeResult(),
+    )
+
+    assert str(sound_path) in command
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "amix" in filter_complex
+    assert "volume=enable='between(t,2.0,2.4)':volume=0" in filter_complex
+    assert "bandreject" not in filter_complex
+
+
+def test_render_clip_sound_mode_missing_file_falls_back_to_garble(tmp_path, capsys):
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "profanity_spans": [[2.0, 2.4]],
+    }
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        profanity_mask_mode="sound",
+        profanity_mask_sound_path=str(tmp_path / "does_not_exist.wav"),
+        runner=lambda command, capture_output, text: FakeResult(),
+    )
+
+    # fail-open: never raises, falls back to the garble mask
+    audio_filter = command[command.index("-af") + 1]
+    assert "bandreject=enable='between(t,2.0,2.4)'" in audio_filter
+    captured = capsys.readouterr()
+    assert "[warn]" in captured.err
+    assert "falling back to garble mask" in captured.err
+
+
+def test_render_clip_sound_mode_compilation_branch_uses_member_count_as_sound_index(tmp_path):
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    sound_path = tmp_path / "censor.wav"
+    sound_path.write_bytes(b"fake-wav")
+    plan_entry = {
+        "type": "compilation",
+        "crop_style": "zoom",
+        "segments": [
+            {"start": 10.0, "end": 15.0},
+            {"start": 50.0, "end": 55.0},
+        ],
+        "profanity_spans": [[1.0, 1.4]],
+    }
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        profanity_mask_mode="sound",
+        profanity_mask_sound_path=str(sound_path),
+        runner=lambda command, capture_output, text: FakeResult(),
+    )
+
+    filter_complex = command[command.index("-filter_complex") + 1]
+    assert "[2:a]" in filter_complex  # sound input lands after the 2 member inputs
+    assert "amix" in filter_complex
