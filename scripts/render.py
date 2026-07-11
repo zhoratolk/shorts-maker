@@ -445,6 +445,7 @@ def build_ffmpeg_command(
     denoise_strength: float = 6.0,
     profanity_filter: str | None = None,
     profanity_sound: tuple[str, str, list[str]] | None = None,
+    video_codec: str = "libx264",
 ) -> list[str]:
     """profanity_sound, when set, is (sound_path, mute_clause,
     censor_branches) from build_profanity_sound_filter - folds BOTH video
@@ -506,7 +507,7 @@ def build_ffmpeg_command(
             "-filter_complex", filter_complex,
             "-map", "[vout]",
             "-map", "[aout]",
-            "-c:v", "libx264",
+            "-c:v", video_codec,
             "-c:a", "aac",
             output_path,
         ]
@@ -524,7 +525,7 @@ def build_ffmpeg_command(
         "-t", str(total_duration),
         "-vf", video_filter,
         *audio_args,
-        "-c:v", "libx264",
+        "-c:v", video_codec,
         "-c:a", "aac",
         output_path,
     ]
@@ -661,6 +662,7 @@ def build_jumpcut_command(
     min_overlap_seconds: float = 0.12,
     profanity_filter: str | None = None,
     profanity_sound: tuple[str, str, list[str]] | None = None,
+    video_codec: str = "libx264",
 ) -> list[str]:
     """Like build_ffmpeg_command, but keep_segments (absolute source-file
     seconds, from jumpcuts.compute_keep_segments) are trimmed out of the
@@ -776,7 +778,7 @@ def build_jumpcut_command(
         "-filter_complex", filter_complex,
         "-map", "[vout]",
         "-map", "[aout]",
-        "-c:v", "libx264",
+        "-c:v", video_codec,
         "-c:a", "aac",
         output_path,
     ]
@@ -884,6 +886,7 @@ def build_compilation_command(
     denoise_strength: float = 6.0,
     profanity_filter: str | None = None,
     profanity_sound: tuple[str, str, list[str]] | None = None,
+    video_codec: str = "libx264",
 ) -> list[str]:
     """Multi-input ffmpeg command builder for a COMP-02 compilation entry:
     opens the source video once per compilation member (own -ss/-i/-t per
@@ -1027,7 +1030,7 @@ def build_compilation_command(
         "-filter_complex", filter_complex,
         "-map", "[vout]",
         "-map", "[aout]",
-        "-c:v", "libx264",
+        "-c:v", video_codec,
         "-c:a", "aac",
         output_path,
     ]
@@ -1076,6 +1079,7 @@ def render_clip(
     profanity_warble_depth: float = 0.7,
     profanity_mask_mode: str = "garble",
     profanity_mask_sound_path: str = "",
+    video_codec: str = "libx264",
     runner=subprocess.run,
 ) -> list[str]:
     crop_style = plan_entry["crop_style"]
@@ -1188,6 +1192,7 @@ def render_clip(
             denoise_strength=denoise_strength,
             profanity_filter=profanity_filter,
             profanity_sound=profanity_sound,
+            video_codec=video_codec,
         )
     else:
         start, end = clamp_clip_bounds(plan_entry["start"], plan_entry["end"], video_duration)
@@ -1224,14 +1229,14 @@ def render_clip(
                 fade_seconds, subtitle_style, denoise, loudnorm,
                 vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
                 denoise_strength, boundary_transitions, boundary_gaps, transition_duration, min_overlap_seconds,
-                profanity_filter, profanity_sound,
+                profanity_filter, profanity_sound, video_codec,
             )
         else:
             command = build_ffmpeg_command(
                 input_path, output_path, start, end, crop_filter, subtitles_path,
                 fade_seconds, video_duration, subtitle_style, denoise, loudnorm,
                 vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
-                denoise_strength, profanity_filter, profanity_sound,
+                denoise_strength, profanity_filter, profanity_sound, video_codec,
             )
 
     result = runner(command, capture_output=True, text=True)
@@ -1329,6 +1334,10 @@ def main() -> None:
         help="Path to a custom censor audio clip, used only when --profanity-mask-mode=sound "
         "(a missing file fails open to the garble mask)",
     )
+    parser.add_argument(
+        "--video-codec", default="libx264",
+        help="ffmpeg -c:v encoder to use, e.g. h264_nvenc for NVIDIA hardware encoding (default: libx264)",
+    )
     args = parser.parse_args()
 
     subtitle_style = {
@@ -1371,6 +1380,7 @@ def main() -> None:
             profanity_garble_width_octaves=args.profanity_garble_width_octaves,
             profanity_warble_freq=args.profanity_warble_freq,
             profanity_warble_depth=args.profanity_warble_depth,
+            video_codec=args.video_codec,
             profanity_mask_mode=args.profanity_mask_mode,
             profanity_mask_sound_path=args.profanity_mask_sound_path,
         )
