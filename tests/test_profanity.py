@@ -207,6 +207,37 @@ def test_find_profane_spans_span_cap_fail_open_returns_empty_and_warns(capsys):
     assert "exceeds cap" in captured.err
 
 
+# --- find_profane_spans onset_seconds ---------------------------------------
+
+
+def test_find_profane_spans_onset_zero_matches_default_behavior():
+    words = [{"word": "fuck", "start": 1.0, "end": 1.3}]
+
+    spans_default = find_profane_spans(words, _TEST_WORDLIST, pad_seconds=0.08)
+    spans_onset_zero = find_profane_spans(words, _TEST_WORDLIST, pad_seconds=0.08, onset_seconds=0.0)
+
+    assert spans_default == spans_onset_zero == [(0.92, 1.38)]
+
+
+def test_find_profane_spans_onset_shifts_start_no_pad_subtraction():
+    words = [{"word": "fuck", "start": 1.0, "end": 1.3}]
+
+    spans = find_profane_spans(words, _TEST_WORDLIST, pad_seconds=0.08, onset_seconds=0.12)
+
+    # start = word_start + onset (no pad subtracted); end unchanged (+pad).
+    assert spans == [(1.12, 1.38)]
+
+
+def test_find_profane_spans_onset_degenerate_masks_whole_word():
+    words = [{"word": "fuck", "start": 1.0, "end": 1.1}]
+
+    # onset (0.5) >= word_duration (0.1) -> whole-word fallback, never past
+    # word end.
+    spans = find_profane_spans(words, _TEST_WORDLIST, pad_seconds=0.0, onset_seconds=0.5)
+
+    assert spans == [(1.0, 1.1)]
+
+
 # --- CLI wrapper -------------------------------------------------------------
 
 
@@ -232,6 +263,22 @@ def test_cli_prints_spans_json_and_capturable_last_line(tmp_path):
     spans = json.loads(lines[0])
     assert spans == [[1.0, 1.2]]
     assert lines[-1] == str(words_path)
+
+
+def test_cli_threads_onset_seconds_into_find_profane_spans(tmp_path):
+    words_path = tmp_path / "words.json"
+    words_path.write_text(json.dumps([{"word": "fuck", "start": 1.0, "end": 1.3}]), encoding="utf-8")
+    wordlist_path = tmp_path / "wordlist.yaml"
+    wordlist_path.write_text("en:\n  - root: \"fuck\"\n", encoding="utf-8")
+
+    result = _run_cli(
+        [str(words_path), "--wordlist", str(wordlist_path), "--pad-seconds", "0.08", "--onset-seconds", "0.12"]
+    )
+
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.strip().splitlines()
+    spans = json.loads(lines[0])
+    assert spans == [[1.12, 1.38]]
 
 
 # --- shipped data/profanity_wordlist.yaml (D-01, committed data file) ------

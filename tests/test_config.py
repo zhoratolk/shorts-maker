@@ -1077,6 +1077,9 @@ def test_load_config_profanity_defaults_when_section_missing(tmp_path):
     assert config.profanity.garble_width_octaves == 4.0
     assert config.profanity.warble_freq == 18.0
     assert config.profanity.warble_depth == 0.7
+    assert config.profanity.mask_mode == "garble"
+    assert config.profanity.mask_sound_path == ""
+    assert config.profanity.mask_onset_seconds == 0.0
 
 
 def test_load_config_profanity_custom_values_round_trip(tmp_path):
@@ -1095,6 +1098,9 @@ def test_load_config_profanity_custom_values_round_trip(tmp_path):
           garble_width_octaves: 3.0
           warble_freq: 20.0
           warble_depth: 0.5
+          mask_mode: "sound"
+          mask_sound_path: "data/censor.wav"
+          mask_onset_seconds: 0.12
         """,
     )
 
@@ -1109,6 +1115,9 @@ def test_load_config_profanity_custom_values_round_trip(tmp_path):
     assert config.profanity.garble_width_octaves == 3.0
     assert config.profanity.warble_freq == 20.0
     assert config.profanity.warble_depth == 0.5
+    assert config.profanity.mask_mode == "sound"
+    assert config.profanity.mask_sound_path == "data/censor.wav"
+    assert config.profanity.mask_onset_seconds == 0.12
 
 
 def test_load_config_profanity_pad_seconds_negative_raises(tmp_path):
@@ -1244,6 +1253,86 @@ def test_load_config_profanity_warble_depth_above_one_raises(tmp_path):
 
     with pytest.raises(ConfigError, match="profanity.warble_depth"):
         load_config(path)
+
+
+def test_load_config_profanity_mask_mode_invalid_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        profanity:
+          mask_mode: "explode"
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="profanity.mask_mode"):
+        load_config(path)
+
+
+def test_load_config_profanity_mask_onset_seconds_negative_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        profanity:
+          mask_onset_seconds: -0.01
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="profanity.mask_onset_seconds"):
+        load_config(path)
+
+
+def test_load_config_profanity_mask_mode_sound_requires_sound_path(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        profanity:
+          mask_mode: "sound"
+          mask_sound_path: ""
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="profanity.mask_sound_path"):
+        load_config(path)
+
+
+def test_load_config_profanity_mask_mode_sound_with_whitespace_path_raises(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        profanity:
+          mask_mode: "sound"
+          mask_sound_path: "   "
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="profanity.mask_sound_path"):
+        load_config(path)
+
+
+def test_load_config_profanity_mask_mode_sound_with_path_loads_ok(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        profanity:
+          mask_mode: "sound"
+          mask_sound_path: "data/censor.wav"
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.profanity.mask_mode == "sound"
+    assert config.profanity.mask_sound_path == "data/censor.wav"
 
 
 def test_load_config_transitions_unknown_field_raises(tmp_path):
