@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 TARGET_WIDTH = 1080
@@ -349,6 +350,57 @@ def build_profanity_mask_filter(
     )
 
 
+def build_profanity_sound_filter(
+    spans: list[tuple[float, float]],
+    sound_input_index: int,
+) -> tuple[str, list[str], int] | None:
+    """Builds the mute-clause + censor-branch pieces of the custom-sound
+    profanity mask (07-05 mask_mode="sound"): instead of duck+garble, the
+    main track is muted inside each span (same shared OR-composed `enable`
+    timeline as build_profanity_mask_filter, so both masks stay on one
+    timeline expression) and a censor sound clip (already opened as input
+    index `sound_input_index`) is looped, trimmed to each span's duration,
+    delayed to the span's start, and later amixed on top by the caller.
+
+    Returns (mute_clause, censor_branches, num_extra_inputs) - the caller is
+    responsible for adding the sound file as an extra -i input and folding
+    censor_branches + an amix stage into its own filter_complex.
+    censor_branches is [asplit_stage?, branch_0, branch_1, ...] - the asplit
+    stage is only present when there is more than one span (single-span case
+    reads directly from [sound_input_index:a], no asplit needed).
+
+    Returns None when spans is empty (no masking needed - mirrors
+    build_profanity_mask_filter).
+    """
+    if not spans:
+        return None
+    for start, end in spans:
+        if start < 0 or end <= start:
+            raise RenderError(f"invalid profanity span ({start}, {end})")
+
+    enable_expr = "+".join(f"between(t,{start},{end})" for start, end in spans)
+    mute_clause = f"volume=enable='{enable_expr}':volume=0"
+
+    span_count = len(spans)
+    censor_branches: list[str] = []
+    if span_count > 1:
+        split_labels = "".join(f"[s{i}]" for i in range(span_count))
+        censor_branches.append(f"[{sound_input_index}:a]asplit={span_count}{split_labels}")
+        sources = [f"[s{i}]" for i in range(span_count)]
+    else:
+        sources = [f"[{sound_input_index}:a]"]
+
+    for index, (start, end) in enumerate(spans):
+        span_duration = round(end - start, 3)
+        start_ms = round(start * 1000)
+        censor_branches.append(
+            f"{sources[index]}aloop=loop=-1:size=2e9,atrim=0:{span_duration},"
+            f"asetpts=PTS-STARTPTS,adelay={start_ms}:all=1[c{index}]"
+        )
+
+    return mute_clause, censor_branches, 1
+
+
 def build_audio_filter_chain(
     denoise: bool, loudnorm: bool, fade_filter: str | None, denoise_strength: float = 6.0,
     profanity_filter: str | None = None,
@@ -392,7 +444,14 @@ def build_ffmpeg_command(
     punch_zoom_ramp: float = 0.25,
     denoise_strength: float = 6.0,
     profanity_filter: str | None = None,
+    profanity_sound: tuple[str, str, list[str]] | None = None,
 ) -> list[str]:
+    """profanity_sound, when set, is (sound_path, mute_clause,
+    censor_branches) from build_profanity_sound_filter - folds BOTH video
+    and audio into one -filter_complex (mirroring build_jumpcut_command's
+    [vout]/[aout] structure) since -vf cannot coexist with -filter_complex.
+    When None (the default / garble-mask path), the original plain -vf/-af
+    command is produced byte-identically."""
     clip_duration = end - start
     tail_available = 0.0 if video_duration is None else max(0.0, video_duration - end)
     extend, fade_start, fade_duration = compute_fade_plan(clip_duration, fade_seconds, tail_available)
@@ -420,6 +479,37 @@ def build_ffmpeg_command(
         # start offset is relative to the trimmed clip, not the source video.
         video_filter = f"{video_filter},fade=t=out:st={fade_start}:d={fade_duration}"
         fade_filter = f"afade=t=out:st={fade_start}:d={fade_duration}"
+
+    if profanity_sound is not None:
+        sound_path, mute_clause, censor_branches = profanity_sound
+        if not Path(sound_path).exists():
+            raise RenderError(f"profanity censor sound file not found: {sound_path}")
+
+        audio_filter_chain = build_audio_filter_chain(
+            denoise, loudnorm, fade_filter, denoise_strength, mute_clause
+        ) or "anull"
+        span_count = sum(1 for branch in censor_branches if "adelay=" in branch)
+        amix_stage = (
+            "[main]" + "".join(f"[c{i}]" for i in range(span_count))
+            + f"amix=inputs={span_count + 1}:duration=first:normalize=0[aout]"
+        )
+        filter_complex = ";".join(
+            [f"[0:v]{video_filter}[vout]", f"[0:a]{audio_filter_chain}[main]", *censor_branches, amix_stage]
+        )
+        return [
+            "ffmpeg", "-y",
+            "-loglevel", "error",
+            "-ss", str(start),
+            "-i", input_path,
+            "-t", str(total_duration),
+            "-i", sound_path,
+            "-filter_complex", filter_complex,
+            "-map", "[vout]",
+            "-map", "[aout]",
+            "-c:v", "libx264",
+            "-c:a", "aac",
+            output_path,
+        ]
 
     audio_filter_chain = build_audio_filter_chain(
         denoise, loudnorm, fade_filter, denoise_strength, profanity_filter
@@ -570,6 +660,7 @@ def build_jumpcut_command(
     transition_duration: float = 0.35,
     min_overlap_seconds: float = 0.12,
     profanity_filter: str | None = None,
+    profanity_sound: tuple[str, str, list[str]] | None = None,
 ) -> list[str]:
     """Like build_ffmpeg_command, but keep_segments (absolute source-file
     seconds, from jumpcuts.compute_keep_segments) are trimmed out of the
@@ -649,13 +740,31 @@ def build_jumpcut_command(
         video_ops.append(f"fade=t=out:st={fade_start}:d={fade_duration}")
         fade_filter = f"afade=t=out:st={fade_start}:d={fade_duration}"
 
-    audio_filter_chain = build_audio_filter_chain(
-        denoise, loudnorm, fade_filter, denoise_strength, profanity_filter
-    ) or "anull"
-
     video_stage = f"[vcat]{','.join(video_ops)}[vout]"
-    audio_stage = f"[acat]{audio_filter_chain}[aout]"
-    filter_complex = ";".join(stages + [video_stage, audio_stage])
+
+    extra_inputs: list[str] = []
+    if profanity_sound is not None:
+        sound_path, mute_clause, censor_branches = profanity_sound
+        if not Path(sound_path).exists():
+            raise RenderError(f"profanity censor sound file not found: {sound_path}")
+
+        audio_filter_chain = build_audio_filter_chain(
+            denoise, loudnorm, fade_filter, denoise_strength, mute_clause
+        ) or "anull"
+        span_count = sum(1 for branch in censor_branches if "adelay=" in branch)
+        amix_stage = (
+            "[main]" + "".join(f"[c{i}]" for i in range(span_count))
+            + f"amix=inputs={span_count + 1}:duration=first:normalize=0[aout]"
+        )
+        audio_stage = f"[acat]{audio_filter_chain}[main]"
+        filter_complex = ";".join(stages + [video_stage, audio_stage, *censor_branches, amix_stage])
+        extra_inputs = ["-i", sound_path]
+    else:
+        audio_filter_chain = build_audio_filter_chain(
+            denoise, loudnorm, fade_filter, denoise_strength, profanity_filter
+        ) or "anull"
+        audio_stage = f"[acat]{audio_filter_chain}[aout]"
+        filter_complex = ";".join(stages + [video_stage, audio_stage])
 
     return [
         "ffmpeg", "-y",
@@ -663,6 +772,7 @@ def build_jumpcut_command(
         "-ss", str(clip_start),
         "-i", input_path,
         "-t", str(round(clip_end - clip_start, 3)),
+        *extra_inputs,
         "-filter_complex", filter_complex,
         "-map", "[vout]",
         "-map", "[aout]",
@@ -773,6 +883,7 @@ def build_compilation_command(
     punch_zoom_ramp: float = 0.25,
     denoise_strength: float = 6.0,
     profanity_filter: str | None = None,
+    profanity_sound: tuple[str, str, list[str]] | None = None,
 ) -> list[str]:
     """Multi-input ffmpeg command builder for a COMP-02 compilation entry:
     opens the source video once per compilation member (own -ss/-i/-t per
@@ -882,18 +993,37 @@ def build_compilation_command(
         video_ops.append(f"fade=t=out:st={fade_start}:d={fade_duration}")
         fade_filter = f"afade=t=out:st={fade_start}:d={fade_duration}"
 
-    audio_filter_chain = build_audio_filter_chain(
-        denoise, loudnorm, fade_filter, denoise_strength, profanity_filter
-    ) or "anull"
-
     video_stage = f"[vcat]{','.join(video_ops)}[vout]"
-    audio_stage = f"[acat]{audio_filter_chain}[aout]"
-    filter_complex = ";".join(stages + [video_stage, audio_stage])
+
+    extra_inputs: list[str] = []
+    if profanity_sound is not None:
+        sound_path, mute_clause, censor_branches = profanity_sound
+        if not Path(sound_path).exists():
+            raise RenderError(f"profanity censor sound file not found: {sound_path}")
+
+        audio_filter_chain = build_audio_filter_chain(
+            denoise, loudnorm, fade_filter, denoise_strength, mute_clause
+        ) or "anull"
+        span_count = sum(1 for branch in censor_branches if "adelay=" in branch)
+        amix_stage = (
+            "[main]" + "".join(f"[c{i}]" for i in range(span_count))
+            + f"amix=inputs={span_count + 1}:duration=first:normalize=0[aout]"
+        )
+        audio_stage = f"[acat]{audio_filter_chain}[main]"
+        filter_complex = ";".join(stages + [video_stage, audio_stage, *censor_branches, amix_stage])
+        extra_inputs = ["-i", sound_path]
+    else:
+        audio_filter_chain = build_audio_filter_chain(
+            denoise, loudnorm, fade_filter, denoise_strength, profanity_filter
+        ) or "anull"
+        audio_stage = f"[acat]{audio_filter_chain}[aout]"
+        filter_complex = ";".join(stages + [video_stage, audio_stage])
 
     return [
         "ffmpeg", "-y",
         "-loglevel", "error",
         *input_args,
+        *extra_inputs,
         "-filter_complex", filter_complex,
         "-map", "[vout]",
         "-map", "[aout]",
@@ -944,6 +1074,8 @@ def render_clip(
     profanity_garble_width_octaves: float = 4.0,
     profanity_warble_freq: float = 18.0,
     profanity_warble_depth: float = 0.7,
+    profanity_mask_mode: str = "garble",
+    profanity_mask_sound_path: str = "",
     runner=subprocess.run,
 ) -> list[str]:
     crop_style = plan_entry["crop_style"]
@@ -963,20 +1095,32 @@ def render_clip(
 
     profanity_spans_raw = plan_entry.get("profanity_spans")
     profanity_filter = None
+    # (spans, sound_path) - resolved into a (sound_path, mute_clause,
+    # censor_branches) profanity_sound tuple per-branch below, once the
+    # correct sound_input_index (1 for single-input builders, len(members)
+    # for compilation) is known.
+    profanity_sound_pending: tuple[list[tuple[float, float]], str] | None = None
     if profanity_spans_raw:
         profanity_spans = [(span[0], span[1]) for span in profanity_spans_raw]
-        profanity_filter = build_profanity_mask_filter(
-            profanity_spans,
-            duck_volume=profanity_duck_volume,
-            garble_freq=profanity_garble_freq,
-            garble_width_octaves=profanity_garble_width_octaves,
-            warble_freq=profanity_warble_freq,
-            warble_depth=profanity_warble_depth,
-        )
+        if profanity_mask_mode == "sound" and profanity_mask_sound_path and Path(profanity_mask_sound_path).exists():
+            profanity_sound_pending = (profanity_spans, profanity_mask_sound_path)
+        else:
+            if profanity_mask_mode == "sound":
+                print(
+                    f"[warn] profanity mask_mode=sound but sound file {profanity_mask_sound_path!r} "
+                    "is missing/empty; falling back to garble mask",
+                    file=sys.stderr,
+                )
+            profanity_filter = build_profanity_mask_filter(
+                profanity_spans,
+                duck_volume=profanity_duck_volume,
+                garble_freq=profanity_garble_freq,
+                garble_width_octaves=profanity_garble_width_octaves,
+                warble_freq=profanity_warble_freq,
+                warble_depth=profanity_warble_depth,
+            )
 
     if subtitles_path is not None and subtitle_style is not None:
-        import sys
-
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
         from scripts.subtitles import group_words_into_cues, parse_srt
 
@@ -1018,6 +1162,14 @@ def render_clip(
                 member["keep_segments"] = [(seg[0], seg[1]) for seg in segment["keep_segments"]]
             members.append(member)
 
+        profanity_sound = None
+        if profanity_sound_pending is not None:
+            spans, sound_path = profanity_sound_pending
+            sound_filter_result = build_profanity_sound_filter(spans, sound_input_index=len(members))
+            if sound_filter_result is not None:
+                mute_clause, censor_branches, _ = sound_filter_result
+                profanity_sound = (sound_path, mute_clause, censor_branches)
+
         command = build_compilation_command(
             input_path, output_path, members, crop_filter,
             boundary_transitions=plan_entry.get("boundary_transitions"),
@@ -1035,9 +1187,21 @@ def render_clip(
             punch_zoom_ramp=punch_zoom_ramp,
             denoise_strength=denoise_strength,
             profanity_filter=profanity_filter,
+            profanity_sound=profanity_sound,
         )
     else:
         start, end = clamp_clip_bounds(plan_entry["start"], plan_entry["end"], video_duration)
+
+        profanity_sound = None
+        if profanity_sound_pending is not None:
+            spans, sound_path = profanity_sound_pending
+            # Single existing -i input for both build_jumpcut_command and
+            # build_ffmpeg_command, so the sound file always lands at index 1.
+            sound_filter_result = build_profanity_sound_filter(spans, sound_input_index=1)
+            if sound_filter_result is not None:
+                mute_clause, censor_branches, _ = sound_filter_result
+                profanity_sound = (sound_path, mute_clause, censor_branches)
+
         keep_segments_raw = plan_entry.get("keep_segments")
         if keep_segments_raw is not None:
             keep_segments = [(segment[0], segment[1]) for segment in keep_segments_raw]
@@ -1050,7 +1214,6 @@ def render_clip(
                         f"boundary_transitions length ({len(boundary_transitions)}) must equal "
                         f"len(keep_segments) - 1 ({expected_length})"
                     )
-                import sys
 
                 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
                 from scripts.jumpcuts import compute_boundary_gaps
@@ -1061,14 +1224,14 @@ def render_clip(
                 fade_seconds, subtitle_style, denoise, loudnorm,
                 vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
                 denoise_strength, boundary_transitions, boundary_gaps, transition_duration, min_overlap_seconds,
-                profanity_filter,
+                profanity_filter, profanity_sound,
             )
         else:
             command = build_ffmpeg_command(
                 input_path, output_path, start, end, crop_filter, subtitles_path,
                 fade_seconds, video_duration, subtitle_style, denoise, loudnorm,
                 vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
-                denoise_strength, profanity_filter,
+                denoise_strength, profanity_filter, profanity_sound,
             )
 
     result = runner(command, capture_output=True, text=True)
@@ -1156,6 +1319,16 @@ def main() -> None:
         "--profanity-warble-depth", type=float, default=0.7,
         help="tremolo modulation depth for the profanity mask's garble layer (D-03)",
     )
+    parser.add_argument(
+        "--profanity-mask-mode", default="garble", choices=["garble", "sound"],
+        help="Which mask to apply inside a plan entry's profanity_spans: garble (duck+bandreject+tremolo) "
+        "or sound (mute the span and overlay --profanity-mask-sound-path)",
+    )
+    parser.add_argument(
+        "--profanity-mask-sound-path", default="",
+        help="Path to a custom censor audio clip, used only when --profanity-mask-mode=sound "
+        "(a missing file fails open to the garble mask)",
+    )
     args = parser.parse_args()
 
     subtitle_style = {
@@ -1198,6 +1371,8 @@ def main() -> None:
             profanity_garble_width_octaves=args.profanity_garble_width_octaves,
             profanity_warble_freq=args.profanity_warble_freq,
             profanity_warble_depth=args.profanity_warble_depth,
+            profanity_mask_mode=args.profanity_mask_mode,
+            profanity_mask_sound_path=args.profanity_mask_sound_path,
         )
         print(output_path)
 
