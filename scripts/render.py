@@ -500,9 +500,12 @@ def build_ffmpeg_command(
         return [
             "ffmpeg", "-y",
             "-loglevel", "error",
+            # -t must precede its -i: placed after input_path it would bind
+            # to the NEXT input (the censor sound), leaving the main input
+            # unbounded and encoding the whole rest of the source.
             "-ss", str(start),
-            "-i", input_path,
             "-t", str(total_duration),
+            "-i", input_path,
             "-i", sound_path,
             "-filter_complex", filter_complex,
             "-map", "[vout]",
@@ -521,8 +524,8 @@ def build_ffmpeg_command(
         "ffmpeg", "-y",
         "-loglevel", "error",
         "-ss", str(start),
-        "-i", input_path,
         "-t", str(total_duration),
+        "-i", input_path,
         "-vf", video_filter,
         *audio_args,
         "-c:v", video_codec,
@@ -771,9 +774,11 @@ def build_jumpcut_command(
     return [
         "ffmpeg", "-y",
         "-loglevel", "error",
+        # -t before -i: as a trailing option it would bind to the next input
+        # (extra_inputs' censor sound) instead of bounding this clip.
         "-ss", str(clip_start),
-        "-i", input_path,
         "-t", str(round(clip_end - clip_start, 3)),
+        "-i", input_path,
         *extra_inputs,
         "-filter_complex", filter_complex,
         "-map", "[vout]",
@@ -924,10 +929,12 @@ def build_compilation_command(
     # relative to its own member's start, not the source file's absolute time.
     input_args: list[str] = []
     for member in members:
+        # -t before this member's -i: trailing it would bind to the NEXT
+        # member's input (or the censor sound), shifting every duration by one.
         input_args += [
             "-ss", str(member["start"]),
-            "-i", input_path,
             "-t", str(round(member["end"] - member["start"], 3)),
+            "-i", input_path,
         ]
 
     flat_segments: list[tuple[int, float, float]] = []
