@@ -4,9 +4,19 @@ work/
 # even though work/ above already covers it (explicit privacy boundary).
 __pycache__/
 *.pyc
+*.egg-info/
 .venv/
 config.yaml
-.claude/
+# .claude/ is machine-local (settings, worktrees) EXCEPT the make-shorts
+# skill, which is tracked so a fresh clone gets /make-shorts working with
+# zero setup steps.
+.claude/*
+!.claude/skills
+.claude/skills/*
+!.claude/skills/make-shorts
+.superpowers/
+.planning/.tmp-*
+.planning/research/.cache/
 client_secret.json
 token.json
 upload_token.json
