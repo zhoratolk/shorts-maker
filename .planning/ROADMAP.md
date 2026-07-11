@@ -19,6 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: Context-Driven Transitions** - Clip boundaries get a transition chosen from scene/audio context (not just a fixed cut/punch-zoom) when stitching multiple segments together (completed 2026-07-09)
 - [x] **Phase 5: Sub-Threshold Highlight Compilation** - Moments too short to stand alone are grouped by similarity and stitched into one coherent full-length short instead of being discarded (completed 2026-07-10)
 - [x] **Phase 6: TikTok & Instagram Auto-Publish** - The same scheduled auto-publish flow extends to TikTok and Instagram Reels once each platform's app-review/audit gate is cleared (completed 2026-07-10)
+- [x] **Phase 7: Profanity Auto-Bleep** - Swear words in the transcript are masked at render time (duck+garble or custom censor sound), fail-open and default-off, defeating platform STT moderation scanners (completed 2026-07-11)
 
 ## Phase Details
 
@@ -198,7 +199,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 4. Context-Driven Transitions | 6/6 | Complete   | 2026-07-09 |
 | 5. Sub-Threshold Highlight Compilation | 5/5 | Complete    | 2026-07-10 |
 | 6. TikTok & Instagram Auto-Publish | 7/7 | Complete    | 2026-07-10 |
-| 7. Profanity Auto-Bleep | 4/5 | In Progress|  |
+| 7. Profanity Auto-Bleep | 5/5 | Complete    | 2026-07-11 |
 
 ### Phase 7: Profanity Auto-Bleep
 
@@ -211,7 +212,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
   2. Each identified swear word's audio span gets a quiet overlay tone applied instead of being cut to silence or left untouched — the clip's audio track keeps playing underneath
   3. The masked span is quiet/garbled enough that a platform's automated speech-to-text moderation pass would not transcribe the word cleanly, without being so loud/abrupt that it reads as an obvious edit
 
-**Plans**: 4/5 plans executed
+**Plans**: 5/5 plans executed
 
 **Wave 1** *(parallel — no shared files)*
 
@@ -225,4 +226,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 **Wave 3** *(blocked on Wave 2)*
 
-- [ ] 07-05-PLAN.md — Human-verify masking-quality checkpoint: listen to a real masked clip, confirm quiet/garbled/no-abrupt-cut, retune duck/garble config if needed [AUDIO-03] (wave 3)
+- [x] 07-05-PLAN.md — Human-verify masking-quality checkpoint: listen to a real masked clip, confirm quiet/garbled/no-abrupt-cut, retune duck/garble config if needed [AUDIO-03] (wave 3)
