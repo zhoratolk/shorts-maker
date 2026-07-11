@@ -15,6 +15,7 @@ CROP_MODES = {"auto", "zoom", "pad", "original-16:9"}
 FACECAM_MODES = {"manual_region", "auto_detect"}
 WHISPER_DEVICES = {"auto", "cuda", "cpu"}
 METADATA_PLATFORMS = {"youtube", "tiktok", "instagram"}
+PROFANITY_MASK_MODES = {"garble", "sound"}
 
 
 @dataclasses.dataclass
@@ -253,6 +254,20 @@ class ProfanityConfig:
     warble_freq: float = 18.0
     # Tremolo modulation depth (0-1] - how pronounced the warble effect is.
     warble_depth: float = 0.7
+    # Which mask to apply inside a detected profane span: "garble" (the
+    # duck+bandreject+tremolo mask above) or "sound" (mute the span and
+    # overlay mask_sound_path instead).
+    mask_mode: str = "garble"
+    # Path to a custom censor audio clip, used only when mask_mode == "sound".
+    # Existence is NOT checked at config load time - render.py fail-opens to
+    # the garble mask at runtime if the file is missing (never crashes).
+    mask_sound_path: str = ""
+    # Delay a mask's onset by this many seconds into the word, so its leading
+    # transient plays clean and the rest is masked. Empirically validated to
+    # stay <= ~0.12s to keep STT-defeat intact (0.20/0.28 let faster-whisper
+    # recover the word from its onset + context); 0 = mask from the word's
+    # start (current behavior, byte-identical).
+    mask_onset_seconds: float = 0.0
 
 
 @dataclasses.dataclass
@@ -495,4 +510,19 @@ def _validate(config: Config) -> None:
         raise ConfigError(
             f"profanity.warble_depth must be between 0 (exclusive) and 1 (inclusive), got "
             f"{config.profanity.warble_depth}"
+        )
+    if config.profanity.mask_mode not in PROFANITY_MASK_MODES:
+        raise ConfigError(
+            f"profanity.mask_mode must be one of {sorted(PROFANITY_MASK_MODES)}, "
+            f"got {config.profanity.mask_mode!r}"
+        )
+    if config.profanity.mask_onset_seconds < 0:
+        raise ConfigError(
+            f"profanity.mask_onset_seconds must be >= 0, got "
+            f"{config.profanity.mask_onset_seconds}"
+        )
+    if config.profanity.mask_mode == "sound" and not config.profanity.mask_sound_path.strip():
+        raise ConfigError(
+            "profanity.mask_sound_path must be set to a non-empty path when "
+            "profanity.mask_mode is 'sound'"
         )

@@ -254,6 +254,18 @@ profanity:
   warble_freq: 18.0
   # Tremolo modulation depth (0-1] - how pronounced the warble effect is.
   warble_depth: 0.7
+  # Which mask to apply inside a detected profane span: "garble" (the
+  # duck+bandreject+tremolo mask above) or "sound" (mute the word and
+  # overlay mask_sound_path instead).
+  mask_mode: garble
+  # Path to a custom censor audio clip - only used when mask_mode is sound.
+  # Empty by default. A missing file at render time fails open to the
+  # garble mask (never crashes).
+  mask_sound_path: ""
+  # Delay the mask this many seconds into the word so its onset plays
+  # clean - keep this <= ~0.12, larger values let speech-to-text recover
+  # the word from its onset + context. 0 = mask from the word's start.
+  mask_onset_seconds: 0.0
 
 transitions:
   # Context-driven transitions (crossfade/whip pan/mask-wipe/glitch/match cut)

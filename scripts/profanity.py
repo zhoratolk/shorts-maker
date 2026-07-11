@@ -66,6 +66,7 @@ def find_profane_spans(
     words: list[dict],
     wordlist: dict,
     pad_seconds: float = 0.08,
+    onset_seconds: float = 0.0,
     clip_duration: float | None = None,
     max_spans: int | None = None,
 ) -> list[tuple[float, float]]:
@@ -76,11 +77,21 @@ def find_profane_spans(
     - see 07-RESEARCH.md Pattern 2; this function never reimplements that
     remap, so a word dropped by a jump cut is simply absent here).
 
-    Returns merged, padded (pad_seconds each side), clip-bound-clamped,
-    3-decimal-rounded (start, end) spans. Padding compensates for Whisper
-    word-timestamp drift (Pitfall 2). If the number of merged spans exceeds
-    max_spans, fails open: warns to stderr and returns [] rather than ever
-    blocking a downstream render (Pitfall 5).
+    onset_seconds delays a span's start by that many seconds into the word
+    (no pad_seconds subtraction on that side), so the word's own onset
+    plays clean and only the remainder is masked. Empirically, <= ~0.12s
+    preserves STT-defeat; 0.20/0.28 let faster-whisper recover the word
+    from its onset + context. If onset_seconds >= the word's own duration
+    (degenerate case), the whole word is masked (start = word start) rather
+    than producing an empty/inverted span. onset_seconds == 0 (default)
+    reproduces the original pad_seconds-on-both-sides behavior exactly.
+
+    Returns merged, padded (pad_seconds each side unless onset_seconds > 0
+    shifts the start), clip-bound-clamped, 3-decimal-rounded (start, end)
+    spans. Padding compensates for Whisper word-timestamp drift (Pitfall 2).
+    If the number of merged spans exceeds max_spans, fails open: warns to
+    stderr and returns [] rather than ever blocking a downstream render
+    (Pitfall 5).
     """
     normalize_cfg = wordlist.get("normalize") or {}
     patterns = compile_patterns(wordlist)
@@ -89,7 +100,14 @@ def find_profane_spans(
     for word in words:
         token = normalize_word(word["word"].strip(".,!?:;\"'()"), normalize_cfg)
         if any(pattern.search(token) for pattern in patterns):
-            start = max(0.0, word["start"] - pad_seconds)
+            if onset_seconds > 0:
+                word_duration = word["end"] - word["start"]
+                if onset_seconds >= word_duration:
+                    start = word["start"]
+                else:
+                    start = word["start"] + onset_seconds
+            else:
+                start = max(0.0, word["start"] - pad_seconds)
             end = word["end"] + pad_seconds
             if clip_duration is not None:
                 end = min(end, clip_duration)
@@ -128,6 +146,12 @@ def main() -> None:
         "--wordlist", default="data/profanity_wordlist.yaml", help="Path to the profanity wordlist YAML file"
     )
     parser.add_argument("--pad-seconds", type=float, default=0.08, help="Padding applied to each side of a span")
+    parser.add_argument(
+        "--onset-seconds",
+        type=float,
+        default=0.0,
+        help="Delay a span's start this many seconds into the word (keep <= ~0.12 to preserve STT-defeat)",
+    )
     parser.add_argument("--clip-duration", type=float, default=None, help="Clip duration in seconds, for clamping")
     parser.add_argument(
         "--max-spans", type=int, default=None, help="Fail-open cap on merged span count (see Pitfall 5)"
@@ -137,7 +161,12 @@ def main() -> None:
     words = json.loads(Path(args.words_json).read_text(encoding="utf-8"))
     wordlist = load_wordlist(args.wordlist)
     spans = find_profane_spans(
-        words, wordlist, pad_seconds=args.pad_seconds, clip_duration=args.clip_duration, max_spans=args.max_spans
+        words,
+        wordlist,
+        pad_seconds=args.pad_seconds,
+        onset_seconds=args.onset_seconds,
+        clip_duration=args.clip_duration,
+        max_spans=args.max_spans,
     )
 
     print(json.dumps(spans, ensure_ascii=False))
