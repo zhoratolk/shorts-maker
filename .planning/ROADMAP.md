@@ -20,6 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: Sub-Threshold Highlight Compilation** - Moments too short to stand alone are grouped by similarity and stitched into one coherent full-length short instead of being discarded (completed 2026-07-10)
 - [x] **Phase 6: TikTok & Instagram Auto-Publish** - The same scheduled auto-publish flow extends to TikTok and Instagram Reels once each platform's app-review/audit gate is cleared (completed 2026-07-10)
 - [x] **Phase 7: Profanity Auto-Bleep** - Swear words in the transcript are masked at render time (duck+garble or custom censor sound), fail-open and default-off, defeating platform STT moderation scanners (completed 2026-07-11)
+- [ ] **Phase 8: Hook Title Overlay** - The clip's hook (its generated title) is burned into the first seconds of the frame as a styled text banner, so feed scrollers read the hook before they hear it
 
 ## Phase Details
 
@@ -200,6 +201,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 5. Sub-Threshold Highlight Compilation | 5/5 | Complete    | 2026-07-10 |
 | 6. TikTok & Instagram Auto-Publish | 7/7 | Complete    | 2026-07-10 |
 | 7. Profanity Auto-Bleep | 5/5 | Complete    | 2026-07-11 |
+| 8. Hook Title Overlay | 0/? | Not started | - |
 
 ### Phase 7: Profanity Auto-Bleep
 
@@ -227,3 +229,17 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 **Wave 3** *(blocked on Wave 2)*
 
 - [x] 07-05-PLAN.md — Human-verify masking-quality checkpoint: listen to a real masked clip, confirm quiet/garbled/no-abrupt-cut, retune duck/garble config if needed [AUDIO-03] (wave 3)
+
+### Phase 8: Hook Title Overlay
+
+**Goal**: A styled text banner with the clip's hook (the generated `youtube.title`, stripped of hashtags) is rendered into the frame for the first ~2-3 seconds of the clip, so a feed scroller reads the hook before the audio lands — the pattern used by the top-performing clips in the niche reference analysis (work/refs/_analysis/ANALYSIS.md, 2026-07-12)
+**Depends on**: Phase 2 (uses the generated title as the banner text; renders via the existing render.py filter-graph layer)
+**Requirements**: to be defined at planning (drawtext/drawbox banner, config-gated default-off, fail-open on missing/empty title, Cyrillic font support, safe-area placement clear of platform UI and of burned-in subtitles)
+**Success Criteria** (what must be TRUE):
+
+  1. When enabled in config, a rendered clip shows a legible text banner with the hook during the first seconds, gone afterwards (hard cut or fade out)
+  2. The banner never overlaps burned-in subtitles or the platform UI safe areas already respected by subtitle placement
+  3. Missing/empty title, or the feature disabled, renders the clip exactly as today (fail-open, default-off)
+  4. Banner text passes through the same anti-AI-tone/hashtag-stripping rules as metadata (no "#shorts" garbage burned into pixels)
+
+**Plans**: TBD (run /gsd-plan-phase 8)
