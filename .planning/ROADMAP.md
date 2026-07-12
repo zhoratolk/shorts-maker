@@ -20,7 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: Sub-Threshold Highlight Compilation** - Moments too short to stand alone are grouped by similarity and stitched into one coherent full-length short instead of being discarded (completed 2026-07-10)
 - [x] **Phase 6: TikTok & Instagram Auto-Publish** - The same scheduled auto-publish flow extends to TikTok and Instagram Reels once each platform's app-review/audit gate is cleared (completed 2026-07-10)
 - [x] **Phase 7: Profanity Auto-Bleep** - Swear words in the transcript are masked at render time (duck+garble or custom censor sound), fail-open and default-off, defeating platform STT moderation scanners (completed 2026-07-11)
-- [ ] **Phase 8: Hook Title Overlay** - The clip's hook (its generated title) is burned into the first seconds of the frame as a styled text banner, so feed scrollers read the hook before they hear it
+- [x] **Phase 8: Hook Title Overlay** - The clip's hook (its generated title) is burned into the frame as a styled text banner (persistent nick-plate default), so feed scrollers read the hook before they hear it (completed 2026-07-12)
 
 ## Phase Details
 
@@ -201,7 +201,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 5. Sub-Threshold Highlight Compilation | 5/5 | Complete    | 2026-07-10 |
 | 6. TikTok & Instagram Auto-Publish | 7/7 | Complete    | 2026-07-10 |
 | 7. Profanity Auto-Bleep | 5/5 | Complete    | 2026-07-11 |
-| 8. Hook Title Overlay | 0/? | Not started | - |
+| 8. Hook Title Overlay | 1/1 | Complete    | 2026-07-12 |
 
 ### Phase 7: Profanity Auto-Bleep
 
@@ -243,4 +243,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
   3. Missing/empty title, or the feature disabled, renders the clip exactly as today (fail-open, default-off)
   4. Banner text passes through the same anti-AI-tone/hashtag-stripping rules as metadata (no "#shorts" garbage burned into pixels)
 
-**Plans**: TBD (run /gsd-plan-phase 8)
+**Plans**: 1/1 plans complete (executed inline 2026-07-12 — see 08-01-SUMMARY.md)
+
+- [x] 08-01-PLAN.md — render.py drawtext banner builder + builder threading + collision guard + CLI, extended inline with HookBannerConfig/config.example.yaml/SKILL.md wiring/integration test (the planner's unwritten 08-02 scope)
