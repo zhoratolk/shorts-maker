@@ -37,6 +37,18 @@ pip install -e ".[publish]"       # YouTube analytics/publish queue, TikTok/Inst
 pip install -e ".[all]"           # everything
 ```
 
+### Alternative: uv (faster, reproducible)
+
+With [uv](https://docs.astral.sh/uv/) installed, one command replaces the venv + pip steps and installs the exact dependency versions pinned in `uv.lock`:
+
+```bash
+uv sync                # base install
+uv sync --extra transitions --extra publish   # plus optional features
+uv sync --all-extras   # everything (pulls torch — heavy)
+```
+
+Then either activate `.venv` as usual or prefix commands with `uv run` (e.g. `uv run pytest -m "not integration"`). If your Windows username contains non-ASCII characters and uv fails with a `ModuleNotFoundError` during interpreter discovery, point its cache at an ASCII path once: `setx UV_CACHE_DIR D:\uv-cache`.
+
 Copy the example config and fill in your paths:
 
 ```bash
