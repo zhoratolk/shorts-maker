@@ -235,6 +235,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 **Goal**: A styled text banner with the clip's hook (the generated `youtube.title`, stripped of hashtags) is rendered into the frame for the first ~2-3 seconds of the clip, so a feed scroller reads the hook before the audio lands — the pattern used by the top-performing clips in the niche reference analysis (work/refs/_analysis/ANALYSIS.md, 2026-07-12)
 **Depends on**: Phase 2 (uses the generated title as the banner text; renders via the existing render.py filter-graph layer)
 **Requirements**: to be defined at planning (drawtext/drawbox banner, config-gated default-off, fail-open on missing/empty title, Cyrillic font support, safe-area placement clear of platform UI and of burned-in subtitles)
+**Mode variants to decide at planning**: (a) hook banner first ~2-3s only, or (b) persistent banner for the whole clip with an optional CTA line (channel link) under it — the Dunduk pattern from the 2026-07-12 reference analysis; config should allow choosing
 **Success Criteria** (what must be TRUE):
 
   1. When enabled in config, a rendered clip shows a legible text banner with the hook during the first seconds, gone afterwards (hard cut or fade out)

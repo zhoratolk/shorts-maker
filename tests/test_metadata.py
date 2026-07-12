@@ -14,6 +14,28 @@ def test_render_metadata_text_youtube_block():
     assert "Tags: gaming, funny" in text
 
 
+def test_render_metadata_text_youtube_title_en_line():
+    text = render_metadata_text({
+        "youtube": {
+            "title": "Босс в ярости",
+            "title_en": "Boss Rage Quit",
+            "description": "d",
+            "tags": ["t"],
+        },
+    })
+
+    assert "Title: Босс в ярости" in text
+    assert "Title (EN): Boss Rage Quit" in text
+
+
+def test_render_metadata_text_youtube_no_title_en_no_line():
+    text = render_metadata_text({
+        "youtube": {"title": "Босс", "description": "d", "tags": ["t"]},
+    })
+
+    assert "Title (EN):" not in text
+
+
 def test_render_metadata_text_caption_platform_block():
     text = render_metadata_text({
         "tiktok": {"caption": "He rage quit! #gaming #funny"},

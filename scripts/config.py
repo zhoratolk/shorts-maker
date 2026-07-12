@@ -177,6 +177,11 @@ class MetadataConfig:
         default_factory=lambda: ["youtube", "tiktok", "instagram"]
     )
     language: str = "auto"
+    # Also generate an English duplicate of the YouTube title (title_en) for
+    # international feed reach when the primary metadata language isn't
+    # English. Text generation happens in SKILL.md step 5; metadata.py just
+    # renders the extra line when the field is present.
+    english_title: bool = False
 
 
 @dataclasses.dataclass

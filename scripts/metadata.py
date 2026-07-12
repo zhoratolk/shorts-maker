@@ -36,8 +36,11 @@ def render_metadata_text(platforms_data: dict) -> str:
         fields = platforms_data[platform]
         header = f"=== {platform.upper()} ==="
         if platform == "youtube":
+            title_en = (
+                f"Title (EN): {fields['title_en']}\n" if fields.get("title_en") else ""
+            )
             body = (
-                f"Title: {fields['title']}\n\n"
+                f"Title: {fields['title']}\n{title_en}\n"
                 f"Description:\n{fields['description']}\n\n"
                 f"Tags: {', '.join(fields['tags'])}"
             )

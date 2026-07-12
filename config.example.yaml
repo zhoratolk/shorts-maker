@@ -113,6 +113,11 @@ metadata:
   # clip — handy when you post the same clip to more than one place.
   platforms: [youtube, tiktok, instagram]   # youtube | tiktok | instagram
   language: auto        # auto = same language as the transcript
+  # Also draft an English duplicate of each YouTube title (rendered as an
+  # extra "Title (EN):" line) - top niche channels double their reach with
+  # bilingual titles. Off by default; no effect when the primary metadata
+  # language is already English.
+  english_title: false
 
 monetization:
   # Per-platform monetization-risk flagging (scripts/monetization_risk.py),

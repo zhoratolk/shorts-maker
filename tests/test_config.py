@@ -365,6 +365,21 @@ def test_load_config_metadata_defaults(tmp_path):
     assert config.metadata.enabled is True
     assert config.metadata.platforms == ["youtube", "tiktok", "instagram"]
     assert config.metadata.language == "auto"
+    assert config.metadata.english_title is False
+
+
+def test_load_config_metadata_english_title_true(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "D:/in"
+        output_dir: "D:/out"
+        metadata:
+          english_title: true
+        """,
+    )
+
+    assert load_config(path).metadata.english_title is True
 
 
 def test_load_config_metadata_empty_platforms_when_enabled_raises(tmp_path):
