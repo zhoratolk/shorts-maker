@@ -75,7 +75,12 @@ def load_diarization_pipeline(hf_token: str, device: str = "auto"):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from scripts.setup import check_gpu
 
-    pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=hf_token)
+    # pyannote.audio >=4 renamed use_auth_token= to token=; support both so an
+    # environment with the older 3.x still works.
+    try:
+        pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", token=hf_token)
+    except TypeError:
+        pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", use_auth_token=hf_token)
 
     resolved_device = check_gpu() if device == "auto" else device
     if resolved_device == "cuda":
