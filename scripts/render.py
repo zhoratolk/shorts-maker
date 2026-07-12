@@ -425,6 +425,183 @@ def build_audio_filter_chain(
     return ",".join(filters) if filters else None
 
 
+# Banner fonts: this Windows ffmpeg build ships fontconfig without a config
+# file, so drawtext's font=<name> lookup fails outright ("Fontconfig error:
+# Cannot load default config file") - an explicit fontfile= path is mandatory
+# (08-RESEARCH Pitfall 1, live-verified). ariblk.ttf/arialbd.ttf ship with
+# Windows and carry full Cyrillic coverage (visually verified); non-Windows
+# users set config.hook_banner.font to an explicit .ttf/.otf path instead of
+# a name, same spirit as config.subtitles.font's platform note.
+HOOK_BANNER_FONT_PATHS = {
+    "Arial Black": "C:/Windows/Fonts/ariblk.ttf",
+    "Arial Bold": "C:/Windows/Fonts/arialbd.ttf",
+}
+
+# Top edge of the banner block: clears the ~120px platform top-UI band
+# (username/follow chrome) with a small margin. Bottom-positioned banners
+# stay above the ~480px caption/engagement zone.
+HOOK_BANNER_TOP_Y = 140
+HOOK_BANNER_BOTTOM_CLEARANCE = 480
+
+
+def resolve_banner_font(font: str) -> str:
+    """Resolves a friendly banner font name to an explicit font-file path.
+
+    Values that already look like a path (.ttf/.otf suffix or a path
+    separator) pass through verbatim (forward-slash normalized) - the
+    non-Windows escape hatch. Never falls back to drawtext's font=<name>
+    form, which fails on this build (see HOOK_BANNER_FONT_PATHS comment).
+    """
+    if "/" in font or "\\" in font or font.lower().endswith((".ttf", ".otf")):
+        return font.replace("\\", "/")
+    try:
+        return HOOK_BANNER_FONT_PATHS[font]
+    except KeyError as error:
+        raise RenderError(
+            f"unknown banner font {font!r}; use one of {sorted(HOOK_BANNER_FONT_PATHS)} "
+            "or an explicit .ttf/.otf file path"
+        ) from error
+
+
+def _escape_drawtext_text(text: str) -> str:
+    """drawtext's text= argument treats backslash, quote, colon and comma as
+    filtergraph syntax. Backslash must be escaped first (mirrors
+    _escape_ass_text) so later rules never re-escape its output. % is
+    deliberately left alone - every banner clause sets expansion=none, which
+    disables drawtext's strftime-style %-expansion entirely.
+    """
+    return (
+        text.replace("\\", "\\\\").replace("'", "\\'")
+        .replace(":", "\\:").replace(",", "\\,")
+    )
+
+
+def _wrap_banner_lines(text: str, max_chars: int, max_lines: int) -> list[str]:
+    """Greedy word-wrap for the banner title (drawtext has no auto-wrap).
+    A single word longer than max_chars stays alone on its own line; text
+    needing more than max_lines is truncated with an ellipsis + [warn]
+    (fail-open, never raises - 08-RESEARCH Pitfall 4).
+    """
+    lines: list[str] = []
+    current = ""
+    for word in text.split():
+        candidate = f"{current} {word}".strip()
+        if len(candidate) <= max_chars or not current:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    if len(lines) > max_lines:
+        print(
+            f"[warn] banner text truncated to {max_lines} line(s): {text!r}",
+            file=sys.stderr,
+        )
+        lines = lines[:max_lines]
+        lines[-1] = f"{lines[-1]}…"
+    return lines
+
+
+def _drawtext_color(value: str) -> str:
+    """drawtext accepts named colors and 0xRRGGBB; config uses #RRGGBB."""
+    return f"0x{value[1:]}" if value.startswith("#") else value
+
+
+def build_hook_banner_filter(
+    text: str,
+    mode: str,
+    cta_text: str = "",
+    font: str = "Arial Black",
+    cta_font: str = "Arial Bold",
+    size: int = 58,
+    cta_size: int = 36,
+    color: str = "white",
+    cta_color: str = "#ffe98a",
+    box_color: str = "black",
+    box_opacity: float = 0.55,
+    position: str = "top",
+    duration_seconds: float = 3.0,
+    fade_seconds: float = 0.4,
+    max_lines: int = 2,
+    line_gap: int = 20,
+) -> str | None:
+    """Chained-drawtext hook banner (HOOK-01): one clause per wrapped title
+    line plus an optional CTA/nick line under it. Multi-line MUST be chained
+    clauses, never an embedded \\n - a literal \\n inside text= renders as a
+    stray lowercase n when the command is built as an argv list
+    (08-RESEARCH Pitfall 2, live-verified).
+
+    mode="hook": every clause is gated to the first duration_seconds via
+    enable= plus an alpha fade-out (fade_seconds=0 -> hard cut, enable only).
+    mode="persistent" (the ROADMAP 2026-07-12 locked default): no gating,
+    the plate shows for the whole clip.
+
+    Returns None for empty/whitespace text (fail-open, HOOK-03) - the caller
+    omits the filter entirely, keeping the command byte-identical to today.
+    """
+    if not text or not text.strip():
+        return None
+    if mode not in ("hook", "persistent"):
+        raise RenderError(f"banner mode must be 'hook' or 'persistent', got {mode!r}")
+    if position not in ("top", "bottom"):
+        raise RenderError(f"banner position must be 'top' or 'bottom', got {position!r}")
+    if size <= 0 or cta_size <= 0:
+        raise RenderError(f"banner font sizes must be > 0, got size={size}, cta_size={cta_size}")
+    if not 0.0 <= box_opacity <= 1.0:
+        raise RenderError(f"banner box_opacity must be within [0, 1], got {box_opacity}")
+    if mode == "hook":
+        if duration_seconds <= 0:
+            raise RenderError(f"banner duration_seconds must be > 0 in hook mode, got {duration_seconds}")
+        if fade_seconds < 0 or fade_seconds >= duration_seconds:
+            raise RenderError(
+                f"banner fade_seconds must be within [0, duration_seconds), got {fade_seconds}"
+            )
+
+    # fontfile paths carry a drive colon on Windows - escape it exactly like
+    # the subtitles= path clause below does.
+    font_path = resolve_banner_font(font).replace(":", "\\:")
+    cta_font_path = resolve_banner_font(cta_font).replace(":", "\\:")
+    boxcolor = f"{_drawtext_color(box_color)}@{box_opacity}"
+
+    # ~22 chars/line was measured (not estimated) at fontsize=58 on a real
+    # rendered frame (08-RESEARCH A1); scale the budget mechanically.
+    max_chars = max(8, round(22 * 58 / size))
+    lines = _wrap_banner_lines(text.strip(), max_chars, max_lines)
+    cta = cta_text.strip()
+
+    line_height = size + line_gap
+    block_height = len(lines) * line_height + (cta_size + line_gap if cta else 0)
+    y0 = (
+        HOOK_BANNER_TOP_Y
+        if position == "top"
+        else TARGET_HEIGHT - HOOK_BANNER_BOTTOM_CLEARANCE - block_height
+    )
+
+    clauses = []
+    for index, line in enumerate(lines):
+        clauses.append(
+            f"drawtext=fontfile='{font_path}':text='{_escape_drawtext_text(line)}':"
+            f"fontsize={size}:fontcolor={_drawtext_color(color)}:expansion=none:"
+            f"x=(w-text_w)/2:y={y0 + index * line_height}:box=1:boxcolor={boxcolor}:boxborderw=24"
+        )
+    if cta:
+        clauses.append(
+            f"drawtext=fontfile='{cta_font_path}':text='{_escape_drawtext_text(cta)}':"
+            f"fontsize={cta_size}:fontcolor={_drawtext_color(cta_color)}:expansion=none:"
+            f"x=(w-text_w)/2:y={y0 + len(lines) * line_height}:box=1:boxcolor={boxcolor}:boxborderw=16"
+        )
+
+    if mode == "hook":
+        suffix = f":enable='between(t,0,{duration_seconds})'"
+        if fade_seconds > 0:
+            fade_start = round(duration_seconds - fade_seconds, 3)
+            suffix += f":alpha='if(lt(t,{fade_start}),1,max(0,1-(t-{fade_start})/{fade_seconds}))'"
+        clauses = [f"{clause}{suffix}" for clause in clauses]
+
+    return ",".join(clauses)
+
+
 def build_ffmpeg_command(
     input_path: str,
     output_path: str,
@@ -446,6 +623,7 @@ def build_ffmpeg_command(
     profanity_filter: str | None = None,
     profanity_sound: tuple[str, str, list[str]] | None = None,
     video_codec: str = "libx264",
+    banner_filter: str | None = None,
 ) -> list[str]:
     """profanity_sound, when set, is (sound_path, mute_clause,
     censor_branches) from build_profanity_sound_filter - folds BOTH video
@@ -464,6 +642,11 @@ def build_ffmpeg_command(
     effects_chain = build_video_effects_chain(vignette, grain_strength)
     if effects_chain:
         video_filter = f"{video_filter},{effects_chain}"
+    # After punch-zoom (so the zoom crop can never clip/shift the banner),
+    # before subtitles (captions stay the last visual layer) - 08-RESEARCH
+    # Pattern 2; same ordering in all three command builders.
+    if banner_filter:
+        video_filter = f"{video_filter},{banner_filter}"
     if subtitles_path is not None:
         escaped_path = subtitles_path.replace("\\", "/").replace(":", "\\:")
         video_filter = f"{video_filter},subtitles='{escaped_path}'"
@@ -666,6 +849,7 @@ def build_jumpcut_command(
     profanity_filter: str | None = None,
     profanity_sound: tuple[str, str, list[str]] | None = None,
     video_codec: str = "libx264",
+    banner_filter: str | None = None,
 ) -> list[str]:
     """Like build_ffmpeg_command, but keep_segments (absolute source-file
     seconds, from jumpcuts.compute_keep_segments) are trimmed out of the
@@ -729,6 +913,9 @@ def build_jumpcut_command(
     effects_chain = build_video_effects_chain(vignette, grain_strength)
     if effects_chain:
         video_ops.append(effects_chain)
+    # After punch-zoom, before subtitles - 08-RESEARCH Pattern 2.
+    if banner_filter:
+        video_ops.append(banner_filter)
     if subtitles_path is not None:
         escaped_path = subtitles_path.replace("\\", "/").replace(":", "\\:")
         subtitles_clause = f"subtitles='{escaped_path}'"
@@ -892,6 +1079,7 @@ def build_compilation_command(
     profanity_filter: str | None = None,
     profanity_sound: tuple[str, str, list[str]] | None = None,
     video_codec: str = "libx264",
+    banner_filter: str | None = None,
 ) -> list[str]:
     """Multi-input ffmpeg command builder for a COMP-02 compilation entry:
     opens the source video once per compilation member (own -ss/-i/-t per
@@ -987,6 +1175,9 @@ def build_compilation_command(
     effects_chain = build_video_effects_chain(vignette, grain_strength)
     if effects_chain:
         video_ops.append(effects_chain)
+    # After punch-zoom, before subtitles - 08-RESEARCH Pattern 2.
+    if banner_filter:
+        video_ops.append(banner_filter)
     if subtitles_path is not None:
         escaped_path = subtitles_path.replace("\\", "/").replace(":", "\\:")
         subtitles_clause = f"subtitles='{escaped_path}'"
@@ -1087,6 +1278,19 @@ def render_clip(
     profanity_mask_mode: str = "garble",
     profanity_mask_sound_path: str = "",
     video_codec: str = "libx264",
+    banner_mode: str = "persistent",
+    banner_font: str = "Arial Black",
+    banner_size: int = 58,
+    banner_color: str = "white",
+    banner_cta_text: str = "",
+    banner_cta_font: str = "Arial Bold",
+    banner_cta_size: int = 36,
+    banner_cta_color: str = "#ffe98a",
+    banner_box_color: str = "black",
+    banner_box_opacity: float = 0.55,
+    banner_position: str = "top",
+    banner_duration_seconds: float = 3.0,
+    banner_fade_seconds: float = 0.4,
     runner=subprocess.run,
 ) -> list[str]:
     crop_style = plan_entry["crop_style"]
@@ -1103,6 +1307,28 @@ def render_clip(
             "on pad/original-16:9 the punch-zoom crop cuts into real frame content, not just the letterbox bars"
         )
     subtitles_path = plan_entry.get("subtitles_path")
+
+    banner_text = plan_entry.get("banner_text")
+    # Fail-loud collision guard (HOOK-02, 08-RESEARCH Pitfall 3): checked
+    # here, BEFORE the ASS-bake block below nulls subtitle_style. Same
+    # explanatory style as the punch_zoom_at guard above.
+    if banner_text and subtitles_path is not None and subtitle_style is not None \
+            and banner_position == subtitle_style["position"]:
+        raise RenderError(
+            f"banner position {banner_position!r} collides with subtitles position "
+            f"{subtitle_style['position']!r}; set config.hook_banner.position and "
+            "config.subtitles.position to different zones"
+        )
+    banner_filter = None
+    if banner_text:
+        banner_filter = build_hook_banner_filter(
+            banner_text, banner_mode,
+            cta_text=banner_cta_text, font=banner_font, cta_font=banner_cta_font,
+            size=banner_size, cta_size=banner_cta_size, color=banner_color,
+            cta_color=banner_cta_color, box_color=banner_box_color,
+            box_opacity=banner_box_opacity, position=banner_position,
+            duration_seconds=banner_duration_seconds, fade_seconds=banner_fade_seconds,
+        )
 
     profanity_spans_raw = plan_entry.get("profanity_spans")
     profanity_filter = None
@@ -1200,6 +1426,7 @@ def render_clip(
             profanity_filter=profanity_filter,
             profanity_sound=profanity_sound,
             video_codec=video_codec,
+            banner_filter=banner_filter,
         )
     else:
         start, end = clamp_clip_bounds(plan_entry["start"], plan_entry["end"], video_duration)
@@ -1237,6 +1464,7 @@ def render_clip(
                 vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
                 denoise_strength, boundary_transitions, boundary_gaps, transition_duration, min_overlap_seconds,
                 profanity_filter, profanity_sound, video_codec,
+                banner_filter=banner_filter,
             )
         else:
             command = build_ffmpeg_command(
@@ -1244,6 +1472,7 @@ def render_clip(
                 fade_seconds, video_duration, subtitle_style, denoise, loudnorm,
                 vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
                 denoise_strength, profanity_filter, profanity_sound, video_codec,
+                banner_filter=banner_filter,
             )
 
     result = runner(command, capture_output=True, text=True)
@@ -1345,6 +1574,31 @@ def main() -> None:
         "--video-codec", default="libx264",
         help="ffmpeg -c:v encoder to use, e.g. h264_nvenc for NVIDIA hardware encoding (default: libx264)",
     )
+    # --banner-* flags are harmless no-ops for plan entries without banner_text
+    # (same convention as --profanity-*).
+    parser.add_argument(
+        "--banner-mode", default="persistent", choices=["hook", "persistent"],
+        help="Hook banner mode for plan entries with banner_text: hook (first --banner-duration-seconds, "
+        "then gone) or persistent (whole clip + optional CTA line, the default)",
+    )
+    parser.add_argument("--banner-font", default="Arial Black")
+    parser.add_argument("--banner-size", type=int, default=58)
+    parser.add_argument("--banner-color", default="white")
+    parser.add_argument(
+        "--banner-cta-text", default="",
+        help="Optional CTA/nick line drawn under the banner title (empty = no CTA line)",
+    )
+    parser.add_argument("--banner-cta-font", default="Arial Bold")
+    parser.add_argument("--banner-cta-size", type=int, default=36)
+    parser.add_argument("--banner-cta-color", default="#ffe98a")
+    parser.add_argument("--banner-box-color", default="black")
+    parser.add_argument("--banner-box-opacity", type=float, default=0.55)
+    parser.add_argument("--banner-position", default="top", choices=["top", "bottom"])
+    parser.add_argument("--banner-duration-seconds", type=float, default=3.0)
+    parser.add_argument(
+        "--banner-fade-seconds", type=float, default=0.4,
+        help="Hook-mode fade-out length in seconds (0 = hard cut)",
+    )
     args = parser.parse_args()
 
     subtitle_style = {
@@ -1390,6 +1644,19 @@ def main() -> None:
             video_codec=args.video_codec,
             profanity_mask_mode=args.profanity_mask_mode,
             profanity_mask_sound_path=args.profanity_mask_sound_path,
+            banner_mode=args.banner_mode,
+            banner_font=args.banner_font,
+            banner_size=args.banner_size,
+            banner_color=args.banner_color,
+            banner_cta_text=args.banner_cta_text,
+            banner_cta_font=args.banner_cta_font,
+            banner_cta_size=args.banner_cta_size,
+            banner_cta_color=args.banner_cta_color,
+            banner_box_color=args.banner_box_color,
+            banner_box_opacity=args.banner_box_opacity,
+            banner_position=args.banner_position,
+            banner_duration_seconds=args.banner_duration_seconds,
+            banner_fade_seconds=args.banner_fade_seconds,
         )
         print(output_path)
 

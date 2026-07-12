@@ -5,11 +5,14 @@ import pytest
 from scripts.render import (
     RenderError,
     VALID_TRANSITIONS,
+    _escape_drawtext_text,
+    _wrap_banner_lines,
     ass_color,
     build_ass_content,
     build_audio_filter_chain,
     build_compilation_command,
     build_ffmpeg_command,
+    build_hook_banner_filter,
     build_jumpcut_command,
     build_profanity_mask_filter,
     build_profanity_sound_filter,
@@ -21,6 +24,8 @@ from scripts.render import (
     compute_subtitle_margin_v,
     probe_video,
     render_clip,
+    resolve_banner_font,
+    HOOK_BANNER_FONT_PATHS,
     SUBTITLE_MARGIN_V,
 )
 
@@ -1587,3 +1592,272 @@ def test_render_clip_sound_mode_compilation_branch_uses_member_count_as_sound_in
     filter_complex = command[command.index("-filter_complex") + 1]
     assert "[2:a]" in filter_complex  # sound input lands after the 2 member inputs
     assert "amix" in filter_complex
+
+
+# --- Phase 8: hook title banner ---
+
+
+def test_resolve_banner_font_maps_known_names():
+    assert resolve_banner_font("Arial Black") == HOOK_BANNER_FONT_PATHS["Arial Black"]
+    assert resolve_banner_font("Arial Bold") == HOOK_BANNER_FONT_PATHS["Arial Bold"]
+
+
+def test_resolve_banner_font_passes_explicit_paths_through():
+    assert resolve_banner_font("D:\\Fonts\\custom.ttf") == "D:/Fonts/custom.ttf"
+    assert resolve_banner_font("/usr/share/fonts/DejaVuSans-Bold.ttf") == (
+        "/usr/share/fonts/DejaVuSans-Bold.ttf"
+    )
+    assert resolve_banner_font("myfont.otf") == "myfont.otf"
+
+
+def test_resolve_banner_font_rejects_unknown_bare_name():
+    with pytest.raises(RenderError, match="unknown banner font"):
+        resolve_banner_font("Comic Sans")
+
+
+def test_escape_drawtext_text_backslash_first_order():
+    # A backslash followed by a colon: the colon-escape must not re-escape
+    # the backslash the first rule just inserted.
+    assert _escape_drawtext_text("a\\b:c") == "a\\\\b\\:c"
+    assert _escape_drawtext_text("Мужики, вы чё?") == "Мужики\\, вы чё?"
+    assert _escape_drawtext_text("it's") == "it\\'s"
+
+
+def test_wrap_banner_lines_single_line_fits():
+    assert _wrap_banner_lines("КОРОТКИЙ ХУК", max_chars=22, max_lines=2) == ["КОРОТКИЙ ХУК"]
+
+
+def test_wrap_banner_lines_wraps_to_two():
+    lines = _wrap_banner_lines("МУЖИКИ ВЫ ЧЁ ТВОРИТЕ ПАРНИ СЕРЬЁЗНО", max_chars=22, max_lines=2)
+    assert len(lines) == 2
+    assert all(len(line) <= 23 for line in lines)  # +1 tolerance for the ellipsis
+
+
+def test_wrap_banner_lines_truncates_with_ellipsis_never_raises(capsys):
+    lines = _wrap_banner_lines(
+        "ОЧЕНЬ ДЛИННЫЙ ЗАГОЛОВОК КОТОРЫЙ НИКОГДА НЕ ВЛЕЗЕТ В ДВЕ СТРОКИ НУ НИКАК ВООБЩЕ",
+        max_chars=22, max_lines=2,
+    )
+    assert len(lines) == 2
+    assert lines[-1].endswith("…")
+    assert "[warn]" in capsys.readouterr().err
+
+
+def test_wrap_banner_lines_long_single_word_stays_alone():
+    lines = _wrap_banner_lines("СВЕРХДЛИННОЕОДНОСЛОВО ДА", max_chars=10, max_lines=2)
+    assert lines[0] == "СВЕРХДЛИННОЕОДНОСЛОВО"
+
+
+def test_build_hook_banner_filter_returns_none_for_empty_text():
+    assert build_hook_banner_filter("", mode="persistent") is None
+    assert build_hook_banner_filter("   ", mode="persistent") is None
+
+
+def test_build_hook_banner_filter_persistent_with_cta_exact_shape():
+    result = build_hook_banner_filter(
+        "МУЖИКИ, ВЫ ЧЁ ТВОРИТЕ?", mode="persistent", cta_text="@channel_nick"
+    )
+    expected_title = (
+        "drawtext=fontfile='C\\:/Windows/Fonts/ariblk.ttf':"
+        "text='МУЖИКИ\\, ВЫ ЧЁ ТВОРИТЕ?':fontsize=58:fontcolor=white:expansion=none:"
+        "x=(w-text_w)/2:y=140:box=1:boxcolor=black@0.55:boxborderw=24"
+    )
+    expected_cta = (
+        "drawtext=fontfile='C\\:/Windows/Fonts/arialbd.ttf':"
+        "text='@channel_nick':fontsize=36:fontcolor=0xffe98a:expansion=none:"
+        "x=(w-text_w)/2:y=218:box=1:boxcolor=black@0.55:boxborderw=16"
+    )
+    assert result == f"{expected_title},{expected_cta}"
+
+
+def test_build_hook_banner_filter_persistent_has_no_enable_or_alpha():
+    result = build_hook_banner_filter("ХУК", mode="persistent")
+    assert "enable=" not in result
+    assert "alpha=" not in result
+
+
+def test_build_hook_banner_filter_hook_mode_gates_every_clause():
+    result = build_hook_banner_filter("ХУК", mode="hook", cta_text="@nick")
+    assert result.count("drawtext=") == 2
+    assert result.count("enable='between(t,0,3.0)'") == 2
+    assert result.count("alpha='if(lt(t,2.6),1,max(0,1-(t-2.6)/0.4))'") == 2
+
+
+def test_build_hook_banner_filter_hook_mode_hard_cut_when_fade_zero():
+    result = build_hook_banner_filter("ХУК", mode="hook", fade_seconds=0.0)
+    assert "enable='between(t,0,3.0)'" in result
+    assert "alpha=" not in result
+
+
+def test_build_hook_banner_filter_multi_line_wrap_stacks_clauses():
+    result = build_hook_banner_filter(
+        "МУЖИКИ ВЫ ЧЁ ТВОРИТЕ ПАРНИ СЕРЬЁЗНО", mode="persistent"
+    )
+    assert result.count("drawtext=") == 2
+    assert "y=140:" in result
+    assert "y=218:" in result  # 140 + (58 + 20)
+
+
+def test_build_hook_banner_filter_bottom_position_stays_above_ui_zone():
+    result = build_hook_banner_filter("ХУК", mode="persistent", position="bottom")
+    # 1920 - 480 - (58 + 20) = 1362
+    assert "y=1362:" in result
+
+
+def test_build_hook_banner_filter_no_clause_uses_bare_font_name():
+    result = build_hook_banner_filter("ХУК", mode="persistent", cta_text="@nick")
+    assert "fontfile=" in result
+    assert ":font=" not in result
+
+
+def test_build_hook_banner_filter_rejects_bad_args():
+    with pytest.raises(RenderError, match="banner mode"):
+        build_hook_banner_filter("ХУК", mode="forever")
+    with pytest.raises(RenderError, match="banner position"):
+        build_hook_banner_filter("ХУК", mode="persistent", position="center")
+    with pytest.raises(RenderError, match="font sizes"):
+        build_hook_banner_filter("ХУК", mode="persistent", size=0)
+    with pytest.raises(RenderError, match="box_opacity"):
+        build_hook_banner_filter("ХУК", mode="persistent", box_opacity=1.5)
+    with pytest.raises(RenderError, match="duration_seconds"):
+        build_hook_banner_filter("ХУК", mode="hook", duration_seconds=0)
+    with pytest.raises(RenderError, match="fade_seconds"):
+        build_hook_banner_filter("ХУК", mode="hook", duration_seconds=2.0, fade_seconds=2.0)
+
+
+def _banner_fake_runner(captured):
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def runner(command, capture_output, text):
+        captured["command"] = command
+        return FakeResult()
+
+    return runner
+
+
+def test_render_clip_banner_clause_ordered_after_zoom_before_subtitles(tmp_path):
+    srt = tmp_path / "subs.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+    captured = {}
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "punch_zoom_at": 5.0, "subtitles_path": str(srt), "banner_text": "ТЕСТ ХУК",
+    }
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=_banner_fake_runner(captured),
+    )
+
+    video_filter = command[command.index("-vf") + 1]
+    zoom_index = video_filter.index("crop=w='1080/")
+    banner_index = video_filter.index("drawtext=")
+    subtitles_index = video_filter.index("subtitles=")
+    assert zoom_index < banner_index < subtitles_index
+
+
+def test_render_clip_without_banner_text_byte_identical():
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom"}
+    captured_without = {}
+    render_clip(
+        "in.mp4", "out.mp4", dict(plan_entry),
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=_banner_fake_runner(captured_without),
+    )
+
+    captured_empty = {}
+    render_clip(
+        "in.mp4", "out.mp4", {**plan_entry, "banner_text": ""},
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=_banner_fake_runner(captured_empty),
+    )
+
+    assert captured_without["command"] == captured_empty["command"]
+    assert "drawtext=" not in " ".join(captured_empty["command"])
+
+
+def test_render_clip_banner_in_jumpcut_and_compilation_branches():
+    captured_jumpcut = {}
+    render_clip(
+        "in.mp4", "out.mp4",
+        {
+            "start": 10.0, "end": 40.0, "crop_style": "zoom",
+            "keep_segments": [[10.0, 20.0], [25.0, 40.0]], "banner_text": "ХУК",
+        },
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=_banner_fake_runner(captured_jumpcut),
+    )
+    jumpcut_graph = captured_jumpcut["command"][
+        captured_jumpcut["command"].index("-filter_complex") + 1
+    ]
+    assert "drawtext=" in jumpcut_graph
+    assert jumpcut_graph.index("drawtext=") < jumpcut_graph.index("[vout]")
+
+    captured_comp = {}
+    render_clip(
+        "in.mp4", "out.mp4",
+        {
+            "type": "compilation", "crop_style": "zoom", "banner_text": "ХУК",
+            "segments": [
+                {"start": 10.0, "end": 20.0},
+                {"start": 30.0, "end": 40.0},
+            ],
+        },
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=_banner_fake_runner(captured_comp),
+    )
+    comp_graph = captured_comp["command"][
+        captured_comp["command"].index("-filter_complex") + 1
+    ]
+    assert "drawtext=" in comp_graph
+
+
+def test_render_clip_banner_subtitle_position_collision_raises(tmp_path):
+    srt = tmp_path / "subs.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "subtitles_path": str(srt), "banner_text": "ХУК",
+    }
+    subtitle_style = {
+        "font": "Arial Black", "size": 92, "color": "white",
+        "outline_color": "black", "highlight_color": "yellow",
+        "position": "top", "words_per_cue": 4,
+    }
+
+    with pytest.raises(RenderError, match="collides with subtitles position"):
+        render_clip(
+            "in.mp4", "out.mp4", plan_entry,
+            video_duration=100.0, src_width=1920, src_height=1080,
+            subtitle_style=subtitle_style, banner_position="top",
+            runner=_banner_fake_runner({}),
+        )
+
+
+def test_render_clip_banner_no_collision_when_positions_differ(tmp_path):
+    srt = tmp_path / "subs.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n", encoding="utf-8")
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "subtitles_path": str(srt), "banner_text": "ХУК",
+    }
+    subtitle_style = {
+        "font": "Arial Black", "size": 92, "color": "white",
+        "outline_color": "black", "highlight_color": "yellow",
+        "position": "bottom", "words_per_cue": 4,
+    }
+    captured = {}
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        subtitle_style=subtitle_style, banner_position="top",
+        runner=_banner_fake_runner(captured),
+    )
+
+    video_filter = command[command.index("-vf") + 1]
+    assert "drawtext=" in video_filter

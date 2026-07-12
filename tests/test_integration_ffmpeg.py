@@ -404,3 +404,40 @@ def test_profanity_defeats_transcription(speech_audio, tmp_path):
     re_segments, _ = model.transcribe(str(masked_path), word_timestamps=True, language="en")
     re_words = [word.word.strip().lower() for segment in re_segments for word in (segment.words or [])]
     assert not any("stupid" in word for word in re_words), f"masked word still re-transcribed cleanly: {re_words}"
+
+
+def test_hook_banner_changes_pixels_in_banner_region(test_video, tmp_path):
+    """Renders the same clip with and without banner_text and asserts the
+    banner region's pixels actually differ (HOOK-01/HOOK-04 end-to-end:
+    Cyrillic drawtext with fontfile= on this machine's real ffmpeg)."""
+    base_entry = {"start": 0.0, "end": 1.5, "crop_style": "zoom"}
+    plain_path = tmp_path / "out_plain.mp4"
+    banner_path = tmp_path / "out_banner.mp4"
+
+    render_clip(
+        str(test_video), str(plain_path), dict(base_entry),
+        video_duration=SRC_DURATION, src_width=SRC_WIDTH, src_height=SRC_HEIGHT,
+    )
+    render_clip(
+        str(test_video), str(banner_path),
+        {**base_entry, "banner_text": "ТЕСТОВЫЙ ХУК"},
+        video_duration=SRC_DURATION, src_width=SRC_WIDTH, src_height=SRC_HEIGHT,
+        banner_cta_text="@nick",
+    )
+
+    def banner_region_signature(path):
+        # Crop the banner zone (y=100..320 across the full width), downscale,
+        # and dump raw gray pixels - a cheap, deterministic region signature.
+        result = subprocess.run(
+            [
+                "ffmpeg", "-v", "error", "-ss", "0.5", "-i", str(path),
+                "-frames:v", "1",
+                "-vf", "crop=1080:220:0:100,scale=54:11,format=gray",
+                "-f", "rawvideo", "-",
+            ],
+            capture_output=True,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    assert banner_region_signature(plain_path) != banner_region_signature(banner_path)

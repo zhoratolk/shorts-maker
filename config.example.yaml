@@ -308,3 +308,35 @@ transitions:
   # selecting match_cut. Empirical starting point - tune after watching real
   # renders.
   match_cut_similarity: 0.90
+
+hook_banner:
+  # Hook title banner burned into the frame (Phase 8): the clip's generated
+  # title (hashtags/emoji stripped) drawn as a styled text plate so a feed
+  # scroller reads the hook before the audio lands. Off by default -
+  # fail-open: disabled or an empty title renders exactly as today.
+  enabled: false
+  # persistent = plate stays for the whole clip with an optional CTA line
+  # under it (the recommended personality-first default);
+  # hook = plate shows only the first duration_seconds, then fades out.
+  mode: persistent
+  # Optional CTA/nick line under the title, e.g. "youtube.com/@channel".
+  # Empty = title only.
+  cta_text: ""
+  # hook mode only: seconds the banner stays, and fade-out length (0 = hard cut).
+  duration_seconds: 3.0
+  fade_seconds: 0.4
+  # Friendly names map to Windows-shipped fonts with full Cyrillic coverage
+  # (Arial Black -> C:/Windows/Fonts/ariblk.ttf, Arial Bold -> arialbd.ttf).
+  # On macOS/Linux set an explicit .ttf/.otf file path here instead - ffmpeg's
+  # drawtext needs a real font file, name lookup does not work on this build.
+  font: "Arial Black"
+  size: 58
+  color: white
+  cta_font: "Arial Bold"
+  cta_size: 36
+  cta_color: "#ffe98a"
+  box_color: black
+  box_opacity: 0.55
+  # top | bottom. Must differ from subtitles.position - the banner never
+  # overlaps burned-in captions (validated at config load).
+  position: top

@@ -276,6 +276,39 @@ class ProfanityConfig:
 
 
 @dataclasses.dataclass
+class HookBannerConfig:
+    # Opt-in, off by default (HOOK-03 fail-open) - same footing as
+    # diarization/audio_energy/profanity.
+    enabled: bool = False
+    # "persistent" is the locked default per ROADMAP.md's 2026-07-12 mode
+    # decision: the nick plate stands in for a face (personality-first
+    # content strategy) until a webcam/PNGTuber layout exists.
+    # "hook" shows the banner only for the first duration_seconds.
+    mode: str = "persistent"
+    # Optional CTA/nick line drawn under the title (the Dunduk pattern),
+    # e.g. "youtube.com/@channel". Empty = no CTA line.
+    cta_text: str = ""
+    # hook mode only: how long the banner stays before disappearing.
+    duration_seconds: float = 3.0
+    # hook mode only: fade-out length; 0 = hard cut.
+    fade_seconds: float = 0.4
+    # Friendly names resolve via render.py's HOOK_BANNER_FONT_PATHS
+    # (Windows-shipped ariblk.ttf/arialbd.ttf, full Cyrillic). On
+    # macOS/Linux set an explicit .ttf/.otf file path instead.
+    font: str = "Arial Black"
+    size: int = 58
+    color: str = "white"
+    cta_font: str = "Arial Bold"
+    cta_size: int = 36
+    cta_color: str = "#ffe98a"
+    box_color: str = "black"
+    box_opacity: float = 0.55
+    # top | bottom. Must differ from subtitles.position (validated) so the
+    # banner never overlaps burned-in captions (HOOK-02).
+    position: str = "top"
+
+
+@dataclasses.dataclass
 class Config:
     input_dir: str
     output_dir: str
@@ -297,6 +330,7 @@ class Config:
     publish: PublishConfig = dataclasses.field(default_factory=PublishConfig)
     transitions: TransitionsConfig = dataclasses.field(default_factory=TransitionsConfig)
     profanity: ProfanityConfig = dataclasses.field(default_factory=ProfanityConfig)
+    hook_banner: HookBannerConfig = dataclasses.field(default_factory=HookBannerConfig)
 
 
 def _build(section_cls, data: dict, section_name: str):
@@ -336,6 +370,7 @@ def load_config(path: str) -> Config:
         publish=_build(PublishConfig, data.get("publish", {}), "publish"),
         transitions=_build(TransitionsConfig, data.get("transitions", {}), "transitions"),
         profanity=_build(ProfanityConfig, data.get("profanity", {}), "profanity"),
+        hook_banner=_build(HookBannerConfig, data.get("hook_banner", {}), "hook_banner"),
     )
     _validate(config)
     return config
@@ -530,4 +565,43 @@ def _validate(config: Config) -> None:
         raise ConfigError(
             "profanity.mask_sound_path must be set to a non-empty path when "
             "profanity.mask_mode is 'sound'"
+        )
+    if config.hook_banner.mode not in ("hook", "persistent"):
+        raise ConfigError(
+            f"hook_banner.mode must be 'hook' or 'persistent', got {config.hook_banner.mode!r}"
+        )
+    if config.hook_banner.position not in ("top", "bottom"):
+        raise ConfigError(
+            f"hook_banner.position must be 'top' or 'bottom', got {config.hook_banner.position!r}"
+        )
+    if config.hook_banner.size <= 0 or config.hook_banner.cta_size <= 0:
+        raise ConfigError(
+            f"hook_banner sizes must be > 0, got size={config.hook_banner.size}, "
+            f"cta_size={config.hook_banner.cta_size}"
+        )
+    if not 0.0 <= config.hook_banner.box_opacity <= 1.0:
+        raise ConfigError(
+            f"hook_banner.box_opacity must be within [0, 1], got {config.hook_banner.box_opacity}"
+        )
+    if config.hook_banner.mode == "hook":
+        if config.hook_banner.duration_seconds <= 0:
+            raise ConfigError(
+                f"hook_banner.duration_seconds must be > 0, got {config.hook_banner.duration_seconds}"
+            )
+        if not 0 <= config.hook_banner.fade_seconds < config.hook_banner.duration_seconds:
+            raise ConfigError(
+                f"hook_banner.fade_seconds must be within [0, duration_seconds), got "
+                f"{config.hook_banner.fade_seconds}"
+            )
+    # Fail-loud collision guard (HOOK-02): a banner and burned-in subtitles
+    # anchored to the same zone would overlap by construction.
+    if (
+        config.hook_banner.enabled
+        and config.subtitles.enabled
+        and config.hook_banner.position == config.subtitles.position
+    ):
+        raise ConfigError(
+            f"hook_banner.position and subtitles.position are both "
+            f"{config.hook_banner.position!r}; the banner would overlap burned-in "
+            "captions - set them to different zones"
         )

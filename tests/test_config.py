@@ -1363,3 +1363,128 @@ def test_load_config_transitions_unknown_field_raises(tmp_path):
 
     with pytest.raises(ConfigError, match="transitions"):
         load_config(path)
+
+
+def test_load_config_hook_banner_defaults_when_section_missing(tmp_path):
+    path = write_config(tmp_path, 'input_dir: "F:/in"\noutput_dir: "F:/out"\n')
+
+    config = load_config(path)
+
+    assert config.hook_banner.enabled is False
+    assert config.hook_banner.mode == "persistent"
+    assert config.hook_banner.cta_text == ""
+    assert config.hook_banner.duration_seconds == 3.0
+    assert config.hook_banner.fade_seconds == 0.4
+    assert config.hook_banner.font == "Arial Black"
+    assert config.hook_banner.size == 58
+    assert config.hook_banner.color == "white"
+    assert config.hook_banner.cta_font == "Arial Bold"
+    assert config.hook_banner.cta_size == 36
+    assert config.hook_banner.cta_color == "#ffe98a"
+    assert config.hook_banner.box_color == "black"
+    assert config.hook_banner.box_opacity == 0.55
+    assert config.hook_banner.position == "top"
+
+
+def test_load_config_hook_banner_custom_values_round_trip(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        hook_banner:
+          enabled: true
+          mode: "hook"
+          cta_text: "youtube.com/@nick"
+          duration_seconds: 2.5
+          fade_seconds: 0.3
+          size: 48
+          position: "bottom"
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.hook_banner.enabled is True
+    assert config.hook_banner.mode == "hook"
+    assert config.hook_banner.cta_text == "youtube.com/@nick"
+    assert config.hook_banner.duration_seconds == 2.5
+    assert config.hook_banner.fade_seconds == 0.3
+    assert config.hook_banner.size == 48
+    assert config.hook_banner.position == "bottom"
+
+
+def test_load_config_rejects_bad_hook_banner_mode(tmp_path):
+    path = write_config(
+        tmp_path,
+        'input_dir: "F:/in"\noutput_dir: "F:/out"\nhook_banner:\n  mode: "forever"\n',
+    )
+
+    with pytest.raises(ConfigError, match="hook_banner.mode"):
+        load_config(path)
+
+
+def test_load_config_rejects_bad_hook_banner_position(tmp_path):
+    path = write_config(
+        tmp_path,
+        'input_dir: "F:/in"\noutput_dir: "F:/out"\nhook_banner:\n  position: "center"\n',
+    )
+
+    with pytest.raises(ConfigError, match="hook_banner.position"):
+        load_config(path)
+
+
+def test_load_config_rejects_hook_banner_fade_at_or_above_duration(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        hook_banner:
+          mode: "hook"
+          duration_seconds: 2.0
+          fade_seconds: 2.0
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="hook_banner.fade_seconds"):
+        load_config(path)
+
+
+def test_load_config_rejects_banner_subtitles_position_collision(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        subtitles:
+          enabled: true
+          position: "top"
+        hook_banner:
+          enabled: true
+          position: "top"
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="would overlap burned-in"):
+        load_config(path)
+
+
+def test_load_config_banner_collision_ok_when_either_disabled(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        subtitles:
+          enabled: true
+          position: "top"
+        hook_banner:
+          enabled: false
+          position: "top"
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.hook_banner.enabled is False
