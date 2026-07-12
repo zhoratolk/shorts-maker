@@ -35,6 +35,15 @@ one that trails off after it.
 
 ## What actually gets picked as a candidate
 
+- **The streamer IS the product (content-strategy decision, 2026-07-12)** —
+  this channel sells the streamer's personality, not the game. When two
+  candidate moments score close, prefer the one where the *streamer's own
+  reaction, phrasing, or running catchphrase* carries the moment over the
+  one where the game event carries it. A mid gameplay moment with a
+  quotable line or an exploding reaction beats a great gameplay moment
+  with flat commentary. Recurring catchphrases (the «база» family, etc.)
+  are brand assets — a moment that lands one is worth a boost, same as a
+  hype-phrase hit.
 - **Genuine, spontaneous reactions** (real rage, real shock, real laughter
   during play) outperform anything staged-sounding — this is most of why
   `config.analysis.hype_phrases` boosts a moment: the phrase itself is a
