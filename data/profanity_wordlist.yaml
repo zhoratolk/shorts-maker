@@ -10,7 +10,7 @@
 # actually re-checked. scripts/profanity.py::load_wordlist copies it verbatim
 # via `data.setdefault("updated", "unknown")` handling, mirroring
 # data/monetization_rules.yaml's convention.
-updated: "2026-07-11"
+updated: "2026-07-13"
 
 # Applied to each Whisper word token BEFORE stem matching (case-fold first,
 # then substitute, then strip censor chars, then collapse repeats) - this is
@@ -36,6 +36,17 @@ ru:
   - root: "сук"      # NOTE: broad stem - validate against real transcripts for
                       # false positives (e.g. "сука" true positive vs some
                       # unrelated declension) during Wave 0 test-writing
+  # Patterns are prefix-anchored (\b<root>\w*), so prefixed derivatives need
+  # their own roots - found live 2026-07-13: "нахуй"/"похуй"/"нихуя"/"охуел"
+  # and "сучка" (суч- != сук-) slipped past the stems above unmasked.
+  - root: "нахуй"
+  - root: "нахуя"
+  - root: "похуй"
+  - root: "ниху"
+  - root: "охуе"
+  - root: "суч"
+  - root: "пидор"
+  - root: "пидар"
 en:
   - root: "fuck"
   - root: "shit"
