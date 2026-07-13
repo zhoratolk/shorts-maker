@@ -18,8 +18,14 @@ def _register_nvidia_dll_dirs() -> None:
         import nvidia
     except ImportError:
         return
-    for bin_dir in Path(nvidia.__path__[0]).glob("*/bin"):
-        os.add_dll_directory(str(bin_dir))
+    bin_dirs = [str(bin_dir) for bin_dir in Path(nvidia.__path__[0]).glob("*/bin")]
+    for bin_dir in bin_dirs:
+        os.add_dll_directory(bin_dir)
+    # ctranslate2 (>=4.x) resolves cublas64_12.dll via a plain LoadLibrary that
+    # searches PATH, not the add_dll_directory user dirs above — so add_dll_directory
+    # alone is not enough on Windows. Prepend the same bin dirs to PATH too.
+    if bin_dirs:
+        os.environ["PATH"] = os.pathsep.join(bin_dirs) + os.pathsep + os.environ.get("PATH", "")
 
 
 def transcript_cache_path(video_path: str, transcripts_dir: str) -> str:
