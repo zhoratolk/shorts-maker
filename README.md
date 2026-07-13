@@ -1,6 +1,8 @@
 # shorts-maker
 
-Turn long gameplay/stream recordings into vertical (9:16) short clips — fully local, free, no watermarks, no time limits. Runs as a Claude Code skill: local Whisper transcription + ffmpeg rendering do the mechanical work, Claude Code reads the transcript to find and trim the good moments. Optional speaker diarization (who's talking when) lets it also judge how sustained a monologue/dialogue's train of thought is, and optional audio-energy spike detection catches wordless hype moments (screams/laughs) the transcript alone would miss — both feed candidate-finding alongside a short-form-virality research doc ([docs/viral-clips-ru.md](docs/viral-clips-ru.md)).
+Turn long gameplay/stream recordings into vertical (9:16) short clips — free, no watermarks, no time limits. Runs as a Claude Code skill: Whisper transcription and ffmpeg rendering happen locally on your machine, and Claude Code reads the transcript to find and trim the good moments. The semantic passes send transcript text through Claude, and optional auto-publishing talks to the platforms' APIs — those are the only non-local parts; the raw footage itself never leaves your machine except as the clips you choose to publish. Optional speaker diarization (who's talking when) lets it also judge how sustained a monologue/dialogue's train of thought is, and optional audio-energy spike detection catches wordless hype moments (screams/laughs) the transcript alone would miss — both feed candidate-finding alongside a short-form-virality research doc ([docs/viral-clips-ru.md](docs/viral-clips-ru.md)).
+
+Beyond finding and cutting the moments, the pipeline can also: flag monetization-risky content, write titles/descriptions/tags/captions in your channel's own register, auto-bleep profanity at render time (garble or a custom censor sound), pick context-driven transitions where clips are stitched together, assemble compilations from moments too short to stand alone, and schedule auto-publishing to YouTube, TikTok, and Instagram Reels. Each of these is optional and off (or dry-run) by default in `config.yaml`.
 
 ## Requirements
 
@@ -15,7 +17,7 @@ Turn long gameplay/stream recordings into vertical (9:16) short clips — fully 
 ## Setup
 
 ```bash
-git clone <this-repo>
+git clone https://github.com/zhoratolk/shorts-maker.git
 cd shorts-maker
 python -m venv .venv
 # Windows:
