@@ -90,6 +90,19 @@ def load_diarization_pipeline(hf_token: str, device: str = "auto"):
     return pipeline
 
 
+def load_waveform(audio_path: str) -> dict:
+    # pyannote.audio >=4 reads files through torchcodec, which needs FFmpeg
+    # *shared* DLLs (versions 4-7) on Windows - a static ffmpeg 8 build can't
+    # feed it. We already extract a plain 16 kHz mono wav ourselves, so hand
+    # the pipeline a waveform dict and skip torchcodec entirely.
+    import soundfile
+    import torch
+
+    data, sample_rate = soundfile.read(audio_path, dtype="float32", always_2d=True)
+    waveform = torch.from_numpy(data.T)  # (channel, time)
+    return {"waveform": waveform, "sample_rate": sample_rate}
+
+
 def run_diarization_pipeline(
     pipeline,
     audio_path: str,
@@ -106,7 +119,12 @@ def run_diarization_pipeline(
         if max_speakers is not None:
             kwargs["max_speakers"] = max_speakers
 
-    diarization = pipeline(audio_path, **kwargs)
+    diarization = pipeline(load_waveform(audio_path), **kwargs)
+
+    # pyannote.audio >=4 wraps the Annotation in a DiarizeOutput dataclass;
+    # 3.x returns the Annotation directly.
+    if not hasattr(diarization, "itertracks"):
+        diarization = diarization.speaker_diarization
 
     turns = [
         {"start": turn.start, "end": turn.end, "speaker": speaker}
