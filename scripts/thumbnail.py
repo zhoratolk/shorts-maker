@@ -19,7 +19,7 @@ import argparse
 import subprocess
 from pathlib import Path
 
-from scripts.render import (
+from scripts.render_common import (
     TARGET_HEIGHT,
     TARGET_WIDTH,
     _drawtext_color,

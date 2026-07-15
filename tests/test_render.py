@@ -14,6 +14,14 @@ class FakeResult:
     stderr = ""
 
 
+from scripts.render_common import HOOK_BANNER_FONT_PATHS
+from scripts.overlay_pass import (
+    OUTRO_PATTERNS,
+    build_outro_nodes,
+    build_overlay_pass_command,
+    build_social_popup_nodes,
+    plan_popup_times,
+)
 from scripts.render import (
     RenderError,
     VALID_TRANSITIONS,
@@ -27,11 +35,6 @@ from scripts.render import (
     build_ffmpeg_command,
     build_hook_banner_filter,
     build_jumpcut_command,
-    build_outro_nodes,
-    build_overlay_pass_command,
-    build_social_popup_nodes,
-    plan_popup_times,
-    OUTRO_PATTERNS,
     build_profanity_mask_filter,
     build_profanity_sound_filter,
     build_punch_zoom_filter,
@@ -43,7 +46,6 @@ from scripts.render import (
     probe_video,
     render_clip,
     resolve_banner_font,
-    HOOK_BANNER_FONT_PATHS,
     SUBTITLE_MARGIN_V,
 )
 
