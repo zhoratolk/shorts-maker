@@ -1488,3 +1488,55 @@ def test_load_config_banner_collision_ok_when_either_disabled(tmp_path):
     config = load_config(path)
 
     assert config.hook_banner.enabled is False
+
+
+def test_load_config_emphasis_defaults_when_section_missing(tmp_path):
+    path = write_config(tmp_path, 'input_dir: "F:/in"\noutput_dir: "F:/out"\n')
+
+    config = load_config(path)
+
+    assert config.emphasis.enabled is False
+    assert config.emphasis.max_moves == 2
+    assert config.emphasis.zoom_amount == 1.12
+    assert config.emphasis.ramp_seconds == 0.18
+    assert config.emphasis.min_hold_seconds == 0.25
+    assert config.emphasis.face_enabled is False
+
+
+def test_load_config_emphasis_custom_values_round_trip(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        emphasis:
+          enabled: true
+          max_moves: 3
+          zoom_amount: 1.2
+          ramp_seconds: 0.25
+          min_hold_seconds: 0.3
+          face_enabled: true
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.emphasis.enabled is True
+    assert config.emphasis.max_moves == 3
+    assert config.emphasis.zoom_amount == 1.2
+    assert config.emphasis.face_enabled is True
+
+
+def test_load_config_rejects_bad_emphasis_values(tmp_path):
+    for section, marker in [
+        ("max_moves: -1", "emphasis.max_moves"),
+        ("zoom_amount: 1.0", "emphasis.zoom_amount"),
+        ("ramp_seconds: 0", "emphasis.ramp_seconds"),
+        ("min_hold_seconds: -0.1", "emphasis.min_hold_seconds"),
+    ]:
+        path = write_config(
+            tmp_path,
+            f'input_dir: "F:/in"\noutput_dir: "F:/out"\nemphasis:\n  {section}\n',
+        )
+        with pytest.raises(ConfigError, match=marker):
+            load_config(path)

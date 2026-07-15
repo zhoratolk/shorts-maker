@@ -272,6 +272,129 @@ def build_punch_zoom_filter(punch_at: float, zoom_amount: float = 1.15, ramp: fl
     )
 
 
+VALID_EMPHASIS_KINDS = {"zoom": 1.0, "punch": 0.6, "cut_in": 0.15}
+VALID_EMPHASIS_TARGETS = ("action", "plate", "face")
+
+
+def build_emphasis_filter(
+    moves: list[dict],
+    *,
+    zoom_amount: float = 1.12,
+    ramp: float = 0.18,
+    min_hold: float = 0.25,
+    max_moves: int = 2,
+    plate_focus_y: float = 0.72,
+    face_focus: tuple[float, float] | None = None,
+) -> str | None:
+    """Transient, multi-move "editor punch" zoom applied *inside* a clip
+    (Phase 9), distinct from build_punch_zoom_filter's single ramp-and-hold.
+
+    Each move pulses: ease-in to zoom_amount over `ramp` s, hold at peak, then
+    ease-out back to 1x - so several accents can fire across one continuous
+    clip without the frame ratcheting ever tighter, the way a human editor
+    punches in on a reaction or a hot gameplay beat and then releases. All
+    moves fold into ONE time-varying crop node (evaluated per frame via `t`),
+    then scale back so downstream filters always see a constant 1080x1920.
+
+    Works on any crop_style: at rest z=1 => out_w==in_w => the focal x/y shift
+    terms multiply by 0, so the frame is byte-identical to no-emphasis between
+    moves and whenever `moves` is empty. (This is why it can safely run on
+    pad/original-16:9, which punch_zoom_at is barred from: the pulse returns to
+    1x and never leaves the frame permanently re-cropped.)
+
+    Focal point per move.target:
+      - 'action' (default): frame centre.
+      - 'plate': biased down toward the nick-plate / lower third (plate_focus_y).
+      - 'face':  face_focus (facecam region centre) when provided, else centre
+                 (no webcam yet - gated by EmphasisConfig.face_enabled upstream).
+    move.kind tunes snappiness via the ramp multiplier in VALID_EMPHASIS_KINDS:
+    'zoom' eases (full ramp), 'punch' is quicker, 'cut_in' near-instant.
+
+    Returns None when there is nothing to apply, so callers omit the filter
+    entirely (fail-open / backward-compatible).
+    """
+    if zoom_amount <= 1.0:
+        raise RenderError(f"emphasis zoom_amount must be > 1.0, got {zoom_amount}")
+    if ramp <= 0:
+        raise RenderError(f"emphasis ramp must be > 0, got {ramp}")
+    if min_hold < 0:
+        raise RenderError(f"emphasis min_hold must be >= 0, got {min_hold}")
+    if max_moves <= 0 or not moves:
+        return None
+
+    ordered = sorted(moves, key=lambda m: float(m["at"]))[:max_moves]
+
+    z_branches: list[tuple[float, float, str]] = []
+    fx_branches: list[tuple[float, float, float]] = []
+    fy_branches: list[tuple[float, float, float]] = []
+    prev_end = -1.0
+    for move in ordered:
+        at = float(move["at"])
+        duration = float(move["duration"])
+        if at < 0:
+            raise RenderError(f"emphasis move 'at' must be >= 0, got {at}")
+        if duration <= 0:
+            raise RenderError(f"emphasis move 'duration' must be > 0, got {duration}")
+        kind = move.get("kind", "zoom")
+        if kind not in VALID_EMPHASIS_KINDS:
+            raise RenderError(
+                f"emphasis move 'kind' must be one of {sorted(VALID_EMPHASIS_KINDS)}, got {kind!r}"
+            )
+        target = move.get("target", "action")
+        if target not in VALID_EMPHASIS_TARGETS:
+            raise RenderError(
+                f"emphasis move 'target' must be one of {list(VALID_EMPHASIS_TARGETS)}, got {target!r}"
+            )
+
+        r = ramp * VALID_EMPHASIS_KINDS[kind]
+        # Clamp duration up so a move always fits ramp-in + min_hold + ramp-out;
+        # the piecewise expression below assumes rout_start >= rin_end.
+        dur = max(duration, 2 * r + min_hold)
+        # Skip a move that would start before the previous one has released,
+        # rather than emit overlapping between() windows that double-zoom.
+        if at < prev_end:
+            continue
+        end = at + dur
+        rin_end = at + r
+        rout_start = end - r
+        z = zoom_amount
+        z_expr = (
+            f"if(lt(t,{rin_end:.4f}),1+({z}-1)*(t-{at:.4f})/{r:.4f},"
+            f"if(lt(t,{rout_start:.4f}),{z},"
+            f"1+({z}-1)*({end:.4f}-t)/{r:.4f}))"
+        )
+        z_branches.append((at, end, z_expr))
+
+        if target == "plate":
+            fx, fy = 0.5, plate_focus_y
+        elif target == "face" and face_focus is not None:
+            fx, fy = face_focus
+        else:
+            fx, fy = 0.5, 0.5
+        fx_branches.append((at, end, fx))
+        fy_branches.append((at, end, fy))
+        prev_end = end
+
+    if not z_branches:
+        return None
+
+    def _fold_expr(branches: list[tuple[float, float, str]], rest: str) -> str:
+        expr = rest
+        for at, end, val in reversed(branches):
+            expr = f"if(between(t,{at:.4f},{end:.4f}),{val},{expr})"
+        return expr
+
+    z_of_t = _fold_expr(z_branches, "1")
+    fx_of_t = _fold_expr([(a, e, f"{v}") for a, e, v in fx_branches], "0.5")
+    fy_of_t = _fold_expr([(a, e, f"{v}") for a, e, v in fy_branches], "0.5")
+
+    return (
+        f"crop=w='{TARGET_WIDTH}/({z_of_t})':h='{TARGET_HEIGHT}/({z_of_t})':"
+        f"x='(in_w-out_w)*({fx_of_t})':y='(in_h-out_h)*({fy_of_t})',"
+        f"scale={TARGET_WIDTH}:{TARGET_HEIGHT}"
+    )
+
+
 def build_transition_filter(
     transition_type: str, duration: float, offset: float, in_a: str, in_b: str, out_label: str
 ) -> str | None:
@@ -624,6 +747,7 @@ def build_ffmpeg_command(
     profanity_sound: tuple[str, str, list[str]] | None = None,
     video_codec: str = "libx264",
     banner_filter: str | None = None,
+    emphasis_filter: str | None = None,
 ) -> list[str]:
     """profanity_sound, when set, is (sound_path, mute_clause,
     censor_branches) from build_profanity_sound_filter - folds BOTH video
@@ -639,6 +763,12 @@ def build_ffmpeg_command(
     video_filter = crop_filter
     if punch_zoom_at is not None:
         video_filter = f"{video_filter},{build_punch_zoom_filter(punch_zoom_at, punch_zoom_amount, punch_zoom_ramp)}"
+    # Mid-clip emphasis pulses (Phase 9): after punch-zoom, before effects/
+    # banner/subtitles so the transient zoom acts on raw video content and
+    # never shifts the burned-in banner or captions (same ordering rule as
+    # banner_filter below, applied in all three command builders).
+    if emphasis_filter:
+        video_filter = f"{video_filter},{emphasis_filter}"
     effects_chain = build_video_effects_chain(vignette, grain_strength)
     if effects_chain:
         video_filter = f"{video_filter},{effects_chain}"
@@ -850,6 +980,7 @@ def build_jumpcut_command(
     profanity_sound: tuple[str, str, list[str]] | None = None,
     video_codec: str = "libx264",
     banner_filter: str | None = None,
+    emphasis_filter: str | None = None,
 ) -> list[str]:
     """Like build_ffmpeg_command, but keep_segments (absolute source-file
     seconds, from jumpcuts.compute_keep_segments) are trimmed out of the
@@ -910,6 +1041,10 @@ def build_jumpcut_command(
     video_ops = [crop_filter]
     if punch_zoom_at is not None:
         video_ops.append(build_punch_zoom_filter(punch_zoom_at, punch_zoom_amount, punch_zoom_ramp))
+    # Mid-clip emphasis pulses (Phase 9) - after punch-zoom, before effects/
+    # banner/subtitles (same ordering as build_ffmpeg_command).
+    if emphasis_filter:
+        video_ops.append(emphasis_filter)
     effects_chain = build_video_effects_chain(vignette, grain_strength)
     if effects_chain:
         video_ops.append(effects_chain)
@@ -1080,6 +1215,7 @@ def build_compilation_command(
     profanity_sound: tuple[str, str, list[str]] | None = None,
     video_codec: str = "libx264",
     banner_filter: str | None = None,
+    emphasis_filter: str | None = None,
 ) -> list[str]:
     """Multi-input ffmpeg command builder for a COMP-02 compilation entry:
     opens the source video once per compilation member (own -ss/-i/-t per
@@ -1172,6 +1308,10 @@ def build_compilation_command(
     video_ops = [crop_filter]
     if punch_zoom_at is not None:
         video_ops.append(build_punch_zoom_filter(punch_zoom_at, punch_zoom_amount, punch_zoom_ramp))
+    # Mid-clip emphasis pulses (Phase 9) - after punch-zoom, before effects/
+    # banner/subtitles (same ordering as build_ffmpeg_command).
+    if emphasis_filter:
+        video_ops.append(emphasis_filter)
     effects_chain = build_video_effects_chain(vignette, grain_strength)
     if effects_chain:
         video_ops.append(effects_chain)
@@ -1291,6 +1431,14 @@ def render_clip(
     banner_position: str = "top",
     banner_duration_seconds: float = 3.0,
     banner_fade_seconds: float = 0.4,
+    emphasis_enabled: bool = False,
+    emphasis_zoom_amount: float = 1.12,
+    emphasis_ramp: float = 0.18,
+    emphasis_min_hold: float = 0.25,
+    emphasis_max_moves: int = 2,
+    emphasis_plate_focus_y: float = 0.72,
+    emphasis_face_enabled: bool = False,
+    emphasis_face_focus: tuple[float, float] | None = None,
     runner=subprocess.run,
 ) -> list[str]:
     crop_style = plan_entry["crop_style"]
@@ -1306,6 +1454,26 @@ def render_clip(
             f"punch_zoom_at requires crop_style='zoom' (got {crop_style!r}); "
             "on pad/original-16:9 the punch-zoom crop cuts into real frame content, not just the letterbox bars"
         )
+
+    # Mid-clip emphasis moves (Phase 9). Unlike punch_zoom_at there is no
+    # crop_style guard: each move pulses back to 1x, so on pad/original-16:9 it
+    # only tightens transiently and never leaves the frame re-cropped. Built
+    # once here and threaded to whichever command builder runs below, mirroring
+    # banner_filter. Absent/empty emphasis_moves => emphasis_filter stays None
+    # => rendering is byte-identical to today.
+    emphasis_moves = plan_entry.get("emphasis_moves")
+    emphasis_filter = None
+    if emphasis_enabled and emphasis_moves:
+        emphasis_filter = build_emphasis_filter(
+            emphasis_moves,
+            zoom_amount=emphasis_zoom_amount,
+            ramp=emphasis_ramp,
+            min_hold=emphasis_min_hold,
+            max_moves=emphasis_max_moves,
+            plate_focus_y=emphasis_plate_focus_y,
+            face_focus=emphasis_face_focus if emphasis_face_enabled else None,
+        )
+
     subtitles_path = plan_entry.get("subtitles_path")
 
     banner_text = plan_entry.get("banner_text")
@@ -1427,6 +1595,7 @@ def render_clip(
             profanity_sound=profanity_sound,
             video_codec=video_codec,
             banner_filter=banner_filter,
+            emphasis_filter=emphasis_filter,
         )
     else:
         start, end = clamp_clip_bounds(plan_entry["start"], plan_entry["end"], video_duration)
@@ -1465,6 +1634,7 @@ def render_clip(
                 denoise_strength, boundary_transitions, boundary_gaps, transition_duration, min_overlap_seconds,
                 profanity_filter, profanity_sound, video_codec,
                 banner_filter=banner_filter,
+                emphasis_filter=emphasis_filter,
             )
         else:
             command = build_ffmpeg_command(
@@ -1473,6 +1643,7 @@ def render_clip(
                 vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
                 denoise_strength, profanity_filter, profanity_sound, video_codec,
                 banner_filter=banner_filter,
+                emphasis_filter=emphasis_filter,
             )
 
     result = runner(command, capture_output=True, text=True)
@@ -1599,6 +1770,19 @@ def main() -> None:
         "--banner-fade-seconds", type=float, default=0.4,
         help="Hook-mode fade-out length in seconds (0 = hard cut)",
     )
+    parser.add_argument(
+        "--emphasis-enabled", action="store_true",
+        help="Apply mid-clip emphasis_moves from the plan entry (Phase 9); off = ignored",
+    )
+    parser.add_argument("--emphasis-zoom-amount", type=float, default=1.12)
+    parser.add_argument("--emphasis-ramp", type=float, default=0.18)
+    parser.add_argument("--emphasis-min-hold", type=float, default=0.25)
+    parser.add_argument("--emphasis-max-moves", type=int, default=2)
+    parser.add_argument("--emphasis-plate-focus-y", type=float, default=0.72)
+    parser.add_argument(
+        "--emphasis-face-enabled", action="store_true",
+        help="Allow target='face' moves to aim at the facecam region (off: fall back to centre)",
+    )
     args = parser.parse_args()
 
     subtitle_style = {
@@ -1657,6 +1841,13 @@ def main() -> None:
             banner_position=args.banner_position,
             banner_duration_seconds=args.banner_duration_seconds,
             banner_fade_seconds=args.banner_fade_seconds,
+            emphasis_enabled=args.emphasis_enabled,
+            emphasis_zoom_amount=args.emphasis_zoom_amount,
+            emphasis_ramp=args.emphasis_ramp,
+            emphasis_min_hold=args.emphasis_min_hold,
+            emphasis_max_moves=args.emphasis_max_moves,
+            emphasis_plate_focus_y=args.emphasis_plate_focus_y,
+            emphasis_face_enabled=args.emphasis_face_enabled,
         )
         print(output_path)
 

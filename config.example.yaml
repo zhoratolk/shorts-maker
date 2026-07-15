@@ -340,3 +340,31 @@ hook_banner:
   # top | bottom. Must differ from subtitles.position - the banner never
   # overlaps burned-in captions (validated at config load).
   position: top
+
+emphasis:
+  # Mid-clip editor-style emphasis moves (Phase 9): transient soft zoom/cut-in
+  # accents placed *inside* a continuous clip (not only at splice boundaries),
+  # the way a human editor punches in on a reaction or a hot gameplay beat and
+  # then releases. The moments themselves are chosen semantically by the
+  # orchestrator (SKILL.md step 5) from existing signals (audio-energy spikes,
+  # reaction lines, visual pass) and written as an `emphasis_moves` list on the
+  # plan entry. Off by default - fail-open: disabled or no moves renders
+  # exactly as today.
+  enabled: false
+  # Hard cap on moves per clip. A dense stutter of zooms reads as a jittery bad
+  # edit (anti-viral), so keep this low. 0 disables emphasis even when enabled.
+  max_moves: 2
+  # Peak zoom multiplier per move - milder than punch_zoom's 1.15 since each
+  # emphasis move pulses in AND back out rather than staying zoomed.
+  zoom_amount: 1.12
+  # Ease-in / ease-out ramp length (seconds) on each side of a move. 'zoom'
+  # moves use the full ramp, 'punch' 0.6x (snappier), 'cut_in' 0.15x (near-cut).
+  ramp_seconds: 0.18
+  # Minimum flat hold at peak zoom (seconds); a move's duration is clamped up so
+  # it always fits 2*ramp + this hold.
+  min_hold_seconds: 0.25
+  # target='face' aims a move at the facecam region. Off by default - there is
+  # no webcam yet (personality-first strategy uses the nick plate), so a
+  # target='face' move falls back to centre. Enabling a facecam later is a
+  # one-flag change here.
+  face_enabled: false

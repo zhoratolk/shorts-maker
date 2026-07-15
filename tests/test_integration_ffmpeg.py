@@ -107,6 +107,32 @@ def test_punch_zoom_renders_correct_dimensions(test_video, tmp_path):
     assert video_stream["height"] == 1920
 
 
+def test_emphasis_moves_render_on_pad_crop_style(test_video, tmp_path):
+    # Phase 9: multiple transient emphasis pulses inside one clip, on a pad
+    # crop (which punch_zoom_at is barred from) - proves the per-frame crop
+    # expression is valid ffmpeg and the letterboxed frame survives round-trip.
+    plan_entry = {
+        "start": 0.0, "end": 4.0, "crop_style": "pad",
+        "emphasis_moves": [
+            {"at": 0.5, "duration": 1.0, "kind": "zoom", "target": "action"},
+            {"at": 2.5, "duration": 0.8, "kind": "punch", "target": "plate"},
+        ],
+    }
+    output_path = tmp_path / "out_emphasis.mp4"
+
+    render_clip(
+        str(test_video), str(output_path), plan_entry,
+        video_duration=SRC_DURATION, src_width=SRC_WIDTH, src_height=SRC_HEIGHT,
+        emphasis_enabled=True,
+    )
+
+    info = probe(output_path)
+    video_stream = next(s for s in info["streams"] if s["codec_type"] == "video")
+    assert video_stream["width"] == 1080
+    assert video_stream["height"] == 1920
+    assert abs(float(info["format"]["duration"]) - 4.0) < 0.3
+
+
 def test_jumpcut_splices_out_silence_gap(test_video, tmp_path):
     # audio is 2s tone, 2s silence, 2s tone - cut [2, 4) out of [0, 6)
     plan_entry = {

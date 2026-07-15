@@ -309,6 +309,36 @@ class HookBannerConfig:
 
 
 @dataclasses.dataclass
+class EmphasisConfig:
+    # Mid-clip editor-style emphasis moves (Phase 9): transient soft zoom/cut-in
+    # inserts placed *inside* a continuous clip (not only at splice boundaries),
+    # the way a human editor punches in on a reaction or a hot gameplay beat.
+    # Opt-in, off by default - same footing as diarization/audio_energy/
+    # profanity/hook_banner. When off, PLAN.json's emphasis_moves is ignored and
+    # rendering is byte-identical to today.
+    enabled: bool = False
+    # Hard cap on emphasis moves per clip. A dense stutter of zooms reads as a
+    # jittery bad edit (anti-viral), so keep this low. 0 disables emphasis
+    # entirely even when enabled.
+    max_moves: int = 2
+    # Peak zoom multiplier for each move. Deliberately milder than punch_zoom's
+    # 1.15 default: emphasis pulses in *and back out*, so it should be gentle.
+    zoom_amount: float = 1.12
+    # Ease-in / ease-out ramp length (seconds) on each side of a move. The move
+    # spends this long ramping up, holds at peak, then this long ramping back
+    # down to 1x - a transient pulse, unlike punch_zoom which stays zoomed.
+    ramp_seconds: float = 0.18
+    # Minimum flat hold at peak zoom (seconds); a move's duration is clamped up
+    # so it can always fit 2*ramp + this hold.
+    min_hold_seconds: float = 0.25
+    # target='face' aims the zoom at the facecam region. Off by default because
+    # there is no webcam yet (personality-first strategy uses the nick plate) -
+    # the code path exists so enabling a facecam later is a one-flag change.
+    # When false, a move with target='face' falls back to 'action' (center).
+    face_enabled: bool = False
+
+
+@dataclasses.dataclass
 class Config:
     input_dir: str
     output_dir: str
@@ -331,6 +361,7 @@ class Config:
     transitions: TransitionsConfig = dataclasses.field(default_factory=TransitionsConfig)
     profanity: ProfanityConfig = dataclasses.field(default_factory=ProfanityConfig)
     hook_banner: HookBannerConfig = dataclasses.field(default_factory=HookBannerConfig)
+    emphasis: EmphasisConfig = dataclasses.field(default_factory=EmphasisConfig)
 
 
 def _build(section_cls, data: dict, section_name: str):
@@ -371,6 +402,7 @@ def load_config(path: str) -> Config:
         transitions=_build(TransitionsConfig, data.get("transitions", {}), "transitions"),
         profanity=_build(ProfanityConfig, data.get("profanity", {}), "profanity"),
         hook_banner=_build(HookBannerConfig, data.get("hook_banner", {}), "hook_banner"),
+        emphasis=_build(EmphasisConfig, data.get("emphasis", {}), "emphasis"),
     )
     _validate(config)
     return config
@@ -604,4 +636,21 @@ def _validate(config: Config) -> None:
             f"hook_banner.position and subtitles.position are both "
             f"{config.hook_banner.position!r}; the banner would overlap burned-in "
             "captions - set them to different zones"
+        )
+
+    if config.emphasis.max_moves < 0:
+        raise ConfigError(
+            f"emphasis.max_moves must be >= 0, got {config.emphasis.max_moves}"
+        )
+    if config.emphasis.zoom_amount <= 1.0:
+        raise ConfigError(
+            f"emphasis.zoom_amount must be > 1.0, got {config.emphasis.zoom_amount}"
+        )
+    if config.emphasis.ramp_seconds <= 0:
+        raise ConfigError(
+            f"emphasis.ramp_seconds must be > 0, got {config.emphasis.ramp_seconds}"
+        )
+    if config.emphasis.min_hold_seconds < 0:
+        raise ConfigError(
+            f"emphasis.min_hold_seconds must be >= 0, got {config.emphasis.min_hold_seconds}"
         )

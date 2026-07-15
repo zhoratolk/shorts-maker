@@ -11,6 +11,7 @@ from scripts.render import (
     build_ass_content,
     build_audio_filter_chain,
     build_compilation_command,
+    build_emphasis_filter,
     build_ffmpeg_command,
     build_hook_banner_filter,
     build_jumpcut_command,
@@ -375,6 +376,92 @@ def test_build_punch_zoom_filter_rejects_non_positive_ramp():
 def test_build_punch_zoom_filter_rejects_negative_punch_at():
     with pytest.raises(RenderError, match="punch_at must be >= 0"):
         build_punch_zoom_filter(punch_at=-1.0)
+
+
+def test_build_emphasis_filter_none_for_empty_moves():
+    assert build_emphasis_filter([]) is None
+
+
+def test_build_emphasis_filter_none_when_max_moves_zero():
+    assert build_emphasis_filter([{"at": 2.0, "duration": 1.0}], max_moves=0) is None
+
+
+def test_build_emphasis_filter_single_move_is_transient_and_targets_canvas():
+    result = build_emphasis_filter(
+        [{"at": 2.0, "duration": 1.0, "kind": "zoom", "target": "action"}],
+        zoom_amount=1.2, ramp=0.2, min_hold=0.25,
+    )
+    # per move the window appears 4x: z fold reused in the w AND h crop terms,
+    # plus the fx and fy folds => 4 between() calls for one move.
+    assert result.count("between(t,") == 4
+    assert "between(t,2.0000,3.0000)" in result
+    # folds back to 1x outside the window (transient, not a held zoom)
+    assert ",1))':h='1920/" in result
+    # centred focal => the (in_w-out_w)*... shift terms are present
+    assert "x='(in_w-out_w)*(" in result
+    assert result.endswith(",scale=1080:1920")
+
+
+def test_build_emphasis_filter_plate_target_biases_focus_down():
+    result = build_emphasis_filter(
+        [{"at": 1.0, "duration": 1.0, "target": "plate"}],
+        plate_focus_y=0.72,
+    )
+    assert "0.72" in result
+
+
+def test_build_emphasis_filter_face_target_uses_focus_when_provided():
+    result = build_emphasis_filter(
+        [{"at": 1.0, "duration": 1.0, "target": "face"}],
+        face_focus=(0.3, 0.4),
+    )
+    assert "0.3" in result and "0.4" in result
+
+
+def test_build_emphasis_filter_face_target_falls_back_to_centre_without_focus():
+    # No face_focus (no webcam) => centred, still renders, never raises.
+    result = build_emphasis_filter([{"at": 1.0, "duration": 1.0, "target": "face"}])
+    assert result is not None
+    assert "0.3" not in result  # did not invent a focal point
+
+
+def test_build_emphasis_filter_caps_move_count():
+    moves = [
+        {"at": 1.0, "duration": 0.5},
+        {"at": 5.0, "duration": 0.5},
+        {"at": 9.0, "duration": 0.5},
+    ]
+    result = build_emphasis_filter(moves, max_moves=2, ramp=0.1)
+    # 2 moves kept => 4 between() per move (w+h z, fx, fy) => 8 total
+    assert result.count("between(t,") == 8
+
+
+def test_build_emphasis_filter_skips_overlapping_move():
+    # second move starts before the first has released => dropped, not stacked
+    moves = [{"at": 2.0, "duration": 1.0}, {"at": 2.5, "duration": 1.0}]
+    result = build_emphasis_filter(moves, ramp=0.1, min_hold=0.2)
+    assert result.count("between(t,") == 4  # only the first move survived (4 = 1 move)
+
+
+def test_build_emphasis_filter_orders_by_time():
+    moves = [{"at": 8.0, "duration": 0.5}, {"at": 2.0, "duration": 0.5}]
+    result = build_emphasis_filter(moves, ramp=0.1)
+    assert result.index("between(t,2.0000") < result.index("between(t,8.0000")
+
+
+def test_build_emphasis_filter_rejects_bad_params_and_moves():
+    with pytest.raises(RenderError, match="zoom_amount must be > 1.0"):
+        build_emphasis_filter([{"at": 1.0, "duration": 1.0}], zoom_amount=1.0)
+    with pytest.raises(RenderError, match="ramp must be > 0"):
+        build_emphasis_filter([{"at": 1.0, "duration": 1.0}], ramp=0.0)
+    with pytest.raises(RenderError, match="'at' must be >= 0"):
+        build_emphasis_filter([{"at": -1.0, "duration": 1.0}])
+    with pytest.raises(RenderError, match="'duration' must be > 0"):
+        build_emphasis_filter([{"at": 1.0, "duration": 0.0}])
+    with pytest.raises(RenderError, match="'kind' must be one of"):
+        build_emphasis_filter([{"at": 1.0, "duration": 1.0, "kind": "spin"}])
+    with pytest.raises(RenderError, match="'target' must be one of"):
+        build_emphasis_filter([{"at": 1.0, "duration": 1.0, "target": "torso"}])
 
 
 def test_build_profanity_mask_filter_returns_none_for_empty_spans():
@@ -1053,6 +1140,52 @@ def test_render_clip_without_punch_zoom_at_has_no_zoom_filter():
 
     video_filter = command[command.index("-vf") + 1]
     assert "crop=w='" not in video_filter
+
+
+def test_render_clip_applies_emphasis_moves_on_pad_crop_style():
+    # emphasis is allowed on pad/original-16:9 (unlike punch_zoom_at) because it
+    # pulses back to 1x; this must NOT raise the punch_zoom guard.
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "pad",
+        "emphasis_moves": [{"at": 3.0, "duration": 1.0, "kind": "zoom", "target": "action"}],
+    }
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        emphasis_enabled=True,
+        runner=lambda command, capture_output, text: FakeResult(),
+    )
+
+    video_filter = command[command.index("-vf") + 1]
+    assert "between(t,3.0000,4.0000)" in video_filter
+
+
+def test_render_clip_ignores_emphasis_moves_when_disabled():
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "emphasis_moves": [{"at": 3.0, "duration": 1.0}],
+    }
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        emphasis_enabled=False,
+        runner=lambda command, capture_output, text: FakeResult(),
+    )
+
+    video_filter = command[command.index("-vf") + 1]
+    assert "between(t," not in video_filter
 
 
 def test_render_clip_uses_jumpcut_command_when_keep_segments_present():

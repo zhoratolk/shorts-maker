@@ -202,7 +202,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 6. TikTok & Instagram Auto-Publish | 7/7 | Complete    | 2026-07-10 |
 | 7. Profanity Auto-Bleep | 5/5 | Complete    | 2026-07-11 |
 | 8. Hook Title Overlay | 1/1 | Complete    | 2026-07-12 |
-| 9. Мид-клип монтажные акценты | 0/0 | Not planned | — |
+| 9. Мид-клип монтажные акценты | 1/1 | Complete | 2026-07-15 |
 | 10. Outro-карточка + соц-оверлеи + кэп топ-моментов | 0/0 | Not planned | — |
 
 ### Phase 7: Profanity Auto-Bleep
@@ -252,13 +252,13 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 ### Phase 9: Мид-клип монтажные акценты
 
 **Goal:** Внутри цельного клипа (не только на стыках склеек) появляются контекстные монтажные акценты — транзиентные мягкие зум-инсерты/врезы на игровой момент или реакцию, как их расставил бы живой монтажёр. Новое поле `emphasis_moves` в PLAN.json (список `{at, duration, kind: zoom|punch|cut_in, target: action|plate|face}`), макс 2-3 на клип (config cap, default 2), расставляется семантически в SKILL.md шаг 5 по существующим сигналам (audio_energy спайки + реакц-реплики транскрипта + визуал-пасс). render.py расширяется с одиночного держащегося `punch_zoom_at` до списка транзиентных ease-in→hold→ease-out зумов, работающих в т.ч. на crop `pad`/`original-16:9` (лёгкий скейл без реза кадра). Таргет `face` заложен в код, но default OFF (нет вебки пока). Fail-open, default-off, backward-compatible с `punch_zoom_at`.
-**Requirements**: TBD
+**Requirements**: TRANS-EMPH-01 (context-driven mid-clip emphasis moves), TRANS-EMPH-02 (any-crop transient zoom, fail-open/backward-compatible)
 **Depends on:** Phase 4 (переиспользует render pipeline + punch-zoom механику)
-**Plans:** 0 plans
+**Plans:** 1/1 (executed inline 2026-07-15)
 
 Plans:
 
-- [ ] TBD (run /gsd-plan-phase 9 to break down)
+- [x] 09-01 (inline) — `EmphasisConfig` (config.py + validation + config.example.yaml) · `build_emphasis_filter` (transient multi-move zoom, one time-varying crop node, any crop_style) · threaded `emphasis_filter` through build_ffmpeg_command/build_jumpcut_command/build_compilation_command + render_clip + CLI flags · SKILL.md step-5 orchestration + PLAN.json schema · unit+config+real-ffmpeg tests (672 passed)
 
 ### Phase 10: Outro-карточка + соц-оверлеи + кэп топ-моментов
 
