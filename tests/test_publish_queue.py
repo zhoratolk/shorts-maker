@@ -296,6 +296,9 @@ def test_build_insert_body_shapes_snippet_and_status():
 
     assert body["snippet"]["title"] == "My Clip"
     assert body["snippet"]["tags"] == ["a", "b"]
+    # Gaming category is always set explicitly - uploads without one land in
+    # the default "People & Blogs", hurting search/browse classification.
+    assert body["snippet"]["categoryId"] == "20"
     assert body["status"]["privacyStatus"] == "private"
     assert body["status"]["publishAt"] == publish_at
     assert body["status"]["selfDeclaredMadeForKids"] is False

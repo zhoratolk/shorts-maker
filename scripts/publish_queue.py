@@ -47,6 +47,9 @@ UPLOAD_SCOPE = "https://www.googleapis.com/auth/youtube"
 MAX_TITLE_LENGTH = 100
 MAX_DESCRIPTION_LENGTH = 5000
 MAX_TAGS_TOTAL_LENGTH = 500
+# Explicit video category improves search/browse classification for Shorts
+# (uploads without one land in the default "People & Blogs"). 20 = Gaming.
+GAMING_CATEGORY_ID = "20"
 
 
 def load_queue(path: str = DEFAULT_QUEUE_PATH) -> dict[str, Any]:
@@ -199,6 +202,7 @@ def build_insert_body(
             "title": title,
             "description": full_description,
             "tags": tags,
+            "categoryId": GAMING_CATEGORY_ID,
         },
         "status": {
             "privacyStatus": "private",
