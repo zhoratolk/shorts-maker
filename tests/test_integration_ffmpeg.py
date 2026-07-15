@@ -162,6 +162,26 @@ def test_social_popup_and_outro_finalize_pass(test_video, tmp_path):
     assert abs(float(info["format"]["duration"]) - 6.0) < 0.5
 
 
+def test_thumbnail_generation_writes_captioned_poster(test_video, tmp_path):
+    # Only a real ffmpeg pass proves the single-pass scale/cover + crop +
+    # chained drawtext caption graph parses and emits a correctly sized poster
+    # image (16:9 source -> 9:16 cover-cropped 1080x1920 with burnt caption).
+    from scripts.thumbnail import generate_thumbnail, pick_thumbnail_timestamp
+
+    output_path = tmp_path / "poster.png"
+    timestamp = pick_thumbnail_timestamp(SRC_DURATION)
+    generate_thumbnail(
+        str(test_video), "GG EZ CLUTCH", str(output_path),
+        timestamp=timestamp, width=1080, height=1920, font_size=96, position="bottom",
+    )
+
+    assert output_path.exists()
+    info = probe(output_path)
+    image_stream = next(s for s in info["streams"] if s["codec_type"] == "video")
+    assert image_stream["width"] == 1080
+    assert image_stream["height"] == 1920
+
+
 def test_jumpcut_splices_out_silence_gap(test_video, tmp_path):
     # audio is 2s tone, 2s silence, 2s tone - cut [2, 4) out of [0, 6)
     plan_entry = {

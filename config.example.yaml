@@ -428,3 +428,30 @@ top_moments:
   rate_per_hour: 3.0
   # Floor so even a short recording still yields at least one short.
   minimum: 1
+
+thumbnail:
+  # Poster/thumbnail generation: grab a strong frame from the finished clip
+  # and burn a short caption over it (single ffmpeg pass, reuses the hook-
+  # banner font/wrap machinery). Off by default; fail-open - a poster failure
+  # never fails the clip render.
+  enabled: false
+  # Poster size. Default matches the clip's own 9:16 - YouTube shows a Short's
+  # custom thumbnail on the channel grid and when shared. Use 1280x720 for
+  # regular 16:9 uploads.
+  width: 1080
+  height: 1920
+  font: "Arial Black"
+  font_size: 96
+  text_color: "white"
+  box_color: "black"
+  box_opacity: 0.55
+  # Caption placement: top | center | bottom (kept clear of the Shorts UI).
+  position: "bottom"
+  max_lines: 3
+  # Frame choice: "energy" uses audio-energy spikes when available (else the
+  # midpoint); "midpoint" always the middle of the clip.
+  timestamp_strategy: "energy"
+  # When true (and publish.enabled), the publish step sets this poster as the
+  # video's custom thumbnail via thumbnails.set after upload. Fail-open: a
+  # thumbnail error is logged, never fails an already-uploaded video.
+  upload: false

@@ -28,8 +28,10 @@ from scripts.publish_queue import (
     run_command,
     save_queue,
     select_next_due,
+    set_thumbnail,
     upload_and_schedule,
     verify_killed,
+    _try_set_thumbnail,
 )
 
 
@@ -404,6 +406,109 @@ def test_upload_and_schedule_enabled_drives_status_transitions_and_body(tmp_path
     persisted = load_queue(queue_path)
     assert persisted["entries"][0]["status"] == SCHEDULED
     assert persisted["entries"][0]["video_id"] == "vid_fake"
+
+
+# --- Custom thumbnail (thumbnails.set) --------------------------------------
+
+class FakeThumbnailsRequest:
+    def __init__(self, recorder, raise_error=None, **kwargs):
+        self._recorder = recorder
+        self._raise_error = raise_error
+        self.kwargs = kwargs
+
+    def execute(self):
+        if self._raise_error is not None:
+            raise self._raise_error
+        self._recorder.append(self.kwargs)
+        return {"items": []}
+
+
+class FakeVideosAndThumbnailsService(FakeVideosInsertService):
+    """Extends the insert-only fake with a recording thumbnails().set()."""
+
+    def __init__(self, video_id="vid_fake", thumbnail_error=None):
+        super().__init__(video_id)
+        self.thumbnail_set_calls = []
+        self._thumbnail_error = thumbnail_error
+
+    def thumbnails(self):
+        return self
+
+    def set(self, **kwargs):
+        return FakeThumbnailsRequest(self.thumbnail_set_calls, self._thumbnail_error, **kwargs)
+
+
+def test_upload_and_schedule_sets_thumbnail_when_path_present(tmp_path):
+    queue_path = str(tmp_path / "queue.json")
+    video_path = tmp_path / "clip1.mp4"
+    video_path.write_bytes(b"")
+    thumb_path = tmp_path / "thumb.png"
+    thumb_path.write_bytes(b"\x89PNG\r\n")
+    queue = load_queue(queue_path)
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(video_path), metadata_path="clip1.txt",
+        title="T", description="D", tags=["a"], thumbnail_path=str(thumb_path),
+    )
+    fake_service = FakeVideosAndThumbnailsService(video_id="vid_fake")
+
+    upload_and_schedule(
+        queue, entry, lambda: fake_service, FakePublishConfig(enabled=True),
+        now=datetime(2026, 7, 8, 10, 0, tzinfo=timezone.utc), queue_path=queue_path,
+    )
+
+    assert entry["thumbnail_set"] is True
+    assert fake_service.thumbnail_set_calls[0]["videoId"] == "vid_fake"
+    assert load_queue(queue_path)["entries"][0]["thumbnail_set"] is True
+
+
+def test_upload_and_schedule_no_thumbnail_path_leaves_it_untouched(tmp_path):
+    queue_path = str(tmp_path / "queue.json")
+    video_path = tmp_path / "clip1.mp4"
+    video_path.write_bytes(b"")
+    queue = load_queue(queue_path)
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(video_path), metadata_path="clip1.txt",
+        title="T", description="D", tags=["a"],
+    )
+    fake_service = FakeVideosAndThumbnailsService(video_id="vid_fake")
+
+    upload_and_schedule(
+        queue, entry, lambda: fake_service, FakePublishConfig(enabled=True),
+        now=datetime(2026, 7, 8, 10, 0, tzinfo=timezone.utc), queue_path=queue_path,
+    )
+
+    assert "thumbnail_set" not in entry
+    assert fake_service.thumbnail_set_calls == []
+
+
+def test_try_set_thumbnail_missing_file_returns_false(tmp_path):
+    calls = []
+
+    class Recorder:
+        def thumbnails(self):
+            return self
+
+        def set(self, **kwargs):
+            calls.append(kwargs)
+            return FakeThumbnailsRequest(calls, **kwargs)
+
+    assert _try_set_thumbnail(Recorder(), "vid", str(tmp_path / "nope.png")) is False
+    assert calls == []  # short-circuits before any API call
+
+
+def test_try_set_thumbnail_fail_open_on_api_error(tmp_path):
+    thumb_path = tmp_path / "thumb.png"
+    thumb_path.write_bytes(b"\x89PNG\r\n")
+    service = FakeVideosAndThumbnailsService(thumbnail_error=RuntimeError("403 not eligible"))
+    assert _try_set_thumbnail(service, "vid", str(thumb_path)) is False
+
+
+def test_set_thumbnail_calls_api(tmp_path):
+    thumb_path = tmp_path / "thumb.png"
+    thumb_path.write_bytes(b"\x89PNG\r\n")
+    service = FakeVideosAndThumbnailsService()
+    set_thumbnail(service, "vid_x", str(thumb_path))
+    assert service.thumbnail_set_calls[0]["videoId"] == "vid_x"
 
 
 # --- Task 1: pause/resume/kill/revert/verify (PUB-04) -----------------------

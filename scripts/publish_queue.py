@@ -86,6 +86,7 @@ def enqueue(
     tags: list[str],
     moment_tag: str | None = None,
     source_duration: float | None = None,
+    thumbnail_path: str | None = None,
 ) -> dict[str, Any]:
     """Appends a new entry to queue["entries"] with a sequential seq number
     (max existing seq + 1, starting at 1) and status=QUEUED. Idempotent on
@@ -103,6 +104,11 @@ def enqueue(
     attribute a published video's audience-retention curve back to the KIND
     and LENGTH of moment it was (the auto-select learning loop). Both default
     to None and never affect scheduling or upload.
+
+    thumbnail_path is the optional poster image (scripts/thumbnail.py output)
+    to set as the video's custom thumbnail after upload; None means leave the
+    auto-generated YouTube thumbnail. Setting it is fail-open (see
+    upload_and_schedule) - a thumbnail error never fails the upload.
     """
     for entry in queue["entries"]:
         if entry["clip_id"] == clip_id:
@@ -120,6 +126,7 @@ def enqueue(
         "tags": tags,
         "moment_tag": moment_tag,
         "source_duration": source_duration,
+        "thumbnail_path": thumbnail_path,
         "status": QUEUED,
         "video_id": None,
         "publish_at": None,
@@ -298,7 +305,40 @@ def upload_and_schedule(
     entry["updated_at"] = datetime.now(timezone.utc).isoformat()
     save_queue(queue, queue_path)
 
+    # Custom thumbnail is a best-effort afterthought: the video is already
+    # uploaded+scheduled above, so a thumbnail failure (missing file, channel
+    # not eligible for custom thumbnails, transient API error) must NOT undo
+    # or fail that. Fail-open - record the outcome on the entry and move on.
+    thumbnail_path = entry.get("thumbnail_path")
+    if thumbnail_path:
+        entry["thumbnail_set"] = _try_set_thumbnail(service, video_id, thumbnail_path)
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+        save_queue(queue, queue_path)
+
     return video_id
+
+
+def set_thumbnail(service, video_id: str, image_path: str) -> None:
+    """Sets a video's custom thumbnail via thumbnails().set. Raises on API
+    error - callers that need fail-open behaviour use _try_set_thumbnail."""
+    from googleapiclient.http import MediaFileUpload
+
+    media = MediaFileUpload(image_path)
+    service.thumbnails().set(videoId=video_id, media_body=media).execute()
+
+
+def _try_set_thumbnail(service, video_id: str, image_path: str) -> bool:
+    """Fail-open wrapper around set_thumbnail: returns True on success, False
+    (with a [warn]) on a missing file or any API error. Never raises."""
+    if not Path(image_path).exists():
+        print(f"[warn] thumbnail not set for {video_id}: file not found: {image_path}", file=sys.stderr)
+        return False
+    try:
+        set_thumbnail(service, video_id, image_path)
+        return True
+    except Exception as error:  # noqa: BLE001 - fail-open on any upload/API error
+        print(f"[warn] thumbnail not set for {video_id}: {error}", file=sys.stderr)
+        return False
 
 
 # --- Pause/kill (PUB-04) ----------------------------------------------------

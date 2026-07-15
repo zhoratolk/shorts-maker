@@ -1634,3 +1634,52 @@ def test_load_config_rejects_bad_phase10_values(tmp_path):
         )
         with pytest.raises(ConfigError, match=marker):
             load_config(path)
+
+
+def test_load_config_thumbnail_defaults(tmp_path):
+    path = write_config(tmp_path, 'input_dir: "F:/in"\noutput_dir: "F:/out"\n')
+    config = load_config(path)
+    assert config.thumbnail.enabled is False
+    assert config.thumbnail.width == 1080
+    assert config.thumbnail.height == 1920
+    assert config.thumbnail.font_size == 96
+    assert config.thumbnail.position == "bottom"
+    assert config.thumbnail.timestamp_strategy == "energy"
+    assert config.thumbnail.upload is False
+
+
+def test_load_config_thumbnail_custom_round_trip(tmp_path):
+    path = write_config(
+        tmp_path,
+        'input_dir: "F:/in"\noutput_dir: "F:/out"\n'
+        "thumbnail:\n"
+        "  enabled: true\n"
+        "  width: 1280\n"
+        "  height: 720\n"
+        "  font_size: 72\n"
+        "  position: center\n"
+        "  timestamp_strategy: midpoint\n"
+        "  upload: true\n",
+    )
+    config = load_config(path)
+    assert config.thumbnail.enabled is True
+    assert (config.thumbnail.width, config.thumbnail.height) == (1280, 720)
+    assert config.thumbnail.font_size == 72
+    assert config.thumbnail.position == "center"
+    assert config.thumbnail.timestamp_strategy == "midpoint"
+    assert config.thumbnail.upload is True
+
+
+def test_load_config_rejects_bad_thumbnail_values(tmp_path):
+    cases = [
+        ("thumbnail:\n  width: 0\n", "thumbnail.width"),
+        ("thumbnail:\n  font_size: -5\n", "thumbnail.font_size"),
+        ("thumbnail:\n  max_lines: 0\n", "thumbnail.max_lines"),
+        ("thumbnail:\n  box_opacity: 1.4\n", "thumbnail.box_opacity"),
+        ("thumbnail:\n  position: sideways\n", "thumbnail.position"),
+        ("thumbnail:\n  timestamp_strategy: vibes\n", "thumbnail.timestamp_strategy"),
+    ]
+    for section, marker in cases:
+        path = write_config(tmp_path, f'input_dir: "F:/in"\noutput_dir: "F:/out"\n{section}\n')
+        with pytest.raises(ConfigError, match=marker):
+            load_config(path)

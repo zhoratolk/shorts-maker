@@ -400,6 +400,33 @@ class TopMomentsConfig:
 
 
 @dataclasses.dataclass
+class ThumbnailConfig:
+    # Poster/thumbnail generation: pick a strong frame from the finished clip
+    # and burn a short caption over it. Off by default; fail-open (a failure
+    # to build the poster never fails the clip render).
+    enabled: bool = False
+    # Poster size. Defaults to the clip's own 9:16 (Shorts show a custom
+    # thumbnail on the channel grid / when shared). Set 1280x720 for regular
+    # 16:9 videos.
+    width: int = 1080
+    height: int = 1920
+    font: str = "Arial Black"
+    font_size: int = 96
+    text_color: str = "white"
+    box_color: str = "black"
+    box_opacity: float = 0.55
+    position: str = "bottom"  # top | center | bottom
+    max_lines: int = 3
+    # How to choose the poster frame: "energy" uses audio-energy spikes when
+    # available (falling back to the midpoint), "midpoint" always the middle.
+    timestamp_strategy: str = "energy"
+    # When True (and publish is enabled), the publish step sets this poster as
+    # the video's custom thumbnail via thumbnails.set after upload. Fail-open:
+    # a thumbnail error is logged and never fails an already-uploaded video.
+    upload: bool = False
+
+
+@dataclasses.dataclass
 class Config:
     input_dir: str
     output_dir: str
@@ -426,6 +453,7 @@ class Config:
     social_overlay: SocialOverlayConfig = dataclasses.field(default_factory=SocialOverlayConfig)
     outro_card: OutroCardConfig = dataclasses.field(default_factory=OutroCardConfig)
     top_moments: TopMomentsConfig = dataclasses.field(default_factory=TopMomentsConfig)
+    thumbnail: ThumbnailConfig = dataclasses.field(default_factory=ThumbnailConfig)
 
 
 def _build(section_cls, data: dict, section_name: str):
@@ -470,6 +498,7 @@ def load_config(path: str) -> Config:
         social_overlay=_build(SocialOverlayConfig, data.get("social_overlay", {}), "social_overlay"),
         outro_card=_build(OutroCardConfig, data.get("outro_card", {}), "outro_card"),
         top_moments=_build(TopMomentsConfig, data.get("top_moments", {}), "top_moments"),
+        thumbnail=_build(ThumbnailConfig, data.get("thumbnail", {}), "thumbnail"),
     )
     _validate(config)
     return config
@@ -762,4 +791,26 @@ def _validate(config: Config) -> None:
     if config.top_moments.minimum < 1:
         raise ConfigError(
             f"top_moments.minimum must be >= 1, got {config.top_moments.minimum}"
+        )
+    if config.thumbnail.width <= 0 or config.thumbnail.height <= 0:
+        raise ConfigError(
+            f"thumbnail.width and thumbnail.height must be > 0, got "
+            f"{config.thumbnail.width}x{config.thumbnail.height}"
+        )
+    if config.thumbnail.font_size <= 0:
+        raise ConfigError(f"thumbnail.font_size must be > 0, got {config.thumbnail.font_size}")
+    if config.thumbnail.max_lines < 1:
+        raise ConfigError(f"thumbnail.max_lines must be >= 1, got {config.thumbnail.max_lines}")
+    if not 0.0 <= config.thumbnail.box_opacity <= 1.0:
+        raise ConfigError(
+            f"thumbnail.box_opacity must be within [0, 1], got {config.thumbnail.box_opacity}"
+        )
+    if config.thumbnail.position not in ("top", "center", "bottom"):
+        raise ConfigError(
+            f"thumbnail.position must be 'top', 'center' or 'bottom', got {config.thumbnail.position!r}"
+        )
+    if config.thumbnail.timestamp_strategy not in ("energy", "midpoint"):
+        raise ConfigError(
+            f"thumbnail.timestamp_strategy must be 'energy' or 'midpoint', got "
+            f"{config.thumbnail.timestamp_strategy!r}"
         )
