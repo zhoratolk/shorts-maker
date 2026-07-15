@@ -202,6 +202,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 6. TikTok & Instagram Auto-Publish | 7/7 | Complete    | 2026-07-10 |
 | 7. Profanity Auto-Bleep | 5/5 | Complete    | 2026-07-11 |
 | 8. Hook Title Overlay | 1/1 | Complete    | 2026-07-12 |
+| 9. Мид-клип монтажные акценты | 0/0 | Not planned | — |
+| 10. Outro-карточка + соц-оверлеи + кэп топ-моментов | 0/0 | Not planned | — |
 
 ### Phase 7: Profanity Auto-Bleep
 
@@ -246,3 +248,28 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 **Plans**: 1/1 plans complete (executed inline 2026-07-12 — see 08-01-SUMMARY.md)
 
 - [x] 08-01-PLAN.md — render.py drawtext banner builder + builder threading + collision guard + CLI, extended inline with HookBannerConfig/config.example.yaml/SKILL.md wiring/integration test (the planner's unwritten 08-02 scope)
+
+### Phase 9: Мид-клип монтажные акценты
+
+**Goal:** Внутри цельного клипа (не только на стыках склеек) появляются контекстные монтажные акценты — транзиентные мягкие зум-инсерты/врезы на игровой момент или реакцию, как их расставил бы живой монтажёр. Новое поле `emphasis_moves` в PLAN.json (список `{at, duration, kind: zoom|punch|cut_in, target: action|plate|face}`), макс 2-3 на клип (config cap, default 2), расставляется семантически в SKILL.md шаг 5 по существующим сигналам (audio_energy спайки + реакц-реплики транскрипта + визуал-пасс). render.py расширяется с одиночного держащегося `punch_zoom_at` до списка транзиентных ease-in→hold→ease-out зумов, работающих в т.ч. на crop `pad`/`original-16:9` (лёгкий скейл без реза кадра). Таргет `face` заложен в код, но default OFF (нет вебки пока). Fail-open, default-off, backward-compatible с `punch_zoom_at`.
+**Requirements**: TBD
+**Depends on:** Phase 4 (переиспользует render pipeline + punch-zoom механику)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 9 to break down)
+
+### Phase 10: Outro-карточка + соц-оверлеи + кэп топ-моментов
+
+**Goal:** Три завершающих штриха под «канальный» вид, все config-gated/default-off/fail-open:
+1. **Outro** — анимированная полноэкранная плашка на последние ~2-3с клипа; ротация 4-5 паттернов/цветов детерминированно по `queue_index % N` (соседние клипы разные, воспроизводимо); текст ник `ZhorikP` + твич-глиф (`assets/overlays/twitch_glyph.png`) + ссылка.
+2. **Соц-оверлеи (popups)** — капсула плавно выезжает сбоку по ходу клипа (иконка twitch_glyph + текст-ссылка, ~3с, fade in/out, safe-area — не лезет в сабы и хук Phase 8); twitch активен, kick заведён заготовкой (обе всплывают по разу, когда включены обе).
+3. **Кэп топ-моментов** — глобальный бюджет `max_moments = rate × часы_исходника` (rate default 3, config); берётся топ-N по всей записи (не окно на час), применяется **только в авто-режиме отбора**; вводит числовой `score` 1-5 на кандидата для глоб-ранга; сверх-бюджета кандидаты падают в компиляцию Phase 5 (если тянут на суб-порог) иначе отбрасываются.
+**Requirements**: TBD
+**Depends on:** Phase 8 (drawtext/overlay слой), Phase 5 (компиляция для сверх-бюджета)
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 10 to break down)

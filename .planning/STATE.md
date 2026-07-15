@@ -132,6 +132,8 @@ Recent decisions affecting current work:
 
 ### Roadmap Evolution
 
+- Phase 9 added (2026-07-15): Мид-клип монтажные акценты — emphasis_moves (транзиентные контекстные зум-инсерты/врезы по ходу цельного клипа, target action/plate/face с face default-off, max 2-3/клип, мягкий ease-зум на любом crop, fail-open, backward-compatible с punch_zoom_at). Depends on Phase 4.
+- Phase 10 added (2026-07-15): Outro-карточка + соц-оверлеи + кэп топ-моментов — анимированная outro-плашка (ротация паттернов по queue_index, ник ZhorikP + twitch_glyph + ссылка), выезжающие соц-капсулы (twitch активен / kick заготовкой, assets/overlays/twitch_glyph.png скачан с Wikimedia), глобальный кэп топ-N = rate(3)×часы_исходника только в авто-режиме (вводит score 1-5 на кандидата, сверх-бюджета → компиляция Phase 5). Depends on Phase 8 + Phase 5.
 - Phase 7 added: Profanity Auto-Bleep — detect swear words in the Whisper transcript, mask with a quiet overlay tone (audio keeps flowing, not full silence) so platform speech-to-text moderation/demonetization scanners can't pick them up
 - Plan 01-01: data/monetization_rules.yaml is committed (not gitignored) — generic platform-policy data, zero channel-specific content
 - Plan 01-01: last_checked on every risk flag is copied verbatim from the ruleset's own `updated:` date stamp, not today's date, so staleness is visible (PITFALLS.md Pitfall 2)
