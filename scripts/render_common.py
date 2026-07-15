@@ -21,6 +21,22 @@ class RenderError(ValueError):
     pass
 
 
+def encode_flags(video_codec: str, preset: str | None = None, crf: int | None = None) -> list[str]:
+    """Video-encode ffmpeg flags: always `-c:v <codec>`, plus optional
+    `-preset`/`-crf` speed-vs-size knobs. Both default to None so the emitted
+    command is byte-identical to before this knob existed (ffmpeg's own
+    encoder defaults apply). Opt-in only: e.g. preset='veryfast' trades size
+    for a much faster libx264 encode. Note preset/crf are meaningful for the
+    x264/x265 software encoders; leave them unset for hardware encoders like
+    h264_nvenc (which use their own -cq/-preset vocabulary)."""
+    flags = ["-c:v", video_codec]
+    if preset:
+        flags += ["-preset", preset]
+    if crf is not None:
+        flags += ["-crf", str(crf)]
+    return flags
+
+
 # Banner fonts: this Windows ffmpeg build ships fontconfig without a config
 # file, so drawtext's font=<name> lookup fails outright ("Fontconfig error:
 # Cannot load default config file") - an explicit fontfile= path is mandatory

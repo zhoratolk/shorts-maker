@@ -2192,3 +2192,50 @@ def test_render_clip_banner_no_collision_when_positions_differ(tmp_path):
 
     video_filter = command[command.index("-vf") + 1]
     assert "drawtext=" in video_filter
+
+
+# --- encode_flags / preset+crf knobs (opt-in, default byte-identical) -------
+
+from scripts.render_common import encode_flags
+
+
+def test_encode_flags_default_is_codec_only():
+    assert encode_flags("libx264") == ["-c:v", "libx264"]
+
+
+def test_encode_flags_emits_preset_and_crf_when_set():
+    assert encode_flags("libx264", preset="veryfast", crf=23) == [
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23"
+    ]
+
+
+def test_encode_flags_crf_zero_is_emitted():
+    # crf=0 is a valid (lossless) value - must not be dropped as falsy.
+    assert "-crf" in encode_flags("libx264", crf=0)
+
+
+def test_build_ffmpeg_command_has_no_preset_crf_by_default():
+    cmd = build_ffmpeg_command(
+        "in.mp4", "out.mp4", 10.0, 40.0, "scale=1080:1920", None,
+        0.5, 100.0,
+    )
+    assert "-preset" not in cmd
+    assert "-crf" not in cmd
+
+
+def test_build_ffmpeg_command_emits_preset_crf_when_set():
+    cmd = build_ffmpeg_command(
+        "in.mp4", "out.mp4", 10.0, 40.0, "scale=1080:1920", None,
+        0.5, 100.0, preset="veryfast", crf=20,
+    )
+    assert cmd[cmd.index("-preset") + 1] == "veryfast"
+    assert cmd[cmd.index("-crf") + 1] == "20"
+
+
+def test_build_overlay_pass_command_emits_preset_crf_when_set():
+    cmd = build_overlay_pass_command(
+        "base.mp4", "out.mp4", popups=[{"at": 1.0, "duration": 2.0, "label": "x"}],
+        preset="fast", crf=18,
+    )
+    assert cmd[cmd.index("-preset") + 1] == "fast"
+    assert cmd[cmd.index("-crf") + 1] == "18"

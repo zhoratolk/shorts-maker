@@ -16,6 +16,7 @@ from scripts.render_common import (
     RenderError,
     _drawtext_color,
     _escape_drawtext_text,
+    encode_flags,
     resolve_banner_font,
 )
 
@@ -209,6 +210,8 @@ def build_overlay_pass_command(
     popups: list[dict] | None = None,
     outro: dict | None = None,
     video_codec: str = "libx264",
+    preset: str | None = None,
+    crf: int | None = None,
     margin: int = 40,
     popup_y: int | None = None,
     popup_size: int = 44,
@@ -275,7 +278,7 @@ def build_overlay_pass_command(
         *inputs,
         "-filter_complex", ";".join(graph),
         "-map", vmap, "-map", amap,
-        "-c:v", video_codec, "-c:a", "aac",
+        *encode_flags(video_codec, preset, crf), "-c:a", "aac",
         "-movflags", "+faststart",
         output_path,
     ]

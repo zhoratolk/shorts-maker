@@ -17,6 +17,7 @@ from scripts.render_common import (
     _drawtext_color,
     _escape_drawtext_text,
     _wrap_banner_lines,
+    encode_flags,
     resolve_banner_font,
 )
 
@@ -687,6 +688,8 @@ def build_ffmpeg_command(
     profanity_filter: str | None = None,
     profanity_sound: tuple[str, str, list[str]] | None = None,
     video_codec: str = "libx264",
+    preset: str | None = None,
+    crf: int | None = None,
     banner_filter: str | None = None,
     emphasis_filter: str | None = None,
 ) -> list[str]:
@@ -764,7 +767,7 @@ def build_ffmpeg_command(
             "-filter_complex", filter_complex,
             "-map", "[vout]",
             "-map", "[aout]",
-            "-c:v", video_codec,
+            *encode_flags(video_codec, preset, crf),
             "-c:a", "aac",
             output_path,
         ]
@@ -782,7 +785,7 @@ def build_ffmpeg_command(
         "-i", input_path,
         "-vf", video_filter,
         *audio_args,
-        "-c:v", video_codec,
+        *encode_flags(video_codec, preset, crf),
         "-c:a", "aac",
         output_path,
     ]
@@ -920,6 +923,8 @@ def build_jumpcut_command(
     profanity_filter: str | None = None,
     profanity_sound: tuple[str, str, list[str]] | None = None,
     video_codec: str = "libx264",
+    preset: str | None = None,
+    crf: int | None = None,
     banner_filter: str | None = None,
     emphasis_filter: str | None = None,
 ) -> list[str]:
@@ -1046,7 +1051,7 @@ def build_jumpcut_command(
         "-filter_complex", filter_complex,
         "-map", "[vout]",
         "-map", "[aout]",
-        "-c:v", video_codec,
+        *encode_flags(video_codec, preset, crf),
         "-c:a", "aac",
         output_path,
     ]
@@ -1155,6 +1160,8 @@ def build_compilation_command(
     profanity_filter: str | None = None,
     profanity_sound: tuple[str, str, list[str]] | None = None,
     video_codec: str = "libx264",
+    preset: str | None = None,
+    crf: int | None = None,
     banner_filter: str | None = None,
     emphasis_filter: str | None = None,
 ) -> list[str]:
@@ -1309,7 +1316,7 @@ def build_compilation_command(
         "-filter_complex", filter_complex,
         "-map", "[vout]",
         "-map", "[aout]",
-        "-c:v", video_codec,
+        *encode_flags(video_codec, preset, crf),
         "-c:a", "aac",
         output_path,
     ]
@@ -1359,6 +1366,8 @@ def render_clip(
     profanity_mask_mode: str = "garble",
     profanity_mask_sound_path: str = "",
     video_codec: str = "libx264",
+    preset: str | None = None,
+    crf: int | None = None,
     banner_mode: str = "persistent",
     banner_font: str = "Arial Black",
     banner_size: int = 58,
@@ -1557,6 +1566,7 @@ def render_clip(
             profanity_filter=profanity_filter,
             profanity_sound=profanity_sound,
             video_codec=video_codec,
+            preset=preset, crf=crf,
             banner_filter=banner_filter,
             emphasis_filter=emphasis_filter,
         )
@@ -1596,6 +1606,7 @@ def render_clip(
                 vignette, grain_strength, punch_zoom_at, punch_zoom_amount, punch_zoom_ramp,
                 denoise_strength, boundary_transitions, boundary_gaps, transition_duration, min_overlap_seconds,
                 profanity_filter, profanity_sound, video_codec,
+                preset=preset, crf=crf,
                 banner_filter=banner_filter,
                 emphasis_filter=emphasis_filter,
             )
@@ -1652,7 +1663,8 @@ def render_clip(
         try:
             finalize_command = build_overlay_pass_command(
                 output_path, str(tmp_path), popups=popups, outro=outro,
-                video_codec=video_codec, popup_y=social_y, popup_size=social_size,
+                video_codec=video_codec, preset=preset, crf=crf,
+                popup_y=social_y, popup_size=social_size,
                 popup_box_color=social_box_color, popup_box_opacity=social_box_opacity,
                 popup_font=social_font, popup_slide_seconds=social_slide_seconds,
                 outro_fps=outro_fps,
@@ -1767,6 +1779,16 @@ def main() -> None:
     parser.add_argument(
         "--video-codec", default="libx264",
         help="ffmpeg -c:v encoder to use, e.g. h264_nvenc for NVIDIA hardware encoding (default: libx264)",
+    )
+    parser.add_argument(
+        "--preset", default=None,
+        help="ffmpeg -preset for the video encoder, e.g. veryfast for a faster libx264 encode at a "
+        "size cost (default: unset = encoder's own default, byte-identical to before). x264/x265 only.",
+    )
+    parser.add_argument(
+        "--crf", type=int, default=None,
+        help="ffmpeg -crf quality/size knob for x264/x265 (lower = better/bigger; default: unset = "
+        "encoder default). Leave unset for hardware encoders like h264_nvenc.",
     )
     # --banner-* flags are harmless no-ops for plan entries without banner_text
     # (same convention as --profanity-*).
@@ -1889,6 +1911,8 @@ def main() -> None:
             profanity_warble_freq=args.profanity_warble_freq,
             profanity_warble_depth=args.profanity_warble_depth,
             video_codec=args.video_codec,
+            preset=args.preset,
+            crf=args.crf,
             profanity_mask_mode=args.profanity_mask_mode,
             profanity_mask_sound_path=args.profanity_mask_sound_path,
             banner_mode=args.banner_mode,
