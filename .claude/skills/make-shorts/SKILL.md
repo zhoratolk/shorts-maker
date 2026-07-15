@@ -186,7 +186,7 @@ For each approved candidate, re-read that moment's transcript window (from the c
   ```
   to get the filesystem-safe filename (e.g. `mystream-0001-boss-rage-quit.mp4`) to use as `output_filename` below. The video stem prefix keeps clips from different source videos from colliding in the shared `config.output_dir`. Index clips sequentially in the order they appear in `PLAN.json`, starting at 1.
 - **Per-platform metadata** — if `config.metadata.enabled` is `true`, for each platform in `config.metadata.platforms` produce:
-  - `youtube`: `{"title": ..., "description": ..., "tags": [...]}` (tags as a plain list, not hashtags).
+  - `youtube`: `{"title": ..., "description": ..., "tags": [...]}` (tags as a plain list, not hashtags). Regardless of metadata language, apply the upload-practices rules from [docs/metadata-writing-ru.md](docs/metadata-writing-ru.md) («Приёмы загрузки Shorts»): the title's first two words are the moment's strongest keywords, one relevant emoji at the end (skip when the `⚠️ 18+` prefix is present); the description is never empty — one summary sentence + 4-5 keywords woven into prose + 4-5 hashtags; `tags` include the clip's topic, general niche tags, and the channel name.
   - `tiktok` / `instagram`: `{"caption": "..."}` — a hook as the caption's first line, hashtags inline in the text.
 
   If `config.visual.enabled` and `config.visual.detect_game_context` are both `true` and this clip's chunk has a `work/<video_stem>/frames/chunk_NNNN/game_context.txt`, use that game/topic name in the title and hashtags (e.g. `#eldenring`) — a real name beats a generic category, per [register-ru.md](docs/register-ru.md) rule 7.
