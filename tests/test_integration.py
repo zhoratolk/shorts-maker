@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 from scripts.candidates import merge_candidate_files, render_candidates_markdown, write_candidates_json
 from scripts.chunker import split_into_chunks, write_chunks

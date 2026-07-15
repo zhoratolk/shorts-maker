@@ -2,6 +2,18 @@ import json
 
 import pytest
 
+
+class FakeResult:
+    """Module-level default subprocess result (rc 0, empty streams). Tests
+    that need a specific stdout (e.g. a probe JSON) still define their own
+    local FakeResult, which shadows this; this exists so tests whose runner
+    is never actually invoked (the error raises first) don't NameError."""
+
+    returncode = 0
+    stdout = ""
+    stderr = ""
+
+
 from scripts.render import (
     RenderError,
     VALID_TRANSITIONS,

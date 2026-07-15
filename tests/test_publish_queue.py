@@ -365,7 +365,6 @@ def test_upload_and_schedule_enabled_drives_status_transitions_and_body(tmp_path
     )
     config = FakePublishConfig(enabled=True)
     fake_service = FakeVideosInsertService(video_id="vid_fake")
-    save_calls = []
 
     def service_factory():
         return fake_service

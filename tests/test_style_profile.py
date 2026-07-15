@@ -1,5 +1,3 @@
-import pytest
-
 from scripts.style_profile import derive_profile, format_naming_examples_block
 
 
