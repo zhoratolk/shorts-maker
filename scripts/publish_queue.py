@@ -84,6 +84,8 @@ def enqueue(
     title: str,
     description: str,
     tags: list[str],
+    moment_tag: str | None = None,
+    source_duration: float | None = None,
 ) -> dict[str, Any]:
     """Appends a new entry to queue["entries"] with a sequential seq number
     (max existing seq + 1, starting at 1) and status=QUEUED. Idempotent on
@@ -95,6 +97,12 @@ def enqueue(
     title/description/tags are taken verbatim from the already-finished
     per-clip metadata produced at make-shorts time (D-01/D-02) - this
     function never regenerates metadata.
+
+    moment_tag/source_duration are optional provenance: the candidate's
+    moment tag and the clip's duration, carried so retention.py can later
+    attribute a published video's audience-retention curve back to the KIND
+    and LENGTH of moment it was (the auto-select learning loop). Both default
+    to None and never affect scheduling or upload.
     """
     for entry in queue["entries"]:
         if entry["clip_id"] == clip_id:
@@ -110,6 +118,8 @@ def enqueue(
         "title": title,
         "description": description,
         "tags": tags,
+        "moment_tag": moment_tag,
+        "source_duration": source_duration,
         "status": QUEUED,
         "video_id": None,
         "publish_at": None,
