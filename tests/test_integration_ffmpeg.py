@@ -133,6 +133,35 @@ def test_emphasis_moves_render_on_pad_crop_style(test_video, tmp_path):
     assert abs(float(info["format"]["duration"]) - 4.0) < 0.3
 
 
+def test_social_popup_and_outro_finalize_pass(test_video, tmp_path):
+    # Phase 10: the overlay finalize pass draws a sliding social capsule over
+    # the clip (twitch with icon + kick text-only stub) AND appends the animated
+    # outro card. Only a real encode proves the gradients source, drawbox slide
+    # expressions, icon overlay and the base+card concat all parse and produce a
+    # playable 9:16 file.
+    icon = Path(__file__).resolve().parents[1] / "assets" / "overlays" / "twitch_glyph.png"
+    plan_entry = {"start": 0.0, "end": 4.0, "crop_style": "zoom"}
+    output_path = tmp_path / "out_phase10.mp4"
+
+    render_clip(
+        str(test_video), str(output_path), plan_entry,
+        video_duration=SRC_DURATION, src_width=SRC_WIDTH, src_height=SRC_HEIGHT,
+        social_enabled=True,
+        social_platforms=["twitch", "kick"],
+        social_icon_paths={"twitch": str(icon)},
+        social_labels={"twitch": "twitch.tv/zhorikp", "kick": "kick.com/zhorikp"},
+        outro_enabled=True, outro_nick="ZhorikP", outro_cta="twitch.tv/zhorikp",
+        outro_icon_path=str(icon), outro_duration=2.0, queue_index=2,
+    )
+
+    info = probe(output_path)
+    video_stream = next(s for s in info["streams"] if s["codec_type"] == "video")
+    assert video_stream["width"] == 1080
+    assert video_stream["height"] == 1920
+    # 4s base clip + 2s appended outro card
+    assert abs(float(info["format"]["duration"]) - 6.0) < 0.5
+
+
 def test_jumpcut_splices_out_silence_gap(test_video, tmp_path):
     # audio is 2s tone, 2s silence, 2s tone - cut [2, 4) out of [0, 6)
     plan_entry = {

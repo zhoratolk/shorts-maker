@@ -1540,3 +1540,97 @@ def test_load_config_rejects_bad_emphasis_values(tmp_path):
         )
         with pytest.raises(ConfigError, match=marker):
             load_config(path)
+
+
+def test_load_config_top_moments_defaults_and_custom(tmp_path):
+    path = write_config(tmp_path, 'input_dir: "F:/in"\noutput_dir: "F:/out"\n')
+    config = load_config(path)
+    assert config.top_moments.rate_per_hour == 3.0
+    assert config.top_moments.minimum == 1
+
+    path = write_config(
+        tmp_path,
+        'input_dir: "F:/in"\noutput_dir: "F:/out"\ntop_moments:\n  rate_per_hour: 5.0\n  minimum: 2\n',
+    )
+    config = load_config(path)
+    assert config.top_moments.rate_per_hour == 5.0
+    assert config.top_moments.minimum == 2
+
+
+def test_load_config_rejects_bad_top_moments_values(tmp_path):
+    for section, marker in [
+        ("rate_per_hour: 0", "top_moments.rate_per_hour"),
+        ("minimum: 0", "top_moments.minimum"),
+    ]:
+        path = write_config(
+            tmp_path,
+            f'input_dir: "F:/in"\noutput_dir: "F:/out"\ntop_moments:\n  {section}\n',
+        )
+        with pytest.raises(ConfigError, match=marker):
+            load_config(path)
+
+
+def test_load_config_phase10_defaults_when_sections_missing(tmp_path):
+    path = write_config(tmp_path, 'input_dir: "F:/in"\noutput_dir: "F:/out"\n')
+
+    config = load_config(path)
+
+    assert config.social_overlay.enabled is False
+    assert config.social_overlay.platforms == ["twitch"]
+    assert config.social_overlay.box_color == "#9146ff"
+    assert config.social_overlay.y is None
+    assert config.outro_card.enabled is False
+    assert config.outro_card.pattern_count == 5
+    assert config.outro_card.fps == 30
+
+
+def test_load_config_phase10_custom_values_round_trip(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        social_overlay:
+          enabled: true
+          platforms: ["twitch", "kick"]
+          icon_paths:
+            twitch: "assets/overlays/twitch_glyph.png"
+          labels:
+            twitch: "twitch.tv/zhorikp"
+            kick: "kick.com/zhorikp"
+          duration_seconds: 4.0
+        outro_card:
+          enabled: true
+          nick: "ZhorikP"
+          cta_text: "twitch.tv/zhorikp"
+          pattern_count: 3
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.social_overlay.enabled is True
+    assert config.social_overlay.platforms == ["twitch", "kick"]
+    assert config.social_overlay.labels["kick"] == "kick.com/zhorikp"
+    assert config.social_overlay.duration_seconds == 4.0
+    assert config.outro_card.enabled is True
+    assert config.outro_card.nick == "ZhorikP"
+    assert config.outro_card.pattern_count == 3
+
+
+def test_load_config_rejects_bad_phase10_values(tmp_path):
+    for section, marker in [
+        ("social_overlay:\n  duration_seconds: 0", "social_overlay.duration_seconds"),
+        ("social_overlay:\n  slide_seconds: 0", "social_overlay.slide_seconds"),
+        ("social_overlay:\n  slide_seconds: 2.0\n  duration_seconds: 3.0", "slide_seconds\\*2"),
+        ("social_overlay:\n  box_opacity: 1.5", "social_overlay.box_opacity"),
+        ("outro_card:\n  duration_seconds: 0", "outro_card.duration_seconds"),
+        ("outro_card:\n  pattern_count: 0", "outro_card.pattern_count"),
+        ("outro_card:\n  fps: 0", "outro_card.fps"),
+    ]:
+        path = write_config(
+            tmp_path,
+            f'input_dir: "F:/in"\noutput_dir: "F:/out"\n{section}\n',
+        )
+        with pytest.raises(ConfigError, match=marker):
+            load_config(path)

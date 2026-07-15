@@ -339,6 +339,67 @@ class EmphasisConfig:
 
 
 @dataclasses.dataclass
+class SocialOverlayConfig:
+    # Phase 10 social popups: a small capsule (glyph + link text) that slides in
+    # from the left, holds, and slides back out once per platform per clip.
+    # Opt-in, off by default; runs as a fail-open finalize pass so a missing
+    # icon or an old FFmpeg never breaks the render. Twitch is live now; Kick is
+    # a stub (empty icon => text-only capsule) until a Kick glyph asset exists.
+    enabled: bool = False
+    # Ordered platforms; a platform is drawn only if it has a label or an icon,
+    # so the Kick stub is silent until configured. Both draw once, spread apart.
+    platforms: list = dataclasses.field(default_factory=lambda: ["twitch"])
+    # {platform: glyph PNG path}. e.g. {"twitch": "assets/overlays/twitch_glyph.png"}
+    icon_paths: dict = dataclasses.field(default_factory=dict)
+    # {platform: link text}. e.g. {"twitch": "twitch.tv/zhorikp"}
+    labels: dict = dataclasses.field(default_factory=dict)
+    duration_seconds: float = 3.0
+    slide_seconds: float = 0.4
+    size: int = 44
+    box_color: str = "#9146ff"  # Twitch purple
+    box_opacity: float = 0.92
+    font: str = "Arial Bold"
+    # Capsule top Y in px; None => ~52% of frame height (clear of the top banner
+    # and the bottom caption zone).
+    y: int | None = None
+
+
+@dataclasses.dataclass
+class OutroCardConfig:
+    # Phase 10 end card: an animated full-screen plate appended to each clip -
+    # nick + platform glyph + link, over a self-animating gradient. The gradient
+    # preset rotates by clip index (pattern_count) so consecutive shorts differ.
+    # Opt-in, off by default; part of the same fail-open finalize pass.
+    enabled: bool = False
+    duration_seconds: float = 2.5
+    nick: str = ""            # e.g. "ZhorikP"
+    cta_text: str = ""        # e.g. "twitch.tv/zhorikp"
+    icon_path: str = ""       # glyph shown above the nick
+    font: str = "Arial Black"
+    nick_size: int = 120
+    cta_size: int = 56
+    # How many built-in gradient presets to cycle through (capped at the number
+    # that actually exist in render.OUTRO_PATTERNS).
+    pattern_count: int = 5
+    # Output fps for the appended card; the base clip is resampled to this so
+    # the concat is always valid regardless of the source frame rate.
+    fps: int = 30
+
+
+@dataclasses.dataclass
+class TopMomentsConfig:
+    # Phase 10 auto-select cap. Applies ONLY in auto-select mode ("сделай топ
+    # моменты по твоему выбору") - when the user hand-picks moments this is
+    # ignored. rate_per_hour * source_hours is the GLOBAL budget of standalone
+    # shorts for the whole recording (a 3h stream at rate 3 => 9 total, drawn
+    # from anywhere across the 3h, not 3 per each hour). Configurable so a
+    # business tier can dial it up.
+    rate_per_hour: float = 3.0
+    # Floor so a short recording still yields at least one short.
+    minimum: int = 1
+
+
+@dataclasses.dataclass
 class Config:
     input_dir: str
     output_dir: str
@@ -362,6 +423,9 @@ class Config:
     profanity: ProfanityConfig = dataclasses.field(default_factory=ProfanityConfig)
     hook_banner: HookBannerConfig = dataclasses.field(default_factory=HookBannerConfig)
     emphasis: EmphasisConfig = dataclasses.field(default_factory=EmphasisConfig)
+    social_overlay: SocialOverlayConfig = dataclasses.field(default_factory=SocialOverlayConfig)
+    outro_card: OutroCardConfig = dataclasses.field(default_factory=OutroCardConfig)
+    top_moments: TopMomentsConfig = dataclasses.field(default_factory=TopMomentsConfig)
 
 
 def _build(section_cls, data: dict, section_name: str):
@@ -403,6 +467,9 @@ def load_config(path: str) -> Config:
         profanity=_build(ProfanityConfig, data.get("profanity", {}), "profanity"),
         hook_banner=_build(HookBannerConfig, data.get("hook_banner", {}), "hook_banner"),
         emphasis=_build(EmphasisConfig, data.get("emphasis", {}), "emphasis"),
+        social_overlay=_build(SocialOverlayConfig, data.get("social_overlay", {}), "social_overlay"),
+        outro_card=_build(OutroCardConfig, data.get("outro_card", {}), "outro_card"),
+        top_moments=_build(TopMomentsConfig, data.get("top_moments", {}), "top_moments"),
     )
     _validate(config)
     return config
@@ -653,4 +720,46 @@ def _validate(config: Config) -> None:
     if config.emphasis.min_hold_seconds < 0:
         raise ConfigError(
             f"emphasis.min_hold_seconds must be >= 0, got {config.emphasis.min_hold_seconds}"
+        )
+    if config.social_overlay.duration_seconds <= 0:
+        raise ConfigError(
+            f"social_overlay.duration_seconds must be > 0, got {config.social_overlay.duration_seconds}"
+        )
+    if config.social_overlay.slide_seconds <= 0:
+        raise ConfigError(
+            f"social_overlay.slide_seconds must be > 0, got {config.social_overlay.slide_seconds}"
+        )
+    if config.social_overlay.slide_seconds * 2 >= config.social_overlay.duration_seconds:
+        raise ConfigError(
+            "social_overlay.slide_seconds*2 must be < duration_seconds so the capsule has a hold "
+            f"(got slide={config.social_overlay.slide_seconds}, duration={config.social_overlay.duration_seconds})"
+        )
+    if config.social_overlay.size <= 0:
+        raise ConfigError(f"social_overlay.size must be > 0, got {config.social_overlay.size}")
+    if not 0.0 <= config.social_overlay.box_opacity <= 1.0:
+        raise ConfigError(
+            f"social_overlay.box_opacity must be within [0, 1], got {config.social_overlay.box_opacity}"
+        )
+    if config.outro_card.duration_seconds <= 0:
+        raise ConfigError(
+            f"outro_card.duration_seconds must be > 0, got {config.outro_card.duration_seconds}"
+        )
+    if config.outro_card.nick_size <= 0 or config.outro_card.cta_size <= 0:
+        raise ConfigError(
+            f"outro_card.nick_size and outro_card.cta_size must be > 0, got "
+            f"nick_size={config.outro_card.nick_size}, cta_size={config.outro_card.cta_size}"
+        )
+    if config.outro_card.pattern_count < 1:
+        raise ConfigError(
+            f"outro_card.pattern_count must be >= 1, got {config.outro_card.pattern_count}"
+        )
+    if config.outro_card.fps <= 0:
+        raise ConfigError(f"outro_card.fps must be > 0, got {config.outro_card.fps}")
+    if config.top_moments.rate_per_hour <= 0:
+        raise ConfigError(
+            f"top_moments.rate_per_hour must be > 0, got {config.top_moments.rate_per_hour}"
+        )
+    if config.top_moments.minimum < 1:
+        raise ConfigError(
+            f"top_moments.minimum must be >= 1, got {config.top_moments.minimum}"
         )

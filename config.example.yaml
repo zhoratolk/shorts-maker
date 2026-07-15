@@ -368,3 +368,63 @@ emphasis:
   # target='face' move falls back to centre. Enabling a facecam later is a
   # one-flag change here.
   face_enabled: false
+
+social_overlay:
+  # Sliding social capsules (Phase 10): a small "glyph + link" capsule slides in
+  # from the left, holds, and slides back out - once per platform per clip (the
+  # Dunduk/Gopster popup). Runs as a fail-open finalize pass over the rendered
+  # clip: off, or missing icon/old FFmpeg, renders exactly as today.
+  enabled: false
+  # Ordered platforms; a platform is drawn only if it has a label or an icon, so
+  # Kick stays silent until you fill it in below. When both are set they appear
+  # once each, spread apart (only one on screen at a time). Kick is a stub - a
+  # text-only capsule until a Kick glyph PNG exists.
+  platforms: ["twitch"]
+  # {platform: glyph PNG path}. The Twitch glyph ships in the repo.
+  icon_paths:
+    twitch: "assets/overlays/twitch_glyph.png"
+    # kick: "assets/overlays/kick_glyph.png"
+  # {platform: link text drawn in the capsule}.
+  labels:
+    twitch: "twitch.tv/zhorikp"
+    # kick: "kick.com/zhorikp"
+  duration_seconds: 3.0   # total on-screen time per capsule
+  slide_seconds: 0.4      # slide-in / slide-out length (2*slide must be < duration)
+  size: 44
+  box_color: "#9146ff"    # Twitch purple
+  box_opacity: 0.92
+  font: "Arial Bold"
+  # Capsule top Y in px; leave unset (null) for ~52% of frame height, clear of
+  # the top banner and bottom captions.
+  y: null
+
+outro_card:
+  # Animated end card (Phase 10): a full-screen plate appended to each clip -
+  # nick + platform glyph + link over a self-animating gradient. The gradient
+  # preset rotates by clip index (pattern_count presets) so back-to-back shorts
+  # don't share a look. Off by default; same fail-open finalize pass.
+  enabled: false
+  duration_seconds: 2.5
+  nick: "ZhorikP"
+  cta_text: "twitch.tv/zhorikp"
+  icon_path: "assets/overlays/twitch_glyph.png"
+  font: "Arial Black"
+  nick_size: 120
+  cta_size: 56
+  # How many built-in gradient presets to cycle through (capped at how many
+  # actually exist in render.OUTRO_PATTERNS).
+  pattern_count: 5
+  # Output fps for the card; the base clip is resampled to this so the concat is
+  # valid regardless of source frame rate.
+  fps: 30
+
+top_moments:
+  # Auto-select cap (Phase 10), used ONLY when you ask for "top moments, your
+  # pick" (auto-select mode). rate_per_hour * source_hours is the GLOBAL number
+  # of standalone shorts for the whole recording - a 3h stream at rate 3 gives
+  # 9 total, chosen from anywhere across the 3h (even all from the last 10 min
+  # if those were the best), NOT 3 per hour. When you hand-pick moments this is
+  # ignored. Dial it up for a heavier output schedule.
+  rate_per_hour: 3.0
+  # Floor so even a short recording still yields at least one short.
+  minimum: 1

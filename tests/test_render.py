@@ -15,6 +15,11 @@ from scripts.render import (
     build_ffmpeg_command,
     build_hook_banner_filter,
     build_jumpcut_command,
+    build_outro_nodes,
+    build_overlay_pass_command,
+    build_social_popup_nodes,
+    plan_popup_times,
+    OUTRO_PATTERNS,
     build_profanity_mask_filter,
     build_profanity_sound_filter,
     build_punch_zoom_filter,
@@ -462,6 +467,113 @@ def test_build_emphasis_filter_rejects_bad_params_and_moves():
         build_emphasis_filter([{"at": 1.0, "duration": 1.0, "kind": "spin"}])
     with pytest.raises(RenderError, match="'target' must be one of"):
         build_emphasis_filter([{"at": 1.0, "duration": 1.0, "target": "torso"}])
+
+
+# --- Phase 10: social popups + outro card ----------------------------------
+
+def test_plan_popup_times_single_popup_anchored():
+    times = plan_popup_times(1, 30.0, 3.0)
+    assert len(times) == 1
+    at, dur = times[0]
+    assert at == pytest.approx(6.6)  # 30 * 0.22
+    assert dur == pytest.approx(3.0)
+
+
+def test_plan_popup_times_two_popups_spread_apart():
+    times = plan_popup_times(2, 40.0, 3.0)
+    assert [round(at, 1) for at, _ in times] == [6.4, 23.2]  # 40*0.16, 40*0.58
+
+
+def test_plan_popup_times_drops_popup_that_cannot_fit():
+    # A 3s clip: the 0.58 anchor (1.74s) leaves < 1s before the 0.3s edge, dropped.
+    times = plan_popup_times(2, 3.0, 3.0)
+    assert len(times) == 1
+
+
+def test_plan_popup_times_empty_for_zero_count_or_duration():
+    assert plan_popup_times(0, 30.0, 3.0) == []
+    assert plan_popup_times(2, 0.0, 3.0) == []
+
+
+def test_build_social_popup_nodes_with_icon_has_box_overlay_and_text():
+    popups = [{"icon_path": "twitch.png", "label": "twitch.tv/x", "at": 5.0, "duration": 3.0}]
+    nodes, out = build_social_popup_nodes(popups, {"twitch.png": 1})
+    joined = ";".join(nodes)
+    assert out == "[ptxt0]"
+    assert "drawbox=" in joined
+    assert "[1:v]scale=" in joined       # icon scaled from input 1
+    assert "overlay=" in joined
+    assert "twitch.tv/x" in joined
+    assert "between(t,5.0,8.0)" in joined  # enable window
+
+
+def test_build_social_popup_nodes_text_only_when_icon_missing():
+    # Kick stub: no icon in icon_index => text-only capsule, no overlay node.
+    popups = [{"icon_path": "kick.png", "label": "kick.com/x", "at": 4.0, "duration": 3.0}]
+    nodes, out = build_social_popup_nodes(popups, {})
+    joined = ";".join(nodes)
+    assert "overlay=" not in joined
+    assert "drawbox=" in joined
+    assert "kick.com/x" in joined
+
+
+def test_build_outro_nodes_shape_and_labels():
+    outro = {
+        "duration": 2.5, "nick": "ZhorikP", "cta": "twitch.tv/zhorikp",
+        "icon_path": "twitch.png", "pattern_index": 0,
+    }
+    nodes, vout, aout = build_outro_nodes(outro, {"twitch.png": 1})
+    joined = ";".join(nodes)
+    assert vout == "[outv]"
+    assert aout == "[oa]"
+    assert "gradients=" in joined
+    assert "ZhorikP" in joined
+    assert "twitch.tv/zhorikp" in joined
+    assert "anullsrc=" in joined
+    assert OUTRO_PATTERNS[0]["c0"] in joined  # preset 0 colour used
+
+
+def test_build_outro_nodes_pattern_index_rotates_preset():
+    base = {"duration": 2.0, "nick": "N", "cta": "", "icon_path": "", "pattern_index": 1}
+    joined = ";".join(build_outro_nodes(base, {})[0])
+    assert OUTRO_PATTERNS[1]["c0"] in joined
+    assert OUTRO_PATTERNS[0]["c0"] not in joined
+
+
+def test_build_overlay_pass_command_popups_only_no_concat():
+    popups = [{"icon_path": "twitch.png", "label": "x", "at": 5.0, "duration": 3.0}]
+    command = build_overlay_pass_command("base.mp4", "out.mp4", popups=popups)
+    graph = command[command.index("-filter_complex") + 1]
+    assert "concat=" not in graph
+    assert "drawbox=" in graph
+    # base input + one icon input
+    assert command.count("-i") == 2
+    # video map is the decorated filtergraph pad; base audio maps straight
+    # through as a raw input stream (0:a, no brackets)
+    assert "0:a" in command
+    assert "[0:a]" not in command
+
+
+def test_build_overlay_pass_command_outro_only_has_concat():
+    outro = {"duration": 2.5, "nick": "ZhorikP", "cta": "", "icon_path": "twitch.png", "pattern_index": 0}
+    command = build_overlay_pass_command("base.mp4", "out.mp4", outro=outro)
+    graph = command[command.index("-filter_complex") + 1]
+    assert "concat=n=2:v=1:a=1[vout][aout]" in graph
+    assert "gradients=" in graph
+    assert "[vout]" in command and "[aout]" in command
+
+
+def test_build_overlay_pass_command_dedupes_shared_icon_input():
+    popups = [{"icon_path": "twitch.png", "label": "x", "at": 5.0, "duration": 3.0}]
+    outro = {"duration": 2.5, "nick": "N", "cta": "", "icon_path": "twitch.png", "pattern_index": 0}
+    command = build_overlay_pass_command("base.mp4", "out.mp4", popups=popups, outro=outro)
+    # base + exactly one shared icon input (not two)
+    assert command.count("-i") == 2
+
+
+def test_build_overlay_pass_command_raises_when_nothing_to_do():
+    with pytest.raises(RenderError, match="at least one popup or an outro"):
+        build_overlay_pass_command("base.mp4", "out.mp4")
 
 
 def test_build_profanity_mask_filter_returns_none_for_empty_spans():
@@ -1186,6 +1298,78 @@ def test_render_clip_ignores_emphasis_moves_when_disabled():
 
     video_filter = command[command.index("-vf") + 1]
     assert "between(t," not in video_filter
+
+
+def _overlay_capture_runner(commands):
+    """Fake runner for Phase 10 finalize tests: answers ffprobe with a JSON
+    duration and records every ffmpeg command. The finalize pass's tmp->final
+    rename fails (no real file), which is the fail-open path - the command it
+    tried is still captured before the rename raises."""
+    def runner(command, capture_output, text):
+        class Result:
+            returncode = 0
+            stderr = ""
+            stdout = ""
+        commands.append(command)
+        if command[0] == "ffprobe":
+            Result.stdout = json.dumps({
+                "format": {"duration": "30.0"},
+                "streams": [{"codec_type": "video", "width": 1080, "height": 1920}],
+            })
+        return Result()
+    return runner
+
+
+def test_render_clip_runs_social_finalize_pass_when_enabled():
+    commands = []
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom"}
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        social_enabled=True,
+        social_platforms=["twitch"],
+        social_icon_paths={"twitch": "twitch.png"},
+        social_labels={"twitch": "twitch.tv/zhorikp"},
+        runner=_overlay_capture_runner(commands),
+    )
+    # base render + ffprobe + finalize overlay pass
+    finalize = [c for c in commands if "-filter_complex" in c and "drawbox=" in
+                c[c.index("-filter_complex") + 1]]
+    assert len(finalize) == 1
+    graph = finalize[0][finalize[0].index("-filter_complex") + 1]
+    assert "twitch.tv/zhorikp" in graph
+
+
+def test_render_clip_runs_outro_finalize_pass_and_rotates_pattern():
+    commands = []
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom"}
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        outro_enabled=True, outro_nick="ZhorikP", outro_cta="twitch.tv/zhorikp",
+        outro_icon_path="twitch.png", queue_index=1,
+        runner=_overlay_capture_runner(commands),
+    )
+    finalize = [c for c in commands if "-filter_complex" in c and "gradients=" in
+                c[c.index("-filter_complex") + 1]]
+    assert len(finalize) == 1
+    graph = finalize[0][finalize[0].index("-filter_complex") + 1]
+    assert "concat=n=2:v=1:a=1" in graph
+    assert OUTRO_PATTERNS[1]["c0"] in graph  # queue_index=1 => preset 1
+
+
+def test_render_clip_skips_finalize_when_phase10_disabled():
+    commands = []
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom"}
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=_overlay_capture_runner(commands),
+    )
+    # exactly one command (the base render) - no ffprobe, no finalize pass
+    assert len(commands) == 1
+    assert "gradients=" not in " ".join(commands[0])
+    assert "drawbox=" not in " ".join(commands[0])
 
 
 def test_render_clip_uses_jumpcut_command_when_keep_segments_present():

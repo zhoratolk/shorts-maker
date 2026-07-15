@@ -36,6 +36,48 @@ def format_timecode(total_seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
+def compute_moment_budget(
+    source_seconds: float, rate_per_hour: float = 3.0, minimum: int = 1
+) -> int:
+    """Phase 10 global top-N budget for auto-select mode ("сделай топ моменты
+    по твоему выбору"): how many standalone shorts to render from a WHOLE
+    recording = rate_per_hour * source_hours, rounded, never below `minimum`
+    when there is any footage. This is a global cap, not per-hour-of-output:
+    a 3h recording at rate 3 yields 9 total, drawn from anywhere across those
+    3 hours (even all from the last 10 minutes if those were the best). Returns
+    0 only for empty/zero-length input.
+    """
+    if source_seconds <= 0:
+        return 0
+    hours = source_seconds / 3600.0
+    return max(minimum, round(rate_per_hour * hours))
+
+
+def select_top_moments(
+    candidates: list[dict], budget: int, *, score_key: str = "score"
+) -> list[dict]:
+    """Keep the top `budget` candidates by score (desc), tie-broken by earlier
+    start then original order for determinism. A candidate missing a score is
+    treated as 0 (sorts last). budget <= 0 or no candidates returns []. The kept
+    subset is returned in chronological order so downstream numbering/output
+    stays timeline-ordered. Operates on plain dicts (candidates.json rows), so
+    SKILL.md can call it via a `python -c` one-liner after assigning scores.
+    """
+    if budget <= 0 or not candidates:
+        return []
+    indexed = list(enumerate(candidates))
+    indexed.sort(
+        key=lambda pair: (
+            -float(pair[1].get(score_key, 0) or 0),
+            pair[1].get("start", 0.0),
+            pair[0],
+        )
+    )
+    kept = [candidate for _, candidate in indexed[:budget]]
+    kept.sort(key=lambda candidate: candidate.get("start", 0.0))
+    return kept
+
+
 def merge_candidates(chunks_candidates: list[list[dict]]) -> list[Candidate]:
     flattened: list[dict] = []
     for chunk_candidates in chunks_candidates:

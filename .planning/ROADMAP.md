@@ -203,7 +203,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | 7. Profanity Auto-Bleep | 5/5 | Complete    | 2026-07-11 |
 | 8. Hook Title Overlay | 1/1 | Complete    | 2026-07-12 |
 | 9. Мид-клип монтажные акценты | 1/1 | Complete | 2026-07-15 |
-| 10. Outro-карточка + соц-оверлеи + кэп топ-моментов | 0/0 | Not planned | — |
+| 10. Outro-карточка + соц-оверлеи + кэп топ-моментов | 1/1 | Complete | 2026-07-15 |
 
 ### Phase 7: Profanity Auto-Bleep
 
@@ -268,8 +268,16 @@ Plans:
 3. **Кэп топ-моментов** — глобальный бюджет `max_moments = rate × часы_исходника` (rate default 3, config); берётся топ-N по всей записи (не окно на час), применяется **только в авто-режиме отбора**; вводит числовой `score` 1-5 на кандидата для глоб-ранга; сверх-бюджета кандидаты падают в компиляцию Phase 5 (если тянут на суб-порог) иначе отбрасываются.
 **Requirements**: TBD
 **Depends on:** Phase 8 (drawtext/overlay слой), Phase 5 (компиляция для сверх-бюджета)
-**Plans:** 0 plans
+**Status:** Complete 2026-07-15 (executed inline, 1/1)
+**Plans:** 1/1 (executed inline 2026-07-15)
+
+Итоговая реализация (отклонения от изначального Goal зафиксированы):
+- **Overlay finalize pass** — outro и popups сделаны ВТОРЫМ ffmpeg-проходом над готовым клипом (`build_overlay_pass_command` + пост-блок в `render_clip`), а не вплетены в 3 основных билдера команд. Это держит jumpcut/profanity/compilation-графы байт-идентичными при выключенной фазе. Fail-open: любая ошибка (нет иконки, старый ffmpeg без `gradients`) оставляет базовый клип.
+- **Outro** — самоанимирующийся `gradients` фон (5 пресетов в `render.OUTRO_PATTERNS`, ротация `queue_index % pattern_count`) + ник/CTA drawtext с fade-in + глиф overlay; аудио = matched-format тишина, конкат base+card (база ресемплится в `outro_fps` чтобы конкат был валиден при любом fps).
+- **Popups** — капсула = drawbox + overlay иконки + drawtext, все на одном slide-in x-выражении (`_popup_slide_x`); twitch с иконкой, kick — текст-заглушка (нет глифа). `plan_popup_times` разносит обе по клипу (по разу).
+- **Кэп** — `compute_moment_budget(source_seconds, rate=3)` (глобальный, по всей записи) + `select_top_moments(candidates, budget)` по `score` 1-5; оркестрируется в SKILL.md шаг 4, только авто-режим. Сверх-бюджета — не рендерится (падение в компиляцию Phase 5 оставлено на усмотрение оркестратора, не хардкод).
+- Конфиг: `social_overlay` / `outro_card` / `top_moments` секции (+ валидация), config.example.yaml, CLI `--social-*`/`--outro-*`. Тесты: юниты + config + реальный ffmpeg (`test_social_popup_and_outro_finalize_pass`). Вся сюита 700 passed / 5 skipped.
 
 Plans:
 
-- [ ] TBD (run /gsd-plan-phase 10 to break down)
+- [x] 10-01 (inline) — outro + popups (overlay finalize pass) + top-N cap

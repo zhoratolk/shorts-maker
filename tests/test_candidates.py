@@ -6,12 +6,63 @@ import pytest
 from scripts.candidates import (
     Candidate,
     append_compilation_sections_markdown,
+    compute_moment_budget,
     format_timecode,
     merge_candidate_files,
     merge_candidates,
     render_candidates_markdown,
+    select_top_moments,
     write_candidates_json,
 )
+
+
+def test_compute_moment_budget_three_per_hour():
+    # The locked example: a 3h recording at rate 3 => 9 total moments.
+    assert compute_moment_budget(3 * 3600, rate_per_hour=3.0) == 9
+
+
+def test_compute_moment_budget_rounds_and_floors():
+    # 1.5h * 3 = 4.5 -> 4 (Python round() is banker's rounding, ties to even)
+    assert compute_moment_budget(90 * 60, rate_per_hour=3.0) == 4
+    # 2h * 3 = 6 exactly
+    assert compute_moment_budget(2 * 3600, rate_per_hour=3.0) == 6
+    # 10-minute recording: 0.5 moments -> floored to minimum 1
+    assert compute_moment_budget(10 * 60, rate_per_hour=3.0) == 1
+    assert compute_moment_budget(0, rate_per_hour=3.0) == 0
+
+
+def test_compute_moment_budget_configurable_rate():
+    assert compute_moment_budget(2 * 3600, rate_per_hour=5.0) == 10
+
+
+def test_select_top_moments_keeps_highest_scores_in_timeline_order():
+    candidates = [
+        {"id": 1, "start": 10.0, "score": 2},
+        {"id": 2, "start": 20.0, "score": 5},
+        {"id": 3, "start": 30.0, "score": 4},
+        {"id": 4, "start": 40.0, "score": 1},
+    ]
+    kept = select_top_moments(candidates, 2)
+    # top two by score are ids 2 (5) and 3 (4), returned chronologically
+    assert [c["id"] for c in kept] == [2, 3]
+
+
+def test_select_top_moments_missing_score_sorts_last():
+    candidates = [
+        {"id": 1, "start": 5.0},          # no score -> treated as 0
+        {"id": 2, "start": 8.0, "score": 3},
+    ]
+    assert [c["id"] for c in select_top_moments(candidates, 1)] == [2]
+
+
+def test_select_top_moments_budget_at_or_over_count_returns_all():
+    candidates = [{"id": 1, "start": 1.0, "score": 1}, {"id": 2, "start": 2.0, "score": 2}]
+    assert len(select_top_moments(candidates, 5)) == 2
+
+
+def test_select_top_moments_zero_budget_or_empty():
+    assert select_top_moments([{"id": 1, "start": 1.0, "score": 5}], 0) == []
+    assert select_top_moments([], 3) == []
 
 
 def test_format_timecode_zero():
