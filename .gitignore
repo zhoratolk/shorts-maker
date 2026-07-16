@@ -24,6 +24,12 @@ tiktok_client_key.json
 tiktok_token.json
 instagram_client_secret.json
 instagram_token.json
+# Rotated/revoked credential backups (e.g. token.json.revoked-YYYY-MM-DD,
+# upload_token.json.expired-YYYY-MM-DD) - same secrets, must never be tracked.
+*token*.revoked-*
+*token*.expired-*
+*.json.revoked-*
+*.json.expired-*
 .pytest_cache/
 # .pytest-tmp/ is this machine's --basetemp override for pytest's tmp_path
 # fixture - the default OS temp dir is permission-locked here (see
