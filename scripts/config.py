@@ -77,6 +77,12 @@ class SubtitlesConfig:
     # A pause longer than this closes the current cue early, so a caption
     # never spans a silence and shows words the speaker hasn't said yet.
     max_gap_seconds: float = 1.2
+    # Partially mask profane words in burned-in captions (keep a prefix,
+    # replace the rest with '*'). Off by default; shares the audio mask's
+    # wordlist so a bleeped word is also masked on screen. Fail-open.
+    censor_profanity: bool = False
+    censor_keep_ratio: float = 0.4
+    censor_wordlist: str = "data/profanity_wordlist.yaml"
 
 
 @dataclasses.dataclass
@@ -526,6 +532,8 @@ def _validate(config: Config) -> None:
         raise ConfigError("subtitles.words_per_cue must be > 0")
     if config.subtitles.max_gap_seconds <= 0:
         raise ConfigError("subtitles.max_gap_seconds must be > 0")
+    if not 0 <= config.subtitles.censor_keep_ratio <= 1:
+        raise ConfigError("subtitles.censor_keep_ratio must be between 0 and 1")
     if config.crop.mode not in CROP_MODES:
         raise ConfigError(f"crop.mode must be one of {sorted(CROP_MODES)}, got {config.crop.mode!r}")
     if config.facecam.mode not in FACECAM_MODES:

@@ -136,6 +136,66 @@ def find_profane_spans(
     return merged
 
 
+_SUBTITLE_WORD_RE = re.compile(r"\w+", re.UNICODE)
+
+
+def mask_token(token: str, keep_ratio: float = 0.4) -> str:
+    """Partially masks a single word: keeps the leading keep_ratio fraction of
+    the characters and replaces the rest with '*', preserving length so the
+    word stays recognizable without being spelled out (e.g. keep_ratio=0.4:
+    'хуй' -> 'х**', 'пидорас' -> 'пид****'). Always leaves at least one visible
+    char and masks at least one char; a 1-char token is returned unchanged
+    (nothing meaningful to mask).
+    """
+    length = len(token)
+    if length <= 1:
+        return token
+    keep = max(1, round(length * keep_ratio))
+    keep = min(keep, length - 1)  # always mask at least one trailing char
+    return token[:keep] + "*" * (length - keep)
+
+
+def _is_profane_token(token: str, patterns: list[re.Pattern], normalize_cfg: dict) -> bool:
+    normalized = normalize_word(token.strip(".,!?:;\"'()"), normalize_cfg)
+    return bool(normalized) and any(pattern.search(normalized) for pattern in patterns)
+
+
+def mask_cues(cues: list[dict], wordlist: dict, keep_ratio: float = 0.4) -> list[dict]:
+    """Masks profane words in subtitle cue text AND per-word karaoke tokens.
+
+    The karaoke overlay in render.build_ass_content re-emits each
+    cue["words"][i]["word"] independently of cue["text"], so masking only the
+    joined text would leave the highlighted word spelled out - both layers must
+    be masked. Uses the SAME wordlist/normalization as the audio mask
+    (find_profane_spans) so a word bleeped in audio is also masked on screen.
+
+    Fail-open: an empty wordlist (missing/malformed file) compiles to no
+    patterns and returns the cues unchanged. Returns NEW cue dicts; input cues
+    are never mutated.
+    """
+    normalize_cfg = wordlist.get("normalize") or {}
+    patterns = compile_patterns(wordlist)
+    if not patterns:
+        return cues
+
+    def mask_str(text: str) -> str:
+        return _SUBTITLE_WORD_RE.sub(
+            lambda match: mask_token(match.group(0), keep_ratio)
+            if _is_profane_token(match.group(0), patterns, normalize_cfg)
+            else match.group(0),
+            text,
+        )
+
+    masked: list[dict] = []
+    for cue in cues:
+        new_cue = dict(cue)
+        new_cue["text"] = mask_str(cue["text"])
+        if "words" in cue:
+            new_cue["words"] = [{**word, "word": mask_str(word["word"])} for word in cue["words"]]
+        masked.append(new_cue)
+    return masked
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Detect profane word spans in a clip-relative Whisper word list. "

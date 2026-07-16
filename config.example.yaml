@@ -185,6 +185,15 @@ subtitles:
   # many seconds, so a caption never spans a silence and shows words the
   # speaker hasn't said yet.
   max_gap_seconds: 1.2
+  # Partially mask profane words in burned-in captions: keep a leading prefix
+  # and replace the rest with '*' (e.g. 'хуй' -> 'х**', 'пидорас' -> 'пид****')
+  # so the word stays recognizable without being spelled out. Off by default;
+  # uses the same wordlist as the audio profanity mask. Fail-open: a missing/
+  # malformed wordlist masks nothing rather than blocking the render.
+  censor_profanity: false
+  # Fraction of each profane word left visible before the '*' mask (0..1).
+  censor_keep_ratio: 0.4
+  censor_wordlist: data/profanity_wordlist.yaml
 
 audio:
   # FFmpeg noise-reduction filter (afftdn) applied to every clip's audio -

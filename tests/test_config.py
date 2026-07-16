@@ -302,6 +302,31 @@ def test_load_config_subtitles_max_gap_seconds_must_be_positive(tmp_path):
         load_config(path)
 
 
+def test_load_config_subtitles_censor_defaults(tmp_path):
+    path = write_config(tmp_path, 'input_dir: "F:/in"\noutput_dir: "F:/out"\n')
+
+    config = load_config(path)
+
+    assert config.subtitles.censor_profanity is False
+    assert config.subtitles.censor_keep_ratio == 0.4
+    assert config.subtitles.censor_wordlist == "data/profanity_wordlist.yaml"
+
+
+def test_load_config_subtitles_censor_keep_ratio_out_of_range(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        subtitles:
+          censor_keep_ratio: 1.5
+        """,
+    )
+
+    with pytest.raises(ConfigError, match="censor_keep_ratio"):
+        load_config(path)
+
+
 def test_load_config_facecam_manual_region_requires_region_when_enabled(tmp_path):
     path = write_config(
         tmp_path,

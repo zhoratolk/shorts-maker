@@ -5,7 +5,14 @@ import sys
 from pathlib import Path
 
 from scripts.jumpcuts import remap_words
-from scripts.profanity import compile_patterns, find_profane_spans, load_wordlist, normalize_word
+from scripts.profanity import (
+    compile_patterns,
+    find_profane_spans,
+    load_wordlist,
+    mask_cues,
+    mask_token,
+    normalize_word,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORDLIST_PATH = str(REPO_ROOT / "data" / "profanity_wordlist.yaml")
@@ -303,3 +310,76 @@ def test_shipped_wordlist_file_detects_known_stem_and_ignores_clean_word():
     spans = find_profane_spans(words, wordlist, pad_seconds=0.0)
 
     assert spans == [(1.0, 1.3)]
+
+
+# --- mask_token (partial subtitle mask) ------------------------------------
+
+
+def test_mask_token_keeps_prefix_masks_rest():
+    # keep_ratio 0.4: round(3*0.4)=1 kept, round(7*0.4)=3 kept.
+    assert mask_token("хуй", 0.4) == "х**"
+    assert mask_token("пидорас", 0.4) == "пид****"
+
+
+def test_mask_token_always_masks_at_least_one_char():
+    # High ratio must still mask the final char (never leave a word intact).
+    assert mask_token("бля", 1.0) == "бл*"
+
+
+def test_mask_token_single_char_unchanged():
+    assert mask_token("х", 0.4) == "х"
+
+
+def test_mask_token_preserves_length():
+    masked = mask_token("блядь", 0.4)
+    assert len(masked) == len("блядь")
+
+
+# --- mask_cues (text + karaoke word tokens) --------------------------------
+
+
+def test_mask_cues_masks_text_and_word_tokens():
+    cues = [
+        {
+            "text": "ну ты бля даёшь",
+            "start": 0.0,
+            "end": 1.0,
+            "words": [
+                {"word": "ну", "start": 0.0, "end": 0.2},
+                {"word": "ты", "start": 0.2, "end": 0.4},
+                {"word": "бля", "start": 0.4, "end": 0.7},
+                {"word": "даёшь", "start": 0.7, "end": 1.0},
+            ],
+        }
+    ]
+
+    masked = mask_cues(cues, _TEST_WORDLIST, keep_ratio=0.4)
+
+    assert masked[0]["text"] == "ну ты б** даёшь"
+    assert [w["word"] for w in masked[0]["words"]] == ["ну", "ты", "б**", "даёшь"]
+
+
+def test_mask_cues_masks_word_with_trailing_punctuation():
+    cues = [{"text": "fuck!", "start": 0.0, "end": 1.0}]
+
+    masked = mask_cues(cues, _TEST_WORDLIST, keep_ratio=0.4)
+
+    # Regex masks only the \w+ run; '!' is preserved.
+    assert masked[0]["text"] == "fu**!"
+
+
+def test_mask_cues_does_not_mutate_input():
+    cues = [{"text": "бля", "start": 0.0, "end": 1.0, "words": [{"word": "бля"}]}]
+
+    mask_cues(cues, _TEST_WORDLIST, keep_ratio=0.4)
+
+    assert cues[0]["text"] == "бля"
+    assert cues[0]["words"][0]["word"] == "бля"
+
+
+def test_mask_cues_empty_wordlist_returns_unchanged():
+    cues = [{"text": "бля fuck", "start": 0.0, "end": 1.0}]
+
+    masked = mask_cues(cues, {"ru": [], "en": []}, keep_ratio=0.4)
+
+    assert masked[0]["text"] == "бля fuck"

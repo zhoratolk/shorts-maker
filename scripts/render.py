@@ -1511,6 +1511,12 @@ def render_clip(
         else:
             cues = parse_srt(Path(subtitles_path).read_text(encoding="utf-8"))
 
+        if subtitle_style.get("censor_profanity"):
+            from scripts.profanity import load_wordlist, mask_cues
+
+            wordlist = load_wordlist(subtitle_style.get("censor_wordlist") or "data/profanity_wordlist.yaml")
+            cues = mask_cues(cues, wordlist, subtitle_style.get("censor_keep_ratio", 0.4))
+
         margin_v = compute_subtitle_margin_v(
             subtitle_style["position"], crop_style, src_width, src_height
         )
@@ -1708,6 +1714,20 @@ def main() -> None:
         help="Strip leading/trailing punctuation from burned-in caption words (default: on)",
     )
     parser.add_argument(
+        "--censor-subtitles", action=argparse.BooleanOptionalAction, default=False,
+        help="Partially mask profane words in burned-in captions (keeps a prefix, "
+        "replaces the rest with '*', e.g. 'хуй' -> 'х**'). Off by default; uses the "
+        "same wordlist as the audio profanity mask (fail-open on a missing wordlist)",
+    )
+    parser.add_argument(
+        "--censor-keep-ratio", type=float, default=0.4,
+        help="Fraction of each profane word left visible before the '*' mask (default: 0.4)",
+    )
+    parser.add_argument(
+        "--profanity-wordlist", default="data/profanity_wordlist.yaml",
+        help="Wordlist YAML used to mask profane words in captions (--censor-subtitles)",
+    )
+    parser.add_argument(
         "--denoise", action=argparse.BooleanOptionalAction, default=True,
         help="Apply an FFmpeg noise-reduction filter (afftdn) to each clip's audio",
     )
@@ -1879,6 +1899,9 @@ def main() -> None:
         "position": args.sub_position,
         "words_per_cue": args.sub_words_per_cue,
         "strip_punctuation": args.sub_strip_punctuation,
+        "censor_profanity": args.censor_subtitles,
+        "censor_keep_ratio": args.censor_keep_ratio,
+        "censor_wordlist": args.profanity_wordlist,
     }
 
     video_info = probe_video(args.input_video)
