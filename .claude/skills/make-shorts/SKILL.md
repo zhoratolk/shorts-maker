@@ -130,6 +130,7 @@ python scripts/candidates.py work/<video_stem>/candidates work/<video_stem>/CAND
   - `length_signal_counts` — if the channel skews `too_long`, prefer tighter trims in step 5; if it skews `could_be_longer`, don't over-cut strong moments.
   - `common_cliff_zone` — the recurring drop-off zone (as a fraction of clip length); design trims/hooks so the weakest stretch doesn't land there.
   This is a soft prior from the channel's own history, not a hard rule — a clearly strong moment still wins regardless of its tag's past average.
+  - **To (re)produce this file** (needs the one-time YouTube OAuth from the analytics-grounding setup): `python -m scripts.retention work/_analytics/retention_insights.json --markdown work/_analytics/retention.md --publish-queue work/_publish/queue.json` — the insights JSON **must** be written to exactly `work/_analytics/retention_insights.json` (the path this bullet reads); the `--markdown` digest is for human review only. Re-run it after a batch of clips has accumulated real view/retention data to refresh the prior. Attribution into `by_tag` only fills in once published queue entries carry `moment_tag` / `source_duration` fields; without them the tag ranking stays empty but the length/cliff signals still work.
 
 ### 5. Refine (pass 2)
 

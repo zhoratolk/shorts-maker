@@ -42,8 +42,12 @@ analysis:
   hype_phrases: ["завоз", "ору", "кринж", "база", "это база", "мем вышел", "жиза", "воу-воу", "рофл", "дичь", "жесть", "разрыв", "го клип", "клипани", "красава", "топчик", "агонь"]
 
 clip:
-  min_seconds: 30
-  max_seconds: 60
+  # Retention analysis (work/_analytics/retention_insights.json) showed most
+  # published clips ran "too_long" (viewers gone before the end) - a high floor
+  # padded short meme moments past their natural length. Keep the band tight so
+  # clips can end on the punchline instead of dragging.
+  min_seconds: 20
+  max_seconds: 45
   # Fade video+audio to black/silence over the last N seconds of each clip
   # instead of cutting off abruptly right after the last word. 0 disables it.
   fade_seconds: 0.5

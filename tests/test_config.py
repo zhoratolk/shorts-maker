@@ -28,8 +28,8 @@ def test_load_config_applies_defaults(tmp_path):
     assert config.analysis.chunk_minutes == 35
     assert config.analysis.use_subagents is True
     assert config.analysis.require_approval is True
-    assert config.clip.min_seconds == 30
-    assert config.clip.max_seconds == 60
+    assert config.clip.min_seconds == 20
+    assert config.clip.max_seconds == 45
     assert config.clip.fade_seconds == 0.5
     assert config.clip.compilation_max_seconds == 150
     assert config.crop.mode == "auto"

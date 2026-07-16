@@ -40,8 +40,13 @@ class AnalysisConfig:
 
 @dataclasses.dataclass
 class ClipConfig:
-    min_seconds: int = 30
-    max_seconds: int = 60
+    # Retention analysis 2026-07 (work/_analytics/retention_insights.json): 14/17
+    # published clips read "too_long" (end retention <35%) and the recurring
+    # drop-off zone is the first 0-20%. A 30s floor forced short meme moments to
+    # be padded past their natural length, which is exactly what bleeds viewers -
+    # so the floor was lowered to let the pipeline end on the punchline.
+    min_seconds: int = 20
+    max_seconds: int = 45
     fade_seconds: float = 0.5
     # Length ceiling for a Phase 5 sub-threshold compilation (D-05) - its own,
     # higher cap than max_seconds since it stitches multiple sub-threshold
