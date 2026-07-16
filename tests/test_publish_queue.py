@@ -304,9 +304,9 @@ def test_build_insert_body_shapes_snippet_and_status():
     assert body["status"]["privacyStatus"] == "private"
     assert body["status"]["publishAt"] == publish_at
     assert body["status"]["selfDeclaredMadeForKids"] is False
-    # Stable machine-readable marker for local seq, for Plan 03 reconciliation.
-    assert "7" in body["snippet"]["description"]
-    assert "A description" in body["snippet"]["description"]
+    # The description is published verbatim - the old "[queue-id: N]" marker
+    # leaked into the public description and was removed.
+    assert body["snippet"]["description"] == "A description"
 
 
 def test_build_insert_body_rejects_oversized_title():
@@ -752,42 +752,15 @@ class FakePlaylistItemsServiceForReconcile:
         }
 
 
-class FakeVideosSnippetService:
-    """Fake videos().list(part="snippet", id=...) - returns description per
-    video_id so reconcile_uploading can match the seq marker."""
-
-    def __init__(self, descriptions_by_id):
-        self.descriptions_by_id = descriptions_by_id
-        self.calls = []
-
-    def videos(self):
-        return self
-
-    def list(self, **kwargs):
-        self.calls.append(kwargs)
-        return self
-
-    def execute(self):
-        requested_ids = self.calls[-1]["id"].split(",")
-        return {
-            "items": [
-                {"id": vid, "snippet": {"description": self.descriptions_by_id[vid]}}
-                for vid in requested_ids
-                if vid in self.descriptions_by_id
-            ]
-        }
-
-
 class FakeReconcileService:
     """Combines channels/playlistItems/videos resources on one object -
     reconcile_uploading calls get_own_channel + list_uploaded_videos (both
-    reused from youtube_analytics.py) then videos().list(part=snippet) for
-    descriptions, all against the same service object."""
+    reused from youtube_analytics.py) and matches the stuck entry by exact
+    title, all against the same service object."""
 
-    def __init__(self, uploaded_videos, descriptions_by_id):
+    def __init__(self, uploaded_videos):
         self._channels = FakeChannelsServiceForReconcile()
         self._playlist = FakePlaylistItemsServiceForReconcile(uploaded_videos)
-        self._snippets = FakeVideosSnippetService(descriptions_by_id)
         self.insert_calls = []
 
     def channels(self):
@@ -804,11 +777,8 @@ class FakeReconcileService:
         self.insert_calls.append(kwargs)
         raise AssertionError("videos().insert must never be called during reconciliation")
 
-    def list(self, **kwargs):
-        return self._snippets.list(**kwargs)
 
-
-def test_reconcile_uploading_adopts_video_id_when_marker_matches():
+def test_reconcile_uploading_adopts_video_id_when_title_matches():
     queue = {
         "entries": [
             make_entry(clip_id="clip-1", seq=7, status=UPLOADING, video_id=None)
@@ -817,13 +787,9 @@ def test_reconcile_uploading_adopts_video_id_when_marker_matches():
     entry = queue["entries"][0]
     service = FakeReconcileService(
         uploaded_videos=[
-            {"video_id": "vid_match", "title": "My Clip", "published_at": "2026-07-08T09:00:00Z"},
+            {"video_id": "vid_match", "title": "Title 1", "published_at": "2026-07-08T09:00:00Z"},
             {"video_id": "vid_other", "title": "Unrelated", "published_at": "2026-07-07T09:00:00Z"},
         ],
-        descriptions_by_id={
-            "vid_match": "A description\n\n[queue-id: 7]",
-            "vid_other": "Something else entirely",
-        },
     )
 
     def service_factory():
@@ -847,7 +813,6 @@ def test_reconcile_uploading_resets_to_queued_when_no_match():
         uploaded_videos=[
             {"video_id": "vid_other", "title": "Unrelated", "published_at": "2026-07-07T09:00:00Z"},
         ],
-        descriptions_by_id={"vid_other": "Something else entirely, no marker here"},
     )
 
     def service_factory():
@@ -869,9 +834,8 @@ def test_reconcile_uploading_never_calls_insert():
     entry = queue["entries"][0]
     service = FakeReconcileService(
         uploaded_videos=[
-            {"video_id": "vid_match", "title": "My Clip", "published_at": "2026-07-08T09:00:00Z"},
+            {"video_id": "vid_match", "title": "Title 1", "published_at": "2026-07-08T09:00:00Z"},
         ],
-        descriptions_by_id={"vid_match": "desc\n\n[queue-id: 3]"},
     )
 
     def service_factory():
@@ -894,9 +858,8 @@ def test_select_next_due_reconciles_uploading_entries_before_selecting_new_item(
     }
     service = FakeReconcileService(
         uploaded_videos=[
-            {"video_id": "vid_match", "title": "Stuck Clip", "published_at": "2026-07-08T09:00:00Z"},
+            {"video_id": "vid_match", "title": "Title 1", "published_at": "2026-07-08T09:00:00Z"},
         ],
-        descriptions_by_id={"vid_match": "desc\n\n[queue-id: 1]"},
     )
 
     def service_factory():

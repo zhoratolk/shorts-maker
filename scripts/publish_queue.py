@@ -188,9 +188,9 @@ def build_insert_body(
     derived from mutable input, so a bad manifest field can't force an
     immediate public post (T-03-06).
 
-    Embeds a stable machine-readable marker for the local seq into the
-    description (a trailing queue-id tag line) so Plan 03's reconciliation
-    can match a YouTube video back to a local queue entry (Pitfall 3).
+    The description is published verbatim - no machine-readable marker is
+    appended (the old trailing "[queue-id: N]" line leaked into the public
+    description; reconciliation now matches by exact title instead).
 
     Raises ValueError if title/description/tags exceed YouTube's field
     limits - a violation must fail only this item, not the whole run
@@ -211,8 +211,7 @@ def build_insert_body(
             f"({tags_total_length} chars)"
         )
 
-    marker = f"[queue-id: {seq}]"
-    full_description = f"{description}\n\n{marker}"
+    full_description = description
 
     return {
         "snippet": {
@@ -455,30 +454,6 @@ def kill_item(queue: dict[str, Any], clip_id: str, service_factory) -> dict[str,
 # --- Reconciliation of a stuck UPLOADING entry (PUB-05) --------------------
 
 
-def _seq_marker(seq: int) -> str:
-    """The exact marker substring build_insert_body embeds in a video's
-    description - kept as a single source of truth so reconciliation's
-    match and the original embed can never silently drift apart.
-    """
-    return f"[queue-id: {seq}]"
-
-
-def _fetch_descriptions(data_service, video_ids: list[str]) -> dict[str, str]:
-    """videos.list(part="snippet") for the given ids, chunked to respect the
-    Data API's 50-ids-per-request limit (same constraint list_uploaded_videos's
-    sibling calls in youtube_analytics.py already respect for statistics).
-    Returns {video_id: description}. Reused instead of hand-rolled because
-    list_uploaded_videos's playlistItems response doesn't carry description.
-    """
-    descriptions: dict[str, str] = {}
-    for i in range(0, len(video_ids), 50):
-        chunk = video_ids[i : i + 50]
-        response = data_service.videos().list(part="snippet", id=",".join(chunk)).execute()
-        for item in response.get("items", []):
-            descriptions[item["id"]] = item["snippet"].get("description", "")
-    return descriptions
-
-
 def reconcile_uploading(
     queue: dict[str, Any], entry: dict[str, Any], service_factory
 ) -> dict[str, Any]:
@@ -488,11 +463,10 @@ def reconcile_uploading(
     retry (PUB-05, Pitfall 3, T-03-09).
 
     Reuses scripts.youtube_analytics.get_own_channel + list_uploaded_videos
-    to enumerate the channel's own recent uploads, then fetches each
-    candidate's description (videos.list part=snippet) and looks for this
-    entry's embedded seq marker (the exact substring build_insert_body
-    wrote, "[queue-id: {seq}]") - specific enough that it can't false-match
-    another video's unrelated description.
+    to enumerate the channel's own recent uploads, then looks for a video
+    whose title exactly equals this entry's title (build_insert_body
+    publishes the title verbatim, so an exact-title hit among the channel's
+    own recent uploads identifies the interrupted upload).
 
     - Match found: the upload actually DID reach YouTube before the crash -
       adopt the matched video_id, set status=SCHEDULED, and do NOT call
@@ -507,15 +481,11 @@ def reconcile_uploading(
     service = service_factory()
     channel = get_own_channel(service)
     uploaded = list_uploaded_videos(service, channel["uploads_playlist_id"])
-    video_ids = [video["video_id"] for video in uploaded]
-
-    descriptions = _fetch_descriptions(service, video_ids)
-    marker = _seq_marker(entry["seq"])
 
     matched_video_id = None
-    for video_id, description in descriptions.items():
-        if marker in description:
-            matched_video_id = video_id
+    for video in uploaded:
+        if video.get("title") == entry["title"]:
+            matched_video_id = video["video_id"]
             break
 
     if matched_video_id is not None:
