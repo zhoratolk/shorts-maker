@@ -36,3 +36,4 @@ instagram_token.json
 # STATE.md Blockers/Concerns), so tests are run with --basetemp pointing
 # at this repo-local scratch dir instead. Runtime output only, never tracked.
 .pytest-tmp/
+.pytest_tmp/

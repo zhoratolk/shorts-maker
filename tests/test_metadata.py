@@ -1,6 +1,6 @@
 import pytest
 
-from scripts.metadata import render_metadata_text, write_metadata_file
+from scripts.metadata import CONTACT_FOOTER, TELEGRAM_URL, TWITCH_URL, render_metadata_text, write_metadata_file
 
 
 def test_render_metadata_text_youtube_block():
@@ -12,6 +12,26 @@ def test_render_metadata_text_youtube_block():
     assert "Title: Boss Rage Quit" in text
     assert "Description:\nHe lost it." in text
     assert "Tags: gaming, funny" in text
+
+
+def test_render_metadata_text_youtube_description_always_has_contact_footer():
+    text = render_metadata_text({
+        "youtube": {"title": "T", "description": "D", "tags": []},
+    })
+
+    assert TWITCH_URL in text
+    assert TELEGRAM_URL in text
+    assert CONTACT_FOOTER in text
+    # Footer sits between the description and the Tags line.
+    assert text.index("Description:") < text.index(CONTACT_FOOTER) < text.index("Tags:")
+
+
+def test_render_metadata_text_caption_platforms_have_no_contact_footer():
+    text = render_metadata_text({
+        "tiktok": {"caption": "He rage quit! #gaming #funny"},
+    })
+
+    assert TWITCH_URL not in text
 
 
 def test_render_metadata_text_youtube_title_en_line():

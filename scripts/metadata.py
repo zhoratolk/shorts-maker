@@ -8,6 +8,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scripts.config import METADATA_PLATFORMS
 
+# Fixed contact footer, appended to every YouTube description mechanically
+# (not left to the drafting step to remember) - channel policy 2026-07-17.
+TWITCH_URL = "https://www.twitch.tv/zhorikp"
+TELEGRAM_URL = "https://t.me/zhorekp"
+CONTACT_FOOTER = f"Твич: {TWITCH_URL}\nТГ: {TELEGRAM_URL}"
+
 
 def render_risk_subblock(risk: dict) -> str:
     """Renders the advisory monetization-risk sub-block for one platform.
@@ -41,7 +47,7 @@ def render_metadata_text(platforms_data: dict) -> str:
             )
             body = (
                 f"Title: {fields['title']}\n{title_en}\n"
-                f"Description:\n{fields['description']}\n\n"
+                f"Description:\n{fields['description']}\n\n{CONTACT_FOOTER}\n\n"
                 f"Tags: {', '.join(fields['tags'])}"
             )
         else:
