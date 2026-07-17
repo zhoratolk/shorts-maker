@@ -1386,6 +1386,75 @@ def test_render_clip_skips_finalize_when_phase10_disabled():
     assert "drawbox=" not in " ".join(commands[0])
 
 
+def test_render_clip_runs_cold_open_finalize_pass_when_enabled():
+    commands = []
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "cold_open": {"at": 8.2, "duration": 2.5},
+    }
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        cold_open_enabled=True, cold_open_transition="whip_pan", cold_open_transition_duration=0.25,
+        runner=_overlay_capture_runner(commands),
+    )
+    finalize = [c for c in commands if "-filter_complex" in c and "teaserbasev" in
+                c[c.index("-filter_complex") + 1]]
+    assert len(finalize) == 1
+    graph = finalize[0][finalize[0].index("-filter_complex") + 1]
+    assert "trim=start=8.2:end=10.7" in graph
+    assert "xfade=transition=hblur:duration=0.25:offset=2.25" in graph
+
+
+def test_render_clip_skips_cold_open_when_flag_disabled():
+    commands = []
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "cold_open": {"at": 8.2, "duration": 2.5},
+    }
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        cold_open_enabled=False,
+        runner=_overlay_capture_runner(commands),
+    )
+    # exactly one command (the base render) - the plan entry's cold_open is
+    # ignored entirely when the CLI-level flag is off (harmless-no-op
+    # convention, same as social_enabled/outro_enabled).
+    assert len(commands) == 1
+
+
+def test_render_clip_skips_cold_open_when_plan_entry_has_no_field():
+    commands = []
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom"}
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        cold_open_enabled=True,
+        runner=_overlay_capture_runner(commands),
+    )
+    assert len(commands) == 1
+
+
+def test_render_clip_cold_open_fails_open_when_window_exceeds_clip_duration():
+    commands = []
+    # _overlay_capture_runner's fake ffprobe always reports duration=30.0;
+    # 25 + 10 = 35 doesn't fit, so this must warn and skip, never crash.
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "cold_open": {"at": 25.0, "duration": 10.0},
+    }
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        cold_open_enabled=True,
+        runner=_overlay_capture_runner(commands),
+    )
+    # base render + the ffprobe duration check - the window-fit guard raises
+    # BEFORE build_cold_open_command is ever called, so no split/trim graph.
+    assert not any("teaserbasev" in " ".join(c) for c in commands)
+
+
 def test_render_clip_uses_jumpcut_command_when_keep_segments_present():
     class FakeResult:
         returncode = 0

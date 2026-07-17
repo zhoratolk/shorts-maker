@@ -382,6 +382,26 @@ emphasis:
   # one-flag change here.
   face_enabled: false
 
+cold_open:
+  # Retention analysis showed the recurring drop-off zone is the first 0-20%
+  # of the clip - the hook has to land instantly. A cold-open teaser prepends
+  # a slice of the clip's own punch/climax moment to the very front (a
+  # byte-for-byte replay, subs and all - the "response to the punch" plays
+  # before the setup), so the viewer sees the payoff first and has to keep
+  # watching for context ("what just happened?"). The orchestrator (SKILL.md
+  # step 5) picks the moment semantically and only for clips with a genuine,
+  # unambiguous climax - written as a `cold_open` field on the plan entry.
+  # Off by default - fail-open: disabled or no field on a clip renders
+  # exactly as today.
+  enabled: false
+  # Transition style joining the teaser into the clip's real start: cut |
+  # crossfade | whip_pan | mask_wipe. whip_pan (a fast horizontal blur) reads
+  # as a punchy "snap into the moment" without inventing a new ffmpeg filter -
+  # it reuses the same xfade machinery as boundary transitions between jump
+  # cuts (see docs on config.transitions).
+  transition: whip_pan
+  transition_duration: 0.25
+
 social_overlay:
   # Sliding social capsules (Phase 10): a small "glyph + link" capsule slides in
   # from the left, holds, and slides back out - once per platform per clip (the

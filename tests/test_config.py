@@ -1708,3 +1708,54 @@ def test_load_config_rejects_bad_thumbnail_values(tmp_path):
         path = write_config(tmp_path, f'input_dir: "F:/in"\noutput_dir: "F:/out"\n{section}\n')
         with pytest.raises(ConfigError, match=marker):
             load_config(path)
+
+
+def test_load_config_cold_open_defaults(tmp_path):
+    path = write_config(tmp_path, 'input_dir: "F:/in"\noutput_dir: "F:/out"\n')
+
+    config = load_config(path)
+
+    assert config.cold_open.enabled is False
+    assert config.cold_open.transition == "whip_pan"
+    assert config.cold_open.transition_duration == 0.25
+
+
+def test_load_config_cold_open_custom_values(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        cold_open:
+          enabled: true
+          transition: crossfade
+          transition_duration: 0.4
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.cold_open.enabled is True
+    assert config.cold_open.transition == "crossfade"
+    assert config.cold_open.transition_duration == 0.4
+
+
+def test_load_config_rejects_bad_cold_open_values(tmp_path):
+    cases = [
+        ("cold_open:\n  transition: glitch\n", "cold_open.transition"),
+        ("cold_open:\n  transition_duration: 0\n", "cold_open.transition_duration"),
+        ("cold_open:\n  transition_duration: -1\n", "cold_open.transition_duration"),
+    ]
+    for section, marker in cases:
+        path = write_config(tmp_path, f'input_dir: "F:/in"\noutput_dir: "F:/out"\n{section}\n')
+        with pytest.raises(ConfigError, match=marker):
+            load_config(path)
+
+
+def test_config_cold_open_transition_enum_matches_cold_open_module():
+    # Drift guard: config.py duplicates the enum (rather than importing
+    # scripts.cold_open) so config.py stays import-safe with just yaml/
+    # stdlib - this test catches the two sets silently diverging.
+    from scripts.cold_open import VALID_COLD_OPEN_TRANSITIONS
+
+    assert {"cut", "crossfade", "whip_pan", "mask_wipe"} == VALID_COLD_OPEN_TRANSITIONS

@@ -31,6 +31,8 @@ from scripts.overlay_pass import (
     plan_popup_times,
 )
 
+from scripts.cold_open import VALID_COLD_OPEN_TRANSITIONS, build_cold_open_command
+
 NAMED_ASS_COLORS = {
     "white": "&H00FFFFFF",
     "black": "&H00000000",
@@ -1389,6 +1391,9 @@ def render_clip(
     emphasis_plate_focus_y: float = 0.72,
     emphasis_face_enabled: bool = False,
     emphasis_face_focus: tuple[float, float] | None = None,
+    cold_open_enabled: bool = False,
+    cold_open_transition: str = "whip_pan",
+    cold_open_transition_duration: float = 0.25,
     social_enabled: bool = False,
     social_platforms: list[str] | None = None,
     social_icon_paths: dict[str, str] | None = None,
@@ -1630,6 +1635,45 @@ def render_clip(
     if result.returncode != 0:
         raise RenderError(f"ffmpeg failed for {output_path}: {result.stderr}")
 
+    # Cold-open finalize pass: prepend a slice of the clip's own punch/climax
+    # moment (with baked-in subs/banner/effects, since this runs over the
+    # already-fully-rendered base clip) to the very front. Runs BEFORE the
+    # overlay pass below so social popup/outro timing is computed against the
+    # new, longer duration. Fail-open: any error keeps the base clip.
+    cold_open = plan_entry.get("cold_open") if cold_open_enabled else None
+    if cold_open:
+        at = float(cold_open["at"])
+        teaser_duration = float(cold_open["duration"])
+        final_path = Path(output_path)
+        tmp_path = final_path.with_name(final_path.stem + "__coldopen" + final_path.suffix)
+        try:
+            base_duration = probe_video(output_path, runner=runner)["duration"]
+            if at < 0 or teaser_duration <= 0 or at + teaser_duration > base_duration:
+                raise RenderError(
+                    f"cold_open window [{at}, {at + teaser_duration}] does not fit in the "
+                    f"rendered clip's own duration ({base_duration}s)"
+                )
+            cold_open_command = build_cold_open_command(
+                output_path, str(tmp_path), at, teaser_duration,
+                transition=cold_open_transition,
+                transition_duration=cold_open_transition_duration,
+                video_codec=video_codec, preset=preset, crf=crf,
+            )
+            cold_open_result = runner(cold_open_command, capture_output=True, text=True)
+            if cold_open_result.returncode != 0:
+                raise RenderError(cold_open_result.stderr)
+            tmp_path.replace(final_path)
+        except Exception as error:  # noqa: BLE001 - fail-open, keep the base clip
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
+            print(
+                f"[warn] cold-open finalize pass failed for {output_path}, keeping base clip: {error}",
+                file=sys.stderr,
+            )
+
     # Phase 10 overlay finalize pass: social popups + animated outro card, run
     # as a second pass over the just-rendered clip. Isolated here so the base
     # command builders stay byte-identical when disabled. Fail-open: any error
@@ -1848,6 +1892,19 @@ def main() -> None:
         "--emphasis-face-enabled", action="store_true",
         help="Allow target='face' moves to aim at the facecam region (off: fall back to centre)",
     )
+    # --cold-open-* gate the cold-open finalize pass. Harmless no-op unless
+    # --cold-open-enabled is set AND the plan entry itself carries a
+    # cold_open field (same two-key convention as --emphasis-enabled).
+    parser.add_argument(
+        "--cold-open-enabled", action="store_true",
+        help="Prepend a slice of each clip's own punch moment (plan entry's cold_open field) to its front",
+    )
+    parser.add_argument(
+        "--cold-open-transition", default="whip_pan",
+        choices=sorted(VALID_COLD_OPEN_TRANSITIONS),
+        help="Transition style joining the teaser into the clip's real start",
+    )
+    parser.add_argument("--cold-open-transition-duration", type=float, default=0.25)
     # --social-* / --outro-* drive the Phase 10 overlay finalize pass. All are
     # harmless no-ops unless --social-enabled / --outro-enabled is set (same
     # convention as --banner-* / --emphasis-*).
@@ -1969,6 +2026,9 @@ def main() -> None:
             emphasis_max_moves=args.emphasis_max_moves,
             emphasis_plate_focus_y=args.emphasis_plate_focus_y,
             emphasis_face_enabled=args.emphasis_face_enabled,
+            cold_open_enabled=args.cold_open_enabled,
+            cold_open_transition=args.cold_open_transition,
+            cold_open_transition_duration=args.cold_open_transition_duration,
             social_enabled=args.social_enabled,
             social_platforms=social_platforms,
             social_icon_paths=social_icon_paths,

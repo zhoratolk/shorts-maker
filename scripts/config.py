@@ -350,6 +350,27 @@ class EmphasisConfig:
 
 
 @dataclasses.dataclass
+class ColdOpenConfig:
+    # Retention analysis (work/_analytics/RETENTION.md) showed the recurring
+    # drop-off zone is the first 0-20% of the clip - the hook has to land
+    # instantly. A cold-open teaser prepends a slice of the clip's own
+    # punch/climax moment to the very front (a byte-for-byte replay, subs and
+    # all - the "response to the punch" plays before the setup), so the
+    # viewer sees the payoff first and has to keep watching for context.
+    # Opt-in, off by default - same footing as emphasis/hook_banner. When
+    # off, PLAN.json's cold_open field is ignored and rendering is
+    # byte-identical to today.
+    enabled: bool = False
+    # Style joining the teaser into the clip's real start. whip_pan (hblur)
+    # reads as a punchy "snap into the moment" - the requested "вжух-зум"
+    # feel - without inventing a new ffmpeg filter (reuses the existing
+    # boundary-transition xfade machinery). See scripts.cold_open for the
+    # full enum (deliberately narrower than the boundary-transition one).
+    transition: str = "whip_pan"
+    transition_duration: float = 0.25
+
+
+@dataclasses.dataclass
 class SocialOverlayConfig:
     # Phase 10 social popups: a small capsule (glyph + link text) that slides in
     # from the left, holds, and slides back out once per platform per clip.
@@ -461,6 +482,7 @@ class Config:
     profanity: ProfanityConfig = dataclasses.field(default_factory=ProfanityConfig)
     hook_banner: HookBannerConfig = dataclasses.field(default_factory=HookBannerConfig)
     emphasis: EmphasisConfig = dataclasses.field(default_factory=EmphasisConfig)
+    cold_open: ColdOpenConfig = dataclasses.field(default_factory=ColdOpenConfig)
     social_overlay: SocialOverlayConfig = dataclasses.field(default_factory=SocialOverlayConfig)
     outro_card: OutroCardConfig = dataclasses.field(default_factory=OutroCardConfig)
     top_moments: TopMomentsConfig = dataclasses.field(default_factory=TopMomentsConfig)
@@ -506,6 +528,7 @@ def load_config(path: str) -> Config:
         profanity=_build(ProfanityConfig, data.get("profanity", {}), "profanity"),
         hook_banner=_build(HookBannerConfig, data.get("hook_banner", {}), "hook_banner"),
         emphasis=_build(EmphasisConfig, data.get("emphasis", {}), "emphasis"),
+        cold_open=_build(ColdOpenConfig, data.get("cold_open", {}), "cold_open"),
         social_overlay=_build(SocialOverlayConfig, data.get("social_overlay", {}), "social_overlay"),
         outro_card=_build(OutroCardConfig, data.get("outro_card", {}), "outro_card"),
         top_moments=_build(TopMomentsConfig, data.get("top_moments", {}), "top_moments"),
@@ -762,6 +785,18 @@ def _validate(config: Config) -> None:
     if config.emphasis.min_hold_seconds < 0:
         raise ConfigError(
             f"emphasis.min_hold_seconds must be >= 0, got {config.emphasis.min_hold_seconds}"
+        )
+    # MUST mirror scripts.cold_open.VALID_COLD_OPEN_TRANSITIONS - duplicated
+    # rather than imported so config.py stays import-safe with just yaml/
+    # stdlib (the project's config.py <-> scripts.* decoupling convention).
+    if config.cold_open.transition not in {"cut", "crossfade", "whip_pan", "mask_wipe"}:
+        raise ConfigError(
+            f"cold_open.transition must be one of cut/crossfade/whip_pan/mask_wipe, "
+            f"got {config.cold_open.transition!r}"
+        )
+    if config.cold_open.transition_duration <= 0:
+        raise ConfigError(
+            f"cold_open.transition_duration must be > 0, got {config.cold_open.transition_duration}"
         )
     if config.social_overlay.duration_seconds <= 0:
         raise ConfigError(
