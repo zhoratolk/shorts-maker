@@ -1859,6 +1859,8 @@ def main() -> None:
     parser.add_argument("--social-twitch-icon", default="", help="Twitch capsule glyph PNG path")
     parser.add_argument("--social-kick-label", default="", help="Kick capsule link text (stub until a Kick glyph exists)")
     parser.add_argument("--social-kick-icon", default="", help="Kick capsule glyph PNG path (empty = text-only stub)")
+    parser.add_argument("--social-telegram-label", default="", help="Telegram capsule link text, e.g. t.me/zhorekp")
+    parser.add_argument("--social-telegram-icon", default="", help="Telegram capsule glyph PNG path (empty = text-only)")
     parser.add_argument("--social-duration", type=float, default=3.0)
     parser.add_argument("--social-slide-seconds", type=float, default=0.4)
     parser.add_argument("--social-size", type=int, default=44)
@@ -1884,11 +1886,20 @@ def main() -> None:
     parser.add_argument("--outro-fps", type=int, default=30)
     args = parser.parse_args()
 
-    # Fixed platform order for the popup pass; a platform is active only if it
-    # carries a label or an icon (so the Kick stub disappears until configured).
-    social_platforms = ["twitch", "kick"]
-    social_icon_paths = {"twitch": args.social_twitch_icon, "kick": args.social_kick_icon}
-    social_labels = {"twitch": args.social_twitch_label, "kick": args.social_kick_label}
+    # Fixed popup order: twitch (glyph), telegram (text-only until a TG glyph
+    # exists), kick (stub). A platform is active only if it carries a label or
+    # an icon, so unconfigured slots stay silent.
+    social_platforms = ["twitch", "telegram", "kick"]
+    social_icon_paths = {
+        "twitch": args.social_twitch_icon,
+        "telegram": args.social_telegram_icon,
+        "kick": args.social_kick_icon,
+    }
+    social_labels = {
+        "twitch": args.social_twitch_label,
+        "telegram": args.social_telegram_label,
+        "kick": args.social_kick_label,
+    }
 
     subtitle_style = {
         "font": args.sub_font,
