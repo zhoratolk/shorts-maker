@@ -56,6 +56,31 @@ def compute_boundary_gaps(keep_segments: list[tuple[float, float]]) -> list[floa
     ]
 
 
+def compute_boundary_windows(keep_segments: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Returns the cut pause-gap [start, end] absolute source-file window at
+    each adjacent keep_segments boundary - companion to compute_boundary_gaps
+    (which returns just the duration). Used to grab a verification frame at
+    the midpoint of a gap before deciding whether that pause was safe to cut
+    (see SKILL.md's gameplay jump-cut visual gate) or should be reversed.
+    """
+    return [
+        (keep_segments[index][1], keep_segments[index + 1][0])
+        for index in range(len(keep_segments) - 1)
+    ]
+
+
+def drop_boundary(keep_segments: list[tuple[float, float]], boundary_index: int) -> list[tuple[float, float]]:
+    """Reverses one jump cut: merges the two segments straddling
+    keep_segments' boundary_index-th gap back into a single segment, keeping
+    that pause's footage in the render instead of cutting it out. Used when a
+    visual check finds the gap isn't safe to cut after all.
+    """
+    if not 0 <= boundary_index < len(keep_segments) - 1:
+        raise ValueError(f"boundary_index {boundary_index} out of range for {len(keep_segments)} segment(s)")
+    merged = (keep_segments[boundary_index][0], keep_segments[boundary_index + 1][1])
+    return keep_segments[:boundary_index] + [merged] + keep_segments[boundary_index + 2 :]
+
+
 def remap_timestamp(t: float, keep_segments: list[tuple[float, float]]) -> float | None:
     """Maps an absolute source-file timestamp onto the spliced (concatenated)
     output timeline built from keep_segments, in order. Returns None when t
@@ -95,6 +120,21 @@ def _cmd_keep_segments(args: argparse.Namespace) -> None:
     print(f"{len(segments)} segment(s) written to {args.output_json}")
 
 
+def _cmd_boundary_windows(args: argparse.Namespace) -> None:
+    segments_raw = json.loads(Path(args.keep_segments_json).read_text(encoding="utf-8"))
+    segments = [(segment[0], segment[1]) for segment in segments_raw]
+    windows = compute_boundary_windows(segments)
+    print(json.dumps([[start, end] for start, end in windows]))
+
+
+def _cmd_drop_boundary(args: argparse.Namespace) -> None:
+    segments_raw = json.loads(Path(args.keep_segments_json).read_text(encoding="utf-8"))
+    segments = [(segment[0], segment[1]) for segment in segments_raw]
+    result = drop_boundary(segments, args.boundary_index)
+    Path(args.output_json).write_text(json.dumps(result, indent=2), encoding="utf-8")
+    print(f"{len(result)} segment(s) written to {args.output_json}")
+
+
 def _cmd_remap_words(args: argparse.Namespace) -> None:
     words = json.loads(Path(args.words_json).read_text(encoding="utf-8"))
     segments_raw = json.loads(Path(args.keep_segments_json).read_text(encoding="utf-8"))
@@ -130,6 +170,20 @@ def main() -> None:
     remap_words_parser.add_argument("keep_segments_json", help="Path to the keep-segments JSON from the step above")
     remap_words_parser.add_argument("output_json", help="Path to write the remapped word list to")
     remap_words_parser.set_defaults(func=_cmd_remap_words)
+
+    boundary_windows_parser = subparsers.add_parser(
+        "boundary-windows", help="Print each keep-segments boundary's cut [start,end] window"
+    )
+    boundary_windows_parser.add_argument("keep_segments_json", help="Path to a keep-segments JSON file")
+    boundary_windows_parser.set_defaults(func=_cmd_boundary_windows)
+
+    drop_boundary_parser = subparsers.add_parser(
+        "drop-boundary", help="Reverse one jump cut by merging the two segments straddling it"
+    )
+    drop_boundary_parser.add_argument("keep_segments_json", help="Path to a keep-segments JSON file")
+    drop_boundary_parser.add_argument("boundary_index", type=int, help="0-based boundary index to reverse")
+    drop_boundary_parser.add_argument("output_json", help="Path to write the merged segment list to")
+    drop_boundary_parser.set_defaults(func=_cmd_drop_boundary)
 
     args = parser.parse_args()
     args.func(args)

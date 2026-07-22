@@ -7,7 +7,9 @@ import pytest
 
 from scripts.jumpcuts import (
     compute_boundary_gaps,
+    compute_boundary_windows,
     compute_keep_segments,
+    drop_boundary,
     remap_timestamp,
     remap_words,
     total_kept_duration,
@@ -160,6 +162,48 @@ def test_compute_boundary_gap_length_matches_boundary_count():
     assert len(result) == len(segments) - 1
 
 
+def test_compute_boundary_windows_single_segment_returns_empty():
+    assert compute_boundary_windows([(0.0, 10.0)]) == []
+
+
+def test_compute_boundary_windows_two_segments_returns_the_gap_window():
+    assert compute_boundary_windows([(0.0, 10.0), (12.5, 20.0)]) == [(10.0, 12.5)]
+
+
+def test_compute_boundary_windows_multiple_segments():
+    segments = [(0.0, 5.0), (6.0, 9.0), (9.0, 14.0)]
+
+    assert compute_boundary_windows(segments) == [(5.0, 6.0), (9.0, 9.0)]
+
+
+def test_drop_boundary_merges_the_two_straddling_segments():
+    segments = [(0.0, 10.0), (12.5, 20.0)]
+
+    assert drop_boundary(segments, 0) == [(0.0, 20.0)]
+
+
+def test_drop_boundary_merges_only_the_targeted_pair_leaves_others():
+    segments = [(0.0, 5.0), (6.0, 9.0), (10.0, 14.0)]
+
+    assert drop_boundary(segments, 1) == [(0.0, 5.0), (6.0, 14.0)]
+
+
+def test_drop_boundary_first_of_three_keeps_the_third_untouched():
+    segments = [(0.0, 5.0), (6.0, 9.0), (10.0, 14.0)]
+
+    assert drop_boundary(segments, 0) == [(0.0, 9.0), (10.0, 14.0)]
+
+
+def test_drop_boundary_rejects_out_of_range_index():
+    with pytest.raises(ValueError, match="boundary_index 1 out of range for 1 segment"):
+        drop_boundary([(0.0, 10.0)], 1)
+
+
+def test_drop_boundary_rejects_negative_index():
+    with pytest.raises(ValueError, match="boundary_index -1 out of range"):
+        drop_boundary([(0.0, 10.0), (12.0, 20.0)], -1)
+
+
 def _run_cli(tmp_path, args):
     return subprocess.run(
         [sys.executable, "scripts/jumpcuts.py", *args],
@@ -179,6 +223,27 @@ def test_cli_keep_segments_writes_json_file(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert json.loads(output_path.read_text(encoding="utf-8")) == [[10.0, 20.0], [21.5, 40.0]]
+
+
+def test_cli_boundary_windows_prints_gap_windows(tmp_path):
+    keep_segments_path = tmp_path / "keep.json"
+    keep_segments_path.write_text(json.dumps([[10.0, 20.0], [25.0, 40.0]]), encoding="utf-8")
+
+    result = _run_cli(tmp_path, ["boundary-windows", str(keep_segments_path)])
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == [[20.0, 25.0]]
+
+
+def test_cli_drop_boundary_writes_merged_json_file(tmp_path):
+    keep_segments_path = tmp_path / "keep.json"
+    keep_segments_path.write_text(json.dumps([[10.0, 20.0], [25.0, 40.0]]), encoding="utf-8")
+    output_path = tmp_path / "keep_merged.json"
+
+    result = _run_cli(tmp_path, ["drop-boundary", str(keep_segments_path), "0", str(output_path)])
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(output_path.read_text(encoding="utf-8")) == [[10.0, 40.0]]
 
 
 def test_cli_remap_words_writes_json_file(tmp_path):
