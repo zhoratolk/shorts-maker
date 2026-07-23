@@ -1,4 +1,5 @@
 import json
+import ssl
 import threading
 import time
 import urllib.parse
@@ -24,6 +25,7 @@ from scripts.tiktok_publish import (
     build_argument_parser,
     build_direct_post_body,
     check_tiktok_publish_gate,
+    ensure_local_tls_cert,
     enqueue,
     fetch_post_status,
     init_direct_post,
@@ -42,6 +44,17 @@ from scripts.tiktok_publish import (
     upload_video_chunks,
     validate_title_length,
 )
+
+
+def _insecure_context() -> ssl.SSLContext:
+    """Trusts nothing - used only to let a test's urlopen complete a TLS
+    handshake against the self-signed cert ensure_local_tls_cert generates;
+    real callers never need this, TikTok's own redirect never validates our
+    cert either."""
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
 
 
 # --- Task 1: queue lifecycle -------------------------------------------
@@ -228,6 +241,8 @@ def test_tiktok_authorize_url_scope_param_is_exact_no_broader_scope(tmp_path, mo
     client_key_path = tmp_path / "tiktok_client_key.json"
     client_key_path.write_text(json.dumps({"client_key": "ck", "client_secret": "cs"}), encoding="utf-8")
     token_path = tmp_path / "tiktok_token.json"
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
 
     opened_urls = []
     monkeypatch.setattr(tiktok_publish.webbrowser, "open", lambda url: opened_urls.append(url))
@@ -236,7 +251,9 @@ def test_tiktok_authorize_url_scope_param_is_exact_no_broader_scope(tmp_path, mo
 
     def hit_redirect():
         time.sleep(0.2)
-        urllib.request.urlopen(f"http://127.0.0.1:{port}/callback?code=abc123&state=xyz", timeout=5)
+        urllib.request.urlopen(
+            f"https://127.0.0.1:{port}/callback?code=abc123&state=xyz", timeout=5, context=_insecure_context()
+        )
 
     thread = threading.Thread(target=hit_redirect)
     thread.start()
@@ -245,7 +262,10 @@ def test_tiktok_authorize_url_scope_param_is_exact_no_broader_scope(tmp_path, mo
         FakeResponse({"access_token": "tok", "refresh_token": "ref", "expires_in": 86400}),
     ])
 
-    run_tiktok_oauth_consent(str(client_key_path), str(token_path), port=port, session=session)
+    run_tiktok_oauth_consent(
+        str(client_key_path), str(token_path), port=port, session=session,
+        cert_path=str(cert_path), key_path=str(key_path),
+    )
     thread.join()
 
     assert opened_urls
@@ -389,6 +409,20 @@ def test_capture_oauth_redirect_server_binds_to_localhost_only():
         server.server_close()
 
 
+def test_capture_oauth_redirect_server_speaks_tls_when_cert_given(tmp_path):
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
+    ensure_local_tls_cert(str(cert_path), str(key_path))
+
+    server, captured = tiktok_publish._build_redirect_server(
+        "127.0.0.1", 8801, str(cert_path), str(key_path)
+    )
+    try:
+        assert isinstance(server.socket, ssl.SSLSocket)
+    finally:
+        server.server_close()
+
+
 def test_capture_oauth_redirect_code_returns_code_from_single_request():
     port = 8798
 
@@ -404,10 +438,56 @@ def test_capture_oauth_redirect_code_returns_code_from_single_request():
     assert code == "abc123"
 
 
+def test_capture_oauth_redirect_code_over_https(tmp_path):
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
+    ensure_local_tls_cert(str(cert_path), str(key_path))
+    port = 8802
+
+    def send_request():
+        time.sleep(0.2)
+        urllib.request.urlopen(
+            f"https://127.0.0.1:{port}/callback?code=abc123&state=xyz", timeout=5, context=_insecure_context()
+        )
+
+    thread = threading.Thread(target=send_request)
+    thread.start()
+    code = _capture_oauth_redirect_code(
+        "127.0.0.1", port, timeout_seconds=5, cert_path=str(cert_path), key_path=str(key_path)
+    )
+    thread.join()
+
+    assert code == "abc123"
+
+
+def test_ensure_local_tls_cert_writes_both_files(tmp_path):
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
+
+    ensure_local_tls_cert(str(cert_path), str(key_path))
+
+    assert cert_path.exists()
+    assert key_path.exists()
+    assert "BEGIN CERTIFICATE" in cert_path.read_text(encoding="utf-8")
+
+
+def test_ensure_local_tls_cert_is_cached_does_not_overwrite(tmp_path):
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
+    ensure_local_tls_cert(str(cert_path), str(key_path))
+    original_cert = cert_path.read_bytes()
+
+    ensure_local_tls_cert(str(cert_path), str(key_path))
+
+    assert cert_path.read_bytes() == original_cert
+
+
 def test_run_tiktok_oauth_consent_full_flow(tmp_path, monkeypatch):
     client_key_path = tmp_path / "tiktok_client_key.json"
     client_key_path.write_text(json.dumps({"client_key": "ck", "client_secret": "cs"}), encoding="utf-8")
     token_path = tmp_path / "tiktok_token.json"
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
 
     opened_urls = []
     monkeypatch.setattr(tiktok_publish.webbrowser, "open", lambda url: opened_urls.append(url))
@@ -416,7 +496,9 @@ def test_run_tiktok_oauth_consent_full_flow(tmp_path, monkeypatch):
 
     def hit_redirect():
         time.sleep(0.2)
-        urllib.request.urlopen(f"http://127.0.0.1:{port}/callback?code=abc123&state=xyz", timeout=5)
+        urllib.request.urlopen(
+            f"https://127.0.0.1:{port}/callback?code=abc123&state=xyz", timeout=5, context=_insecure_context()
+        )
 
     thread = threading.Thread(target=hit_redirect)
     thread.start()
@@ -426,7 +508,8 @@ def test_run_tiktok_oauth_consent_full_flow(tmp_path, monkeypatch):
     ])
 
     access_token = run_tiktok_oauth_consent(
-        str(client_key_path), str(token_path), port=port, session=session
+        str(client_key_path), str(token_path), port=port, session=session,
+        cert_path=str(cert_path), key_path=str(key_path),
     )
     thread.join()
 
@@ -434,7 +517,7 @@ def test_run_tiktok_oauth_consent_full_flow(tmp_path, monkeypatch):
     assert opened_urls
     assert "client_key=ck" in opened_urls[0]
     assert "scope=video.publish,video.upload" in opened_urls[0]
-    assert f"redirect_uri=http%3A%2F%2F127.0.0.1%3A{port}%2Fcallback" in opened_urls[0]
+    assert f"redirect_uri=https%3A%2F%2F127.0.0.1%3A{port}%2Fcallback" in opened_urls[0]
 
     saved = json.loads(token_path.read_text(encoding="utf-8"))
     assert saved["access_token"] == "tok"

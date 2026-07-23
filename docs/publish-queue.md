@@ -257,14 +257,24 @@ error and exits non-zero rather than silently acting on the wrong item.
 ### App registration
 
 1. Register an app in the [TikTok Developer Portal](https://developers.tiktok.com/).
-   Add the **Content Posting API** product to it.
-2. Request exactly these two scopes - never a broader one (V4):
-   `video.publish` and `video.upload`.
-3. Set the redirect URI to `http://127.0.0.1:8765/callback` (the fixed
-   port `run_tiktok_oauth_consent` binds to - TikTok apps require an
-   exact pre-registered redirect URI, unlike Google's loopback-exception
-   handling).
-4. Save the issued `client_key`/`client_secret` into `tiktok_client_key.json`
+   Add the **Login Kit** product first (Content Posting API's own "Add"
+   button stays disabled until Login Kit is added - it's the underlying
+   OAuth product) and set its Redirect URI, then add **Content Posting
+   API** itself.
+2. Request exactly these two Content Posting API scopes - never a broader
+   one (V4): `video.publish` and `video.upload`. Login Kit adds
+   `user.info.basic` on its own; that's expected and unrelated to the
+   Content Posting flow this project uses.
+3. Set the redirect URI to `https://127.0.0.1:8765/callback` - **https,
+   not http**: TikTok's Login Kit rejects a plain-http redirect_uri even
+   for 127.0.0.1, unlike Google's loopback-exception handling. The fixed
+   port (8765) matches what `run_tiktok_oauth_consent` binds to.
+4. The App details page also requires a Terms of Service URL, Privacy
+   Policy URL, and a Web/Desktop URL before it will save - any reachable
+   public URLs work (e.g. a small static page on GitHub Pages); TikTok's
+   own "Verify URL properties" step (URL-prefix method, signature file)
+   confirms you actually control them.
+5. Save the issued `client_key`/`client_secret` into `tiktok_client_key.json`
    at the repo root:
    ```json
    {"client_key": "...", "client_secret": "..."}
@@ -285,9 +295,15 @@ python -c "from scripts.tiktok_publish import run_tiktok_oauth_consent; run_tikt
 ```
 
 This opens a browser for consent, captures the redirect code on
-`127.0.0.1:8765`, and writes `tiktok_token.json` (gitignored). After that,
-the cached, refreshable token means subsequent scheduled runs don't need a
-browser at all.
+`https://127.0.0.1:8765`, and writes `tiktok_token.json` (gitignored).
+`ensure_local_tls_cert` generates a self-signed certificate on first run
+(`tiktok_oauth_cert.pem`/`tiktok_oauth_key.pem`, both gitignored) purely so
+the local listener can speak TLS for that one redirect - the browser will
+show a "your connection is not private" warning for that single
+`127.0.0.1` hit; clicking through (Advanced → Proceed) is expected and
+safe, nothing on this cert is ever validated by TikTok or sent anywhere.
+After consent, the cached, refreshable token means subsequent scheduled
+runs don't need a browser at all.
 
 ### Opt-in to going live
 
