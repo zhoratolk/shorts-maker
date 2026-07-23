@@ -22,8 +22,6 @@ token.json
 upload_token.json
 tiktok_client_key.json
 tiktok_token.json
-tiktok_oauth_cert.pem
-tiktok_oauth_key.pem
 instagram_client_secret.json
 instagram_token.json
 # Rotated/revoked credential backups (e.g. token.json.revoked-YYYY-MM-DD,

@@ -24,12 +24,10 @@ lightweight, always-installed dependency, not an optional extra.
 """
 
 import argparse
-import http.server
 import json
 import math
 import os
 import random
-import ssl
 import string
 import sys
 import time
@@ -67,15 +65,12 @@ VALID_STATUSES = frozenset({QUEUED, UPLOADING, PUBLISHED, KILLED, PAUSED})
 DEFAULT_QUEUE_PATH = "work/_publish/tiktok_queue.json"
 DEFAULT_NOTIFICATIONS_PATH = "work/_publish/notifications.log"  # SHARED, D-06
 
-# TikTok's Login Kit rejects a redirect_uri that isn't https:// - even for
-# 127.0.0.1 (no loopback-http exception like Google's flow gets). The local
-# consent listener below serves that one redirect over TLS with a
-# self-signed cert (ensure_local_tls_cert) purely to satisfy that scheme
-# check; it never talks to the internet, so a self-signed cert is fine - the
-# browser shows a one-time "not private" warning during consent, expected
-# and safe to click through.
-DEFAULT_CERT_PATH = "tiktok_oauth_cert.pem"
-DEFAULT_KEY_PATH = "tiktok_oauth_key.pem"
+# TikTok's Login Kit rejects any loopback (127.0.0.1) redirect_uri outright
+# for a Web-platform app - it must be a real URL under a domain the app
+# owner has verified in the Developer Portal. This project's own verified
+# GitHub Pages page displays whatever `code` TikTok appends for the operator
+# to copy/paste (run_tiktok_oauth_consent) - see docs/tiktok-app/oauth-callback.html.
+DEFAULT_REDIRECT_URI = "https://zhoratolk.github.io/shorts-maker/tiktok-app/oauth-callback.html"
 
 # V4 scope minimization - never request a broader scope than these two.
 TIKTOK_SCOPES = ["video.publish", "video.upload"]
@@ -310,147 +305,30 @@ def load_credentials(client_key_path: str, token_path: str, session=requests) ->
     return token_data["access_token"]
 
 
-def ensure_local_tls_cert(cert_path: str = DEFAULT_CERT_PATH, key_path: str = DEFAULT_KEY_PATH) -> None:
-    """Generates (once, cached like the rest of this project's artifacts) a
-    self-signed TLS certificate for 127.0.0.1/localhost, used only by the
-    local consent-redirect listener to satisfy TikTok's https-only
-    redirect_uri requirement. No-ops if both files already exist. Never
-    exposed to the internet - the cert's trust chain doesn't matter, only
-    that TLS negotiates.
-    """
-    if Path(cert_path).exists() and Path(key_path).exists():
-        return
-
-    import datetime
-    import ipaddress
-
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.x509.oid import NameOID
-
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
-    now = datetime.datetime.now(datetime.timezone.utc)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - datetime.timedelta(days=1))
-        .not_valid_after(now + datetime.timedelta(days=3650))
-        .add_extension(
-            x509.SubjectAlternativeName(
-                [x509.IPAddress(ipaddress.ip_address("127.0.0.1")), x509.DNSName("localhost")]
-            ),
-            critical=False,
-        )
-        .sign(key, hashes.SHA256())
-    )
-
-    Path(cert_path).write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-    Path(key_path).write_bytes(
-        key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.TraditionalOpenSSL,
-            encryption_algorithm=serialization.NoEncryption(),
-        )
-    )
-
-
-def _build_redirect_server(
-    host: str, port: int, cert_path: str | None = None, key_path: str | None = None
-):
-    """Constructs (but does not run) the one-shot local OAuth redirect
-    listener, bound explicitly to `host` (the caller always passes
-    "127.0.0.1", never "0.0.0.0" - T-06-03/V4 spoofing mitigation). Split
-    out from _capture_oauth_redirect_code so the bind address itself is
-    directly assertable in tests without needing a real HTTP round-trip.
-    Returns (server, captured), where `captured` is filled in with the
-    request's `code` query param once a request is handled.
-
-    When cert_path/key_path are both given, the listener speaks HTTPS (self-
-    signed - see ensure_local_tls_cert) instead of plain HTTP, matching
-    TikTok's https-only redirect_uri requirement.
-    """
-    captured: dict[str, str] = {}
-
-    class _RedirectHandler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 - stdlib method name
-            parsed = urllib.parse.urlparse(self.path)
-            params = urllib.parse.parse_qs(parsed.query)
-            captured["code"] = params.get("code", [""])[0]
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(
-                "TikTok authorization received - you can close this tab.".encode("utf-8")
-            )
-
-        def log_message(self, format_str: str, *args: Any) -> None:  # noqa: A002
-            pass  # suppress default request logging to stderr
-
-    server = http.server.HTTPServer((host, port), _RedirectHandler)
-    if cert_path and key_path:
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(certfile=cert_path, keyfile=key_path)
-        server.socket = context.wrap_socket(server.socket, server_side=True)
-    return server, captured
-
-
-def _capture_oauth_redirect_code(
-    host: str,
-    port: int,
-    timeout_seconds: float = 300,
-    cert_path: str | None = None,
-    key_path: str | None = None,
-) -> str:
-    """Blocks on a local listener bound to (host, port) for exactly one
-    redirect request (handle_request(), never serve_forever() - bounded, no
-    lingering listener), then returns the `code` query param from that one
-    request. Speaks HTTPS when cert_path/key_path are given (see
-    _build_redirect_server), plain HTTP otherwise.
-    """
-    server, captured = _build_redirect_server(host, port, cert_path, key_path)
-    server.timeout = timeout_seconds
-    try:
-        server.handle_request()
-    finally:
-        server.server_close()
-
-    code = captured.get("code")
-    if not code:
-        raise TikTokPublishError("no authorization code received on the OAuth redirect")
-    return code
-
-
 def run_tiktok_oauth_consent(
     client_key_path: str,
     token_path: str,
-    port: int = 8765,
+    redirect_uri: str = DEFAULT_REDIRECT_URI,
     session=requests,
-    cert_path: str = DEFAULT_CERT_PATH,
-    key_path: str = DEFAULT_KEY_PATH,
+    code_prompt=input,
 ) -> str:
     """One-time interactive TikTok OAuth consent flow: builds the authorize
-    URL, opens it via webbrowser.open, blocks on a local redirect-capture
-    listener bound to 127.0.0.1 (never 0.0.0.0) for exactly one request,
-    exchanges the returned code for tokens, and writes the token file in the
-    same shape load_credentials expects (access_token, refresh_token,
-    expires_at). Uses a fixed port (not port=0 like Google's flow) since
-    TikTok apps require an exact pre-registered redirect_uri, unlike
-    Google's loopback-exception handling (06-RESEARCH.md Pattern 3 /
-    Security Domain).
+    URL, opens it via webbrowser.open, then asks the operator to paste the
+    authorization code back (code_prompt - defaults to input()) instead of
+    capturing it automatically.
 
-    The redirect_uri is https:// (TikTok rejects a plain-http one, even for
-    127.0.0.1) - ensure_local_tls_cert generates a self-signed cert on first
-    run so the local listener can actually speak TLS for that one request.
+    TikTok's Login Kit rejects any loopback (127.0.0.1) redirect_uri outright
+    for a Web-platform app, unlike Google's loopback-exception handling - it
+    must be a real URL under a domain the app owner has verified in the
+    Developer Portal (confirmed live 2026-07-23; an earlier local-listener +
+    self-signed-cert approach was built assuming only the http-vs-https
+    scheme mattered, and TikTok's own form rejected it regardless of scheme).
+    redirect_uri therefore defaults to this project's own verified GitHub
+    Pages page (docs/tiktok-app/oauth-callback.html), which displays
+    whatever `code` TikTok put on the URL for the operator to copy - it never
+    transmits the code anywhere itself.
     """
-    ensure_local_tls_cert(cert_path, key_path)
-
     client = json.loads(Path(client_key_path).read_text(encoding="utf-8"))
-    redirect_uri = f"https://127.0.0.1:{port}/callback"
     state = "".join(random.choices(string.ascii_letters + string.digits, k=16))
 
     authorize_url = (
@@ -462,7 +340,9 @@ def run_tiktok_oauth_consent(
     )
     webbrowser.open(authorize_url)
 
-    code = _capture_oauth_redirect_code("127.0.0.1", port, cert_path=cert_path, key_path=key_path)
+    code = code_prompt("Paste the authorization code shown on the TikTok consent page: ").strip()
+    if not code:
+        raise TikTokPublishError("no authorization code entered")
 
     response = session.post(
         TIKTOK_TOKEN_URL,

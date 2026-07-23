@@ -256,24 +256,38 @@ error and exits non-zero rather than silently acting on the wrong item.
 
 ### App registration
 
-1. Register an app in the [TikTok Developer Portal](https://developers.tiktok.com/).
+1. The App details page requires a Terms of Service URL, Privacy Policy
+   URL, and a Web/Desktop URL before it will even save - any reachable
+   public URLs work; this project's own are a small static site under
+   `docs/tiktok-app/`, served via GitHub Pages
+   (`https://<user>.github.io/<repo>/tiktok-app/`). TikTok's own "Verify
+   URL properties" step (**URL prefix** method - **not Domain**, since a
+   `*.github.io` subdomain's DNS isn't ours to add a record to) confirms
+   you actually control them: it hands you a signature file to publish at
+   that same prefix, which just needs committing under `docs/tiktok-app/`
+   and pushing.
+2. Register an app in the [TikTok Developer Portal](https://developers.tiktok.com/).
    Add the **Login Kit** product first (Content Posting API's own "Add"
    button stays disabled until Login Kit is added - it's the underlying
-   OAuth product) and set its Redirect URI, then add **Content Posting
-   API** itself.
-2. Request exactly these two Content Posting API scopes - never a broader
+   OAuth product), then add **Content Posting API** itself.
+3. Request exactly these two Content Posting API scopes - never a broader
    one (V4): `video.publish` and `video.upload`. Login Kit adds
    `user.info.basic` on its own; that's expected and unrelated to the
    Content Posting flow this project uses.
-3. Set the redirect URI to `https://127.0.0.1:8765/callback` - **https,
-   not http**: TikTok's Login Kit rejects a plain-http redirect_uri even
-   for 127.0.0.1, unlike Google's loopback-exception handling. The fixed
-   port (8765) matches what `run_tiktok_oauth_consent` binds to.
-4. The App details page also requires a Terms of Service URL, Privacy
-   Policy URL, and a Web/Desktop URL before it will save - any reachable
-   public URLs work (e.g. a small static page on GitHub Pages); TikTok's
-   own "Verify URL properties" step (URL-prefix method, signature file)
-   confirms you actually control them.
+4. Set Login Kit's Redirect URI. **TikTok rejects any loopback
+   (`127.0.0.1`) redirect_uri outright for a Web-platform app** - not a
+   scheme issue (https vs. http), the value must be a real URL under a
+   domain you've verified ownership of in step 1, unlike Google's
+   loopback-exception handling. This project's default is its own verified
+   GitHub Pages callback page:
+   ```
+   https://<user>.github.io/<repo>/tiktok-app/oauth-callback.html
+   ```
+   (`scripts/tiktok_publish.py::DEFAULT_REDIRECT_URI` - update it there if
+   you fork this under a different GitHub user/repo). That page
+   (`docs/tiktok-app/oauth-callback.html`) is a static, self-contained page
+   that reads the `code` TikTok appends to the URL and displays it for you
+   to copy - it never transmits the code anywhere itself.
 5. Save the issued `client_key`/`client_secret` into `tiktok_client_key.json`
    at the repo root:
    ```json
@@ -294,16 +308,13 @@ section 2's YouTube consent):
 python -c "from scripts.tiktok_publish import run_tiktok_oauth_consent; run_tiktok_oauth_consent('tiktok_client_key.json', 'tiktok_token.json')"
 ```
 
-This opens a browser for consent, captures the redirect code on
-`https://127.0.0.1:8765`, and writes `tiktok_token.json` (gitignored).
-`ensure_local_tls_cert` generates a self-signed certificate on first run
-(`tiktok_oauth_cert.pem`/`tiktok_oauth_key.pem`, both gitignored) purely so
-the local listener can speak TLS for that one redirect - the browser will
-show a "your connection is not private" warning for that single
-`127.0.0.1` hit; clicking through (Advanced → Proceed) is expected and
-safe, nothing on this cert is ever validated by TikTok or sent anywhere.
-After consent, the cached, refreshable token means subsequent scheduled
-runs don't need a browser at all.
+This opens a browser for consent. After you approve, TikTok redirects to
+the GitHub Pages callback page from step 4 above with `?code=...` on the
+URL - the page displays that code; copy it and paste it into the terminal
+when prompted. `run_tiktok_oauth_consent` then exchanges it for tokens and
+writes `tiktok_token.json` (gitignored). After that, the cached,
+refreshable token means subsequent scheduled runs don't need a browser at
+all.
 
 ### Opt-in to going live
 

@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>video.publish — authorization code</title>
+<style>
+  :root {
+    --paper: #eef1f4;
+    --paper-raised: #ffffff;
+    --ink: #14181d;
+    --ink-soft: #4a535d;
+    --ink-faint: #7c8790;
+    --line: #d3d9de;
+    --accent: #e8462f;
+    --accent-soft: #fce7e2;
+    --ok: #1a8a5f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #10141a;
+      --paper-raised: #171c23;
+      --ink: #e8ecef;
+      --ink-soft: #a7b0b8;
+      --ink-faint: #6b747c;
+      --line: #262c34;
+      --accent: #ff6b4a;
+      --accent-soft: #3a1f1a;
+      --ok: #35c98a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--paper); color: var(--ink); }
+  body {
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 620px; margin: 0 auto; padding: 4.5rem 1.5rem 6rem; }
+  .eyebrow {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem;
+    font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", ui-monospace, Consolas, monospace;
+    font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--ink-faint); margin-bottom: 1.4rem;
+  }
+  .eyebrow .dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft); flex: none;
+  }
+  h1 {
+    font-family: "Helvetica Neue", "Arial Narrow", "SF Compact", Arial, sans-serif;
+    font-weight: 800; letter-spacing: -0.01em;
+    font-size: clamp(1.7rem, 5vw, 2.2rem); line-height: 1.1;
+    margin: 0 0 0.6rem; text-wrap: balance;
+  }
+  .lede { color: var(--ink-soft); font-size: 1.02rem; margin: 0 0 2.2rem; }
+  .field-label {
+    font-family: "SF Mono", ui-monospace, Consolas, monospace;
+    font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--ink-faint); margin: 0 0 0.5rem;
+  }
+  .code-box {
+    background: var(--paper-raised); border: 1px solid var(--line); border-radius: 10px;
+    padding: 1.1rem 1.2rem; margin-bottom: 1.8rem;
+    font-family: "SF Mono", "Cascadia Code", ui-monospace, Consolas, monospace;
+    font-size: 0.95rem; color: var(--ink); word-break: break-all;
+    cursor: text; user-select: all;
+  }
+  .code-box.empty { color: var(--ink-faint); font-style: italic; user-select: none; }
+  button {
+    font-family: "Helvetica Neue", Arial, sans-serif; font-weight: 700; font-size: 0.9rem;
+    background: var(--accent); color: #fff; border: none; border-radius: 8px;
+    padding: 0.7rem 1.2rem; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.05); }
+  button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .copied { color: var(--ok); font-size: 0.85rem; margin-left: 0.8rem; opacity: 0; transition: opacity 0.15s; }
+  .copied.show { opacity: 1; }
+  .steps { color: var(--ink-soft); font-size: 0.95rem; padding-left: 1.2rem; margin: 0 0 2rem; }
+  .steps li { margin-bottom: 0.5rem; }
+  .error { color: var(--accent); }
+  hr { border: none; border-top: 1px solid var(--line); margin: 2.4rem 0 1.6rem; }
+  footer { font-size: 0.85rem; color: var(--ink-faint); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="eyebrow"><span class="dot"></span> video.publish · tiktok authorization</p>
+  <h1 id="heading">Authorization received</h1>
+  <p class="lede" id="lede">Copy the code below and paste it into the terminal
+  running the consent flow.</p>
+
+  <p class="field-label">Authorization code</p>
+  <div class="code-box" id="code-box">—</div>
+  <button id="copy-btn" type="button">Copy code</button>
+  <span class="copied" id="copied-msg">Copied</span>
+
+  <ol class="steps">
+    <li>Switch back to the terminal that opened this page.</li>
+    <li>Paste the code when it asks for it and press Enter.</li>
+    <li>This page and tab can then be closed.</li>
+  </ol>
+
+  <hr />
+  <footer>video.publish — this page never sends the code anywhere; it only
+  displays what TikTok put in the URL, for you to copy.</footer>
+</div>
+
+<script>
+  (function () {
+    var params = new URLSearchParams(window.location.search);
+    var code = params.get("code");
+    var error = params.get("error");
+    var box = document.getElementById("code-box");
+    var btn = document.getElementById("copy-btn");
+
+    if (error) {
+      document.getElementById("heading").textContent = "Authorization not completed";
+      document.getElementById("lede").innerHTML =
+        '<span class="error">' + (params.get("error_description") || error) + "</span>";
+      box.textContent = "no code — try the consent flow again";
+      box.classList.add("empty");
+      btn.style.display = "none";
+      return;
+    }
+
+    if (!code) {
+      box.textContent = "no code found in this page's URL";
+      box.classList.add("empty");
+      btn.style.display = "none";
+      return;
+    }
+
+    box.textContent = code;
+    btn.addEventListener("click", function () {
+      navigator.clipboard.writeText(code).then(function () {
+        var msg = document.getElementById("copied-msg");
+        msg.classList.add("show");
+        setTimeout(function () { msg.classList.remove("show"); }, 1500);
+      });
+    });
+  })();
+</script>
+</body>
+</html>
