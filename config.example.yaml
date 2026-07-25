@@ -237,8 +237,10 @@ jumpcuts:
   # report - keep this low so short, meaningful gaps aren't missed.
   detect_min_seconds: 0.15
   # Only pauses longer than this actually get cut out; anything at or
-  # under this length is left as a natural speech rhythm pause.
-  cut_threshold_seconds: 0.4
+  # under this length is left as a natural speech rhythm pause. Below ~1s
+  # a jump cut risks slicing right through a word at the pause boundary
+  # (lost punchline words on real streams at 0.4) - 1.0 is the safer floor.
+  cut_threshold_seconds: 1.0
 
 visual:
   # Sample still frames per chunk (scripts/frames.py) so Claude can see
@@ -439,10 +441,12 @@ outro_card:
   enabled: false
   duration_seconds: 2.5
   nick: "ZhorikP"
+  tagline: "Заходите на стримы"  # optional line shown between the nick and cta_text
   cta_text: "twitch.tv/zhorikp"
   icon_path: "assets/overlays/twitch_glyph.png"
   font: "Arial Black"
   nick_size: 120
+  tagline_size: 48
   cta_size: 56
   # How many built-in gradient presets to cycle through (capped at how many
   # actually exist in render.OUTRO_PATTERNS).

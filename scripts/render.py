@@ -184,10 +184,16 @@ def clamp_clip_bounds(start: float, end: float, video_duration: float) -> tuple[
     return clamped_start, clamped_end
 
 
-def compute_crop_filter(crop_style: str, src_width: int, src_height: int) -> str:
+def compute_crop_filter(
+    crop_style: str, src_width: int, src_height: int, focus_x_pct: float = 50.0
+) -> str:
     if crop_style == "zoom":
         crop_width = min(round(src_height * TARGET_WIDTH / TARGET_HEIGHT), src_width)
-        x_offset = round((src_width - crop_width) / 2)
+        max_offset = src_width - crop_width
+        # focus_x_pct=50 (default) reproduces the old dead-center crop; a clip
+        # whose important content (action, HUD element) sits off-center can
+        # shift the window toward it instead of always cropping the middle.
+        x_offset = round(max_offset * max(0.0, min(100.0, focus_x_pct)) / 100.0)
         return f"crop={crop_width}:{src_height}:{x_offset}:0,scale={TARGET_WIDTH}:{TARGET_HEIGHT}"
 
     if crop_style == "pad":
@@ -1408,10 +1414,12 @@ def render_clip(
     outro_enabled: bool = False,
     outro_duration: float = 2.5,
     outro_nick: str = "",
+    outro_tagline: str = "",
     outro_cta: str = "",
     outro_icon_path: str = "",
     outro_font: str = "Arial Black",
     outro_nick_size: int = 120,
+    outro_tagline_size: int = 48,
     outro_cta_size: int = 56,
     outro_pattern_count: int = 5,
     outro_fps: int = 30,
@@ -1419,7 +1427,8 @@ def render_clip(
     runner=subprocess.run,
 ) -> list[str]:
     crop_style = plan_entry["crop_style"]
-    crop_filter = compute_crop_filter(crop_style, src_width, src_height)
+    crop_focus_x = plan_entry.get("crop_focus_x", 50.0)
+    crop_filter = compute_crop_filter(crop_style, src_width, src_height, crop_focus_x)
     punch_zoom_at = plan_entry.get("punch_zoom_at")
     if punch_zoom_at is not None and crop_style != "zoom":
         # pad/original-16:9 scale the source to fill TARGET_WIDTH with no
@@ -1698,12 +1707,13 @@ def render_clip(
                     "label": (social_labels or {}).get(platform, platform),
                     "at": at, "duration": dur,
                 })
-    if outro_enabled and (outro_nick or outro_cta or outro_icon_path):
+    if outro_enabled and (outro_nick or outro_tagline or outro_cta or outro_icon_path):
         pattern_slots = max(1, min(outro_pattern_count, len(OUTRO_PATTERNS)))
         outro = {
-            "duration": outro_duration, "nick": outro_nick, "cta": outro_cta,
-            "icon_path": outro_icon_path, "font": outro_font,
-            "nick_size": outro_nick_size, "cta_size": outro_cta_size,
+            "duration": outro_duration, "nick": outro_nick, "tagline": outro_tagline,
+            "cta": outro_cta, "icon_path": outro_icon_path, "font": outro_font,
+            "nick_size": outro_nick_size, "tagline_size": outro_tagline_size,
+            "cta_size": outro_cta_size,
             "pattern_index": queue_index % pattern_slots,
         }
 
@@ -1931,10 +1941,12 @@ def main() -> None:
     )
     parser.add_argument("--outro-duration", type=float, default=2.5)
     parser.add_argument("--outro-nick", default="", help="Channel nick shown on the end card, e.g. ZhorikP")
+    parser.add_argument("--outro-tagline", default="", help="Line shown between the nick and the CTA link, e.g. 'Заходите на стримы'")
     parser.add_argument("--outro-cta", default="", help="Link/CTA line under the nick, e.g. twitch.tv/zhorikp")
     parser.add_argument("--outro-icon", default="", help="Platform glyph PNG shown above the nick")
     parser.add_argument("--outro-font", default="Arial Black")
     parser.add_argument("--outro-nick-size", type=int, default=120)
+    parser.add_argument("--outro-tagline-size", type=int, default=48)
     parser.add_argument("--outro-cta-size", type=int, default=56)
     parser.add_argument(
         "--outro-pattern-count", type=int, default=5,
@@ -2043,10 +2055,12 @@ def main() -> None:
             outro_enabled=args.outro_enabled,
             outro_duration=args.outro_duration,
             outro_nick=args.outro_nick,
+            outro_tagline=args.outro_tagline,
             outro_cta=args.outro_cta,
             outro_icon_path=args.outro_icon,
             outro_font=args.outro_font,
             outro_nick_size=args.outro_nick_size,
+            outro_tagline_size=args.outro_tagline_size,
             outro_cta_size=args.outro_cta_size,
             outro_pattern_count=args.outro_pattern_count,
             outro_fps=args.outro_fps,

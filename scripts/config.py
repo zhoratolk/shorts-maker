@@ -405,10 +405,12 @@ class OutroCardConfig:
     enabled: bool = False
     duration_seconds: float = 2.5
     nick: str = ""            # e.g. "ZhorikP"
+    tagline: str = ""         # e.g. "Заходите на стримы" - shown between nick and cta_text
     cta_text: str = ""        # e.g. "twitch.tv/zhorikp"
     icon_path: str = ""       # glyph shown above the nick
     font: str = "Arial Black"
     nick_size: int = 120
+    tagline_size: int = 48
     cta_size: int = 56
     # How many built-in gradient presets to cycle through (capped at the number
     # that actually exist in render.OUTRO_PATTERNS).

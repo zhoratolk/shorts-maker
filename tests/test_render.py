@@ -92,6 +92,21 @@ def test_compute_crop_filter_rejects_unresolved_auto():
         compute_crop_filter("auto", src_width=1920, src_height=1080)
 
 
+def test_compute_crop_filter_zoom_focus_left():
+    result = compute_crop_filter("zoom", src_width=1920, src_height=1080, focus_x_pct=0.0)
+    assert result == "crop=608:1080:0:0,scale=1080:1920"
+
+
+def test_compute_crop_filter_zoom_focus_right():
+    result = compute_crop_filter("zoom", src_width=1920, src_height=1080, focus_x_pct=100.0)
+    assert result == "crop=608:1080:1312:0,scale=1080:1920"
+
+
+def test_compute_crop_filter_zoom_focus_clamped():
+    result = compute_crop_filter("zoom", src_width=1920, src_height=1080, focus_x_pct=250.0)
+    assert result == "crop=608:1080:1312:0,scale=1080:1920"
+
+
 def test_compute_subtitle_margin_v_top_and_center_passthrough():
     assert compute_subtitle_margin_v("top", "zoom", src_width=1920, src_height=1080) == SUBTITLE_MARGIN_V["top"]
     assert compute_subtitle_margin_v("center", "pad", src_width=1920, src_height=1080) == SUBTITLE_MARGIN_V["center"]

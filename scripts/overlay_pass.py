@@ -156,10 +156,12 @@ def build_outro_nodes(
     """
     dur = round(float(outro["duration"]), 3)
     nick = str(outro.get("nick", "")).strip()
+    tagline = str(outro.get("tagline", "")).strip()
     cta = str(outro.get("cta", "")).strip()
     preset = OUTRO_PATTERNS[int(outro.get("pattern_index", 0)) % len(OUTRO_PATTERNS)]
     font = outro.get("font", "Arial Black")
     nick_size = int(outro.get("nick_size", 120))
+    tagline_size = int(outro.get("tagline_size", 48))
     cta_size = int(outro.get("cta_size", 56))
     font_path = resolve_banner_font(font).replace(":", "\\:")
     fade_in = "if(lt(t,0.5),t/0.5,1)"
@@ -179,12 +181,22 @@ def build_outro_nodes(
             f"alpha='{fade_in}':box=1:boxcolor=black@0.35:boxborderw=28{out}"
         )
         cur = out
+    cta_y = nick_y + nick_size + 40
+    if tagline:
+        out = "[otagline]"
+        nodes.append(
+            f"{cur}drawtext=fontfile='{font_path}':text='{_escape_drawtext_text(tagline)}':"
+            f"fontsize={tagline_size}:fontcolor=white:expansion=none:x=(w-text_w)/2:"
+            f"y={cta_y}:alpha='{fade_in}'{out}"
+        )
+        cur = out
+        cta_y = cta_y + tagline_size + 24
     if cta:
         out = "[octa]"
         nodes.append(
             f"{cur}drawtext=fontfile='{font_path}':text='{_escape_drawtext_text(cta)}':"
             f"fontsize={cta_size}:fontcolor=0xffe98a:expansion=none:x=(w-text_w)/2:"
-            f"y={nick_y + nick_size + 40}:alpha='{fade_in}'{out}"
+            f"y={cta_y}:alpha='{fade_in}'{out}"
         )
         cur = out
     icon_path = outro.get("icon_path", "")
