@@ -254,6 +254,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 **Goal:** Внутри цельного клипа (не только на стыках склеек) появляются контекстные монтажные акценты — транзиентные мягкие зум-инсерты/врезы на игровой момент или реакцию, как их расставил бы живой монтажёр. Новое поле `emphasis_moves` в PLAN.json (список `{at, duration, kind: zoom|punch|cut_in, target: action|plate|face}`), макс 2-3 на клип (config cap, default 2), расставляется семантически в SKILL.md шаг 5 по существующим сигналам (audio_energy спайки + реакц-реплики транскрипта + визуал-пасс). render.py расширяется с одиночного держащегося `punch_zoom_at` до списка транзиентных ease-in→hold→ease-out зумов, работающих в т.ч. на crop `pad`/`original-16:9` (лёгкий скейл без реза кадра). Таргет `face` заложен в код, но default OFF (нет вебки пока). Fail-open, default-off, backward-compatible с `punch_zoom_at`.
 **Requirements**: TRANS-EMPH-01 (context-driven mid-clip emphasis moves), TRANS-EMPH-02 (any-crop transient zoom, fail-open/backward-compatible)
 **Depends on:** Phase 4 (переиспользует render pipeline + punch-zoom механику)
+**Status:** Complete 2026-07-27 (built inline 2026-07-15, enabled in local config.yaml 2026-07-27)
 **Plans:** 1/1 (executed inline 2026-07-15)
 
 Plans:
