@@ -25,6 +25,12 @@ class Candidate:
     group_id: int | None = None
     # True only when sub_threshold and no group formed this run (D-03).
     unmatched: bool = False
+    # Free-form kind-of-signal label set at candidate-finding time (2026-07-26):
+    # "reaction", "gameplay", "story", "banter", "visual", "audio-energy", etc.
+    # Reporting only - never gates or scores a candidate. Lets CANDIDATES.md
+    # surface a distribution ("found: N reactions, M gameplay...") and flag
+    # reaction-tier moments as a distinct group without dropping the rest.
+    category: str | None = None
 
 
 def format_timecode(total_seconds: float) -> str:
@@ -96,6 +102,7 @@ def merge_candidates(chunks_candidates: list[list[dict]]) -> list[Candidate]:
             sub_threshold=item.get("sub_threshold", False),
             group_id=item.get("group_id"),
             unmatched=item.get("unmatched", False),
+            category=item.get("category"),
         )
         for index, item in enumerate(flattened)
     ]
@@ -112,12 +119,37 @@ def render_candidates_markdown(candidates: list[Candidate]) -> str:
         return "# Candidates\n\nNo candidates found.\n"
 
     lines = ["# Candidates", ""]
+
+    categorized = [c for c in candidates if c.category]
+    if categorized:
+        counts: dict[str, int] = {}
+        for candidate in categorized:
+            counts[candidate.category] = counts.get(candidate.category, 0) + 1
+        summary = ", ".join(
+            f"{category} — {count}"
+            for category, count in sorted(counts.items(), key=lambda pair: -pair[1])
+        )
+        lines.append(f"Найдено: {summary}")
+        lines.append("")
+
+    reactions = [c for c in candidates if c.category == "reaction"]
+    if reactions:
+        lines.append("## Сильные реакции")
+        lines.append("")
+        for candidate in reactions:
+            start_tc = format_timecode(candidate.start)
+            end_tc = format_timecode(candidate.end)
+            lines.append(f"- #{candidate.id} `{start_tc}` - `{end_tc}` — {candidate.reason}")
+        lines.append("")
+
     for candidate in candidates:
         start_tc = format_timecode(candidate.start)
         end_tc = format_timecode(candidate.end)
         line = f"{candidate.id}. `{start_tc}` - `{end_tc}` — {candidate.reason}"
         if candidate.coherence is not None:
             line += f" (целостность: {candidate.coherence}/5)"
+        if candidate.category:
+            line += f" [{candidate.category}]"
         lines.append(line)
     return "\n".join(lines) + "\n"
 

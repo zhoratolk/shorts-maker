@@ -142,6 +142,7 @@ def test_write_candidates_json_round_trips(tmp_path):
             "sub_threshold": False,
             "group_id": None,
             "unmatched": False,
+            "category": None,
         }
     ]
 
@@ -208,6 +209,60 @@ def test_merge_candidates_tag_or_sub_threshold_fields_default_when_absent():
     assert merged[0].sub_threshold is False
     assert merged[0].group_id is None
     assert merged[0].unmatched is False
+
+
+def test_merge_candidates_carries_category_field_when_present():
+    chunk = [{"start": 10.0, "end": 15.0, "reason": "screamed at jumpscare", "category": "reaction"}]
+
+    merged = merge_candidates([chunk])
+
+    assert merged[0].category == "reaction"
+
+
+def test_merge_candidates_category_defaults_to_none_when_absent():
+    chunk = [{"start": 10.0, "end": 20.0, "reason": "no category data"}]
+
+    merged = merge_candidates([chunk])
+
+    assert merged[0].category is None
+
+
+def test_render_candidates_markdown_summarizes_category_counts():
+    candidates = [
+        Candidate(id=1, start=10.0, end=15.0, reason="jumpscare scream", category="reaction"),
+        Candidate(id=2, start=20.0, end=25.0, reason="clutch play", category="gameplay"),
+        Candidate(id=3, start=30.0, end=35.0, reason="another scream", category="reaction"),
+    ]
+
+    markdown = render_candidates_markdown(candidates)
+
+    assert "Найдено: reaction — 2, gameplay — 1" in markdown
+    assert "[reaction]" in markdown
+    assert "[gameplay]" in markdown
+
+
+def test_render_candidates_markdown_lists_reactions_in_own_section():
+    candidates = [
+        Candidate(id=1, start=10.0, end=15.0, reason="jumpscare scream", category="reaction"),
+        Candidate(id=2, start=20.0, end=25.0, reason="clutch play", category="gameplay"),
+    ]
+
+    markdown = render_candidates_markdown(candidates)
+
+    assert "## Сильные реакции" in markdown
+    assert "- #1 `00:00:10` - `00:00:15` — jumpscare scream" in markdown
+    # gameplay candidate must not appear in the reactions section
+    reactions_section = markdown.split("## Сильные реакции")[1].split("\n\n")[0]
+    assert "clutch play" not in reactions_section
+
+
+def test_render_candidates_markdown_no_category_summary_when_absent():
+    candidates = [Candidate(id=1, start=10.0, end=20.0, reason="first joke")]
+
+    markdown = render_candidates_markdown(candidates)
+
+    assert "Найдено:" not in markdown
+    assert "## Сильные реакции" not in markdown
 
 
 def test_append_compilation_sections_markdown_adds_group_and_unmatched_sections(tmp_path):
