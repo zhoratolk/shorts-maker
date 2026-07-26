@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime
+import io
 import json
 import sys
 from pathlib import Path
 
+import requests
+
 # Read-only scopes - this script never uploads/edits/deletes anything.
+# yt-analytics.readonly covers both the interactive Analytics API (below)
+# and the bulk Reporting API used for thumbnail-impressions data - no
+# separate scope/consent needed for that.
 DATA_API_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
 ANALYTICS_API_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly"
 SCOPES = [DATA_API_SCOPE, ANALYTICS_API_SCOPE]
@@ -17,6 +24,13 @@ MAX_VIDEO_IDS_PER_REQUEST = 50
 # YouTube's own launch date - a safe "since the beginning" default so a
 # first run captures every video's full lifetime history.
 EPOCH_START_DATE = "2005-04-23"
+
+# Bulk Reporting API report type carrying thumbnail impressions/CTR - this
+# data is NOT available through the interactive Analytics API's reports.query
+# (confirmed empirically: 400 "query is not supported" on every dimension
+# combination tried), only through this separate async bulk-export system.
+REACH_REPORT_TYPE_ID = "channel_reach_basic_a1"
+REACH_JOB_NAME = "shorts-maker-reach"
 
 
 def default_end_date() -> str:
@@ -60,7 +74,8 @@ def build_services(credentials):
 
     data_service = build("youtube", "v3", credentials=credentials)
     analytics_service = build("youtubeAnalytics", "v2", credentials=credentials)
-    return data_service, analytics_service
+    reporting_service = build("youtubereporting", "v1", credentials=credentials)
+    return data_service, analytics_service, reporting_service
 
 
 def get_own_channel(data_service) -> dict:
@@ -153,36 +168,92 @@ def fetch_analytics_for_videos(
     return result
 
 
-def fetch_impressions_for_videos(
-    analytics_service, channel_id: str, video_ids: list[str], start_date: str, end_date: str
-) -> dict[str, dict]:
-    """One reports.query call for thumbnail impressions and click-through
-    rate (videoThumbnailImpressions/videoThumbnailImpressionsClickRate,
-    added to the Analytics API 2026-01-15) - the only metrics that show how
-    many times the Shorts feed actually surfaced a clip and what fraction of
-    those surfaces turned into a watch, as opposed to averageViewPercentage
-    which only measures completion among people who already watched.
+def ensure_reach_job(
+    reporting_service, report_type_id: str = REACH_REPORT_TYPE_ID, job_name: str = REACH_JOB_NAME
+) -> str:
+    """Returns the bulk-report job id for report_type_id, reusing an existing
+    job rather than creating a duplicate - jobs are persistent server-side,
+    one job per report type is enough. A freshly created job has no reports
+    available for up to ~48h (Google's own processing latency for the first
+    export), so an empty result from fetch_reach_by_video right after this
+    is expected, not an error.
     """
-    if not video_ids:
-        return {}
-    response = analytics_service.reports().query(
-        ids=f"channel=={channel_id}",
-        startDate=start_date,
-        endDate=end_date,
-        metrics="videoThumbnailImpressions,videoThumbnailImpressionsClickRate",
-        dimensions="video",
-        filters=f"video=={','.join(video_ids)}",
-        maxResults=len(video_ids),
-    ).execute()
+    response = reporting_service.jobs().list(includeSystemManaged=False).execute()
+    for job in response.get("jobs", []):
+        if job.get("reportTypeId") == report_type_id:
+            return job["id"]
+    created = reporting_service.jobs().create(body={"reportTypeId": report_type_id, "name": job_name}).execute()
+    return created["id"]
+
+
+def list_available_reach_reports(reporting_service, job_id: str) -> list[dict]:
+    """Every report resource currently available for this job. Each report
+    covers a single 24h day (not the job's cumulative history), so
+    fetch_reach_by_video below must sum across every one of them, not just
+    the newest.
+    """
+    response = reporting_service.jobs().reports().list(jobId=job_id).execute()
+    return response.get("reports", [])
+
+
+def download_report_csv(download_url: str, access_token: str, session=requests) -> str:
+    """Downloads one report's CSV body. downloadUrl is a plain authenticated
+    GET (not another googleapiclient-wrapped resource) - a bearer token
+    header is all it needs.
+    """
+    response = session.get(download_url, headers={"Authorization": f"Bearer {access_token}"})
+    response.raise_for_status()
+    return response.text
+
+
+def parse_reach_csv(csv_text: str) -> list[dict]:
+    """Parses a channel_reach_basic_a1 CSV body (columns: date, channel_id,
+    video_id, video_thumbnail_impressions, video_thumbnail_impressions_ctr)
+    into one row per (date, video) pair - aggregate_reach_by_video below
+    sums across dates.
+    """
+    reader = csv.DictReader(io.StringIO(csv_text))
+    return [
+        {
+            "video_id": row["video_id"],
+            "thumbnail_impressions": int(row["video_thumbnail_impressions"]),
+            "thumbnail_impressions_click_rate": float(row["video_thumbnail_impressions_ctr"]),
+        }
+        for row in reader
+    ]
+
+
+def aggregate_reach_by_video(rows: list[dict]) -> dict[str, dict]:
+    """Sums thumbnail_impressions and computes an impressions-weighted mean
+    click rate per video_id across every daily report row it appears in.
+    """
+    totals: dict[str, dict] = {}
+    for row in rows:
+        bucket = totals.setdefault(row["video_id"], {"impressions": 0, "weighted_ctr_sum": 0.0})
+        bucket["impressions"] += row["thumbnail_impressions"]
+        bucket["weighted_ctr_sum"] += row["thumbnail_impressions"] * row["thumbnail_impressions_click_rate"]
 
     result = {}
-    for row in response.get("rows", []):
-        video_id, thumbnail_impressions, thumbnail_impressions_click_rate = row
-        result[video_id] = {
-            "thumbnail_impressions": thumbnail_impressions,
-            "thumbnail_impressions_click_rate": thumbnail_impressions_click_rate,
-        }
+    for video_id, bucket in totals.items():
+        impressions = bucket["impressions"]
+        ctr = (bucket["weighted_ctr_sum"] / impressions) if impressions else 0.0
+        result[video_id] = {"thumbnail_impressions": impressions, "thumbnail_impressions_click_rate": ctr}
     return result
+
+
+def fetch_reach_by_video(reporting_service, access_token: str) -> dict[str, dict]:
+    """End-to-end: ensure the reach job exists, download every currently
+    available daily report, and return per-video aggregated impressions/CTR.
+    Returns {} (not an error) when the job was just created and Google
+    hasn't produced its first report yet.
+    """
+    job_id = ensure_reach_job(reporting_service)
+    reports = list_available_reach_reports(reporting_service, job_id)
+    all_rows: list[dict] = []
+    for report in reports:
+        csv_text = download_report_csv(report["downloadUrl"], access_token)
+        all_rows.extend(parse_reach_csv(csv_text))
+    return aggregate_reach_by_video(all_rows)
 
 
 def fetch_traffic_sources_for_videos(
@@ -243,7 +314,12 @@ def merge_performance_records(
 
 
 def fetch_channel_performance(
-    data_service, analytics_service, start_date: str = EPOCH_START_DATE, end_date: str | None = None
+    data_service,
+    analytics_service,
+    reporting_service=None,
+    access_token: str | None = None,
+    start_date: str = EPOCH_START_DATE,
+    end_date: str | None = None,
 ) -> list[dict]:
     end_date = end_date or default_end_date()
     channel = get_own_channel(data_service)
@@ -274,22 +350,25 @@ def fetch_channel_performance(
         )
         analytics, traffic_sources = {}, {}
 
-    # Separate try/except: videoThumbnailImpressions is a newer metric
-    # (2026-01-15) some accounts/quota tiers may not have access to yet -
-    # fail open independently so a rejection here doesn't also drop the
-    # retention/traffic-source data fetched above.
-    try:
-        impressions = fetch_impressions_for_videos(
-            analytics_service, channel["channel_id"], video_ids, start_date, end_date
-        )
-    except Exception as error:
-        print(
-            f"[warn] thumbnail impressions unavailable ({error}); continuing without them this run",
-            file=sys.stderr,
-        )
-        impressions = {}
+    # Reach data (thumbnail impressions/CTR) comes from a wholly separate
+    # bulk async API - skipped entirely when the caller doesn't pass a
+    # reporting_service (e.g. tests, or a caller that only wants the
+    # interactive-API fields). Fails open independently of the analytics
+    # block above: a Reporting-API outage/quota issue shouldn't drop the
+    # retention/traffic-source data that already succeeded.
+    reach: dict[str, dict] = {}
+    if reporting_service is not None:
+        try:
+            reach = fetch_reach_by_video(reporting_service, access_token)
+        except Exception as error:
+            print(
+                f"[warn] YouTube Reporting API unavailable ({error}); continuing without thumbnail "
+                "impressions this run",
+                file=sys.stderr,
+            )
+            reach = {}
 
-    return merge_performance_records(videos, statistics, analytics, traffic_sources, impressions)
+    return merge_performance_records(videos, statistics, analytics, traffic_sources, reach)
 
 
 def main() -> None:
@@ -305,9 +384,14 @@ def main() -> None:
     args = parser.parse_args()
 
     credentials = load_credentials(args.client_secret, args.token)
-    data_service, analytics_service = build_services(credentials)
+    data_service, analytics_service, reporting_service = build_services(credentials)
     records = fetch_channel_performance(
-        data_service, analytics_service, start_date=args.start_date, end_date=args.end_date
+        data_service,
+        analytics_service,
+        reporting_service,
+        credentials.token,
+        start_date=args.start_date,
+        end_date=args.end_date,
     )
 
     output_path = Path(args.output_path)
