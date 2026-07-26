@@ -404,6 +404,24 @@ cold_open:
   transition: whip_pan
   transition_duration: 0.25
 
+loop:
+  # Crossfades a replay of the clip's own opening onto its tail, so a
+  # platform's auto-repeat (Shorts/Reels/TikTok all loop by default) blends
+  # into a seamless wrap instead of hard-cutting from the real ending back
+  # to the real start. The orchestrator (SKILL.md step 5) decides per clip
+  # whether the end and start can plausibly blend - written as a `loop: true`
+  # field on the plan entry. Off by default - fail-open: disabled or no
+  # field on a clip renders exactly as today. Distinct from a clip whose
+  # last LINE happens to echo its first line (a content/narrative callback,
+  # a pure trim-choice with no config/field of its own) - this section is
+  # only the mechanical video/audio seam.
+  enabled: false
+  # cut | crossfade. crossfade (a plain dissolve) reads as an intentional
+  # loop seam; cut appends an exact replay with a hard jump (louder, but
+  # simpler and sometimes reads better on fast-cut content).
+  transition: crossfade
+  transition_duration: 0.4
+
 social_overlay:
   # Sliding social capsules (Phase 10): a small "glyph + link" capsule slides in
   # from the left, holds, and slides back out - once per platform per clip (the

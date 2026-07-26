@@ -32,6 +32,7 @@ from scripts.overlay_pass import (
 )
 
 from scripts.cold_open import VALID_COLD_OPEN_TRANSITIONS, build_cold_open_command
+from scripts.loop import VALID_LOOP_TRANSITIONS, build_loop_outro_command
 
 NAMED_ASS_COLORS = {
     "white": "&H00FFFFFF",
@@ -1400,6 +1401,9 @@ def render_clip(
     cold_open_enabled: bool = False,
     cold_open_transition: str = "whip_pan",
     cold_open_transition_duration: float = 0.25,
+    loop_enabled: bool = False,
+    loop_transition: str = "crossfade",
+    loop_transition_duration: float = 0.4,
     social_enabled: bool = False,
     social_platforms: list[str] | None = None,
     social_icon_paths: dict[str, str] | None = None,
@@ -1683,6 +1687,37 @@ def render_clip(
                 file=sys.stderr,
             )
 
+    # Loop-seam finalize pass (2026-07-27): crossfade a replay of the clip's
+    # own opening onto its tail so a platform's auto-repeat blends instead of
+    # hard-cutting. Runs after cold-open (so a cold-open'd clip loops into
+    # its now-current front) and before the overlay pass below (so social/
+    # outro timing is computed against the loop's own adjusted duration).
+    # Fail-open: any error keeps the clip without the loop seam.
+    if loop_enabled and plan_entry.get("loop"):
+        final_path = Path(output_path)
+        tmp_path = final_path.with_name(final_path.stem + "__loop" + final_path.suffix)
+        try:
+            base_duration = probe_video(output_path, runner=runner)["duration"]
+            loop_command = build_loop_outro_command(
+                output_path, str(tmp_path), base_duration,
+                transition=loop_transition, transition_duration=loop_transition_duration,
+                video_codec=video_codec, preset=preset, crf=crf,
+            )
+            loop_result = runner(loop_command, capture_output=True, text=True)
+            if loop_result.returncode != 0:
+                raise RenderError(loop_result.stderr)
+            tmp_path.replace(final_path)
+        except Exception as error:  # noqa: BLE001 - fail-open, keep the clip without the loop seam
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
+            print(
+                f"[warn] loop-seam finalize pass failed for {output_path}, keeping clip without it: {error}",
+                file=sys.stderr,
+            )
+
     # Phase 10 overlay finalize pass: social popups + animated outro card, run
     # as a second pass over the just-rendered clip. Isolated here so the base
     # command builders stay byte-identical when disabled. Fail-open: any error
@@ -1915,6 +1950,19 @@ def main() -> None:
         help="Transition style joining the teaser into the clip's real start",
     )
     parser.add_argument("--cold-open-transition-duration", type=float, default=0.25)
+    # --loop-* gate the loop-seam finalize pass. Harmless no-op unless
+    # --loop-enabled is set AND the plan entry itself carries a truthy
+    # `loop` field (same two-key convention as --cold-open-enabled).
+    parser.add_argument(
+        "--loop-enabled", action="store_true",
+        help="Crossfade a replay of each clip's own opening onto its tail (plan entry's loop field)",
+    )
+    parser.add_argument(
+        "--loop-transition", default="crossfade",
+        choices=sorted(VALID_LOOP_TRANSITIONS),
+        help="Transition style joining the tail back into the replayed opening",
+    )
+    parser.add_argument("--loop-transition-duration", type=float, default=0.4)
     # --social-* / --outro-* drive the Phase 10 overlay finalize pass. All are
     # harmless no-ops unless --social-enabled / --outro-enabled is set (same
     # convention as --banner-* / --emphasis-*).
@@ -2041,6 +2089,9 @@ def main() -> None:
             cold_open_enabled=args.cold_open_enabled,
             cold_open_transition=args.cold_open_transition,
             cold_open_transition_duration=args.cold_open_transition_duration,
+            loop_enabled=args.loop_enabled,
+            loop_transition=args.loop_transition,
+            loop_transition_duration=args.loop_transition_duration,
             social_enabled=args.social_enabled,
             social_platforms=social_platforms,
             social_icon_paths=social_icon_paths,

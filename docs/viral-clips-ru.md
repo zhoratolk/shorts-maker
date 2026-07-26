@@ -106,6 +106,7 @@ These reinforce, with real data, what's already documented above (pattern interr
   don't force it, but when a clip's last line naturally echoes or pays off
   its own opening line, that's a real, if incidental, strength worth
   noting in `reason` rather than something to engineer artificially.
+  - **A separate, mechanical version of this exists (2026-07-27, `config.loop`, gated `enabled`)**: crossfades a replay of the clip's own opening onto its tail so a platform's auto-repeat blends instead of hard-cutting. This is unrelated to the content echo above — it's a video/audio seam, not a narrative callback — and only applies to continuous/ambient footage where the first and last frames could plausibly blend, never a clip that opens or closes on a hard reaction/punchline/cut. See SKILL.md step 5's "Loop-ability" bullet for the actual per-clip judgment; both routes exist side by side because they fit different clip types.
 
 ## Anti-patterns — weaker candidates even when the line itself is funny
 

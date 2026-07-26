@@ -371,6 +371,26 @@ class ColdOpenConfig:
 
 
 @dataclasses.dataclass
+class LoopConfig:
+    # Gemini-suggested + own retention analysis (2026-07-27): crossfades a
+    # replay of the clip's own opening onto its tail, so a platform's
+    # auto-repeat blends into a seamless wrap instead of hard-cutting from
+    # the real ending back to the real start. Opt-in, off by default - same
+    # footing as cold_open/emphasis. Only applies to clips Claude marks
+    # loop-worthy (PLAN.json's `loop: true`, a per-clip judgment call in
+    # SKILL.md step 5) - most clips should NOT have this; forcing a loop
+    # seam onto a punchline/reaction clip reads as a broken repeat, not a
+    # loop. When off, PLAN.json's `loop` field is ignored and rendering is
+    # byte-identical to today.
+    enabled: bool = False
+    # cut | crossfade. See scripts.loop for the full enum (deliberately
+    # narrower than cold_open's - whip_pan/mask_wipe don't read as a smooth
+    # loop seam).
+    transition: str = "crossfade"
+    transition_duration: float = 0.4
+
+
+@dataclasses.dataclass
 class SocialOverlayConfig:
     # Phase 10 social popups: a small capsule (glyph + link text) that slides in
     # from the left, holds, and slides back out once per platform per clip.
@@ -485,6 +505,7 @@ class Config:
     hook_banner: HookBannerConfig = dataclasses.field(default_factory=HookBannerConfig)
     emphasis: EmphasisConfig = dataclasses.field(default_factory=EmphasisConfig)
     cold_open: ColdOpenConfig = dataclasses.field(default_factory=ColdOpenConfig)
+    loop: LoopConfig = dataclasses.field(default_factory=LoopConfig)
     social_overlay: SocialOverlayConfig = dataclasses.field(default_factory=SocialOverlayConfig)
     outro_card: OutroCardConfig = dataclasses.field(default_factory=OutroCardConfig)
     top_moments: TopMomentsConfig = dataclasses.field(default_factory=TopMomentsConfig)
@@ -531,6 +552,7 @@ def load_config(path: str) -> Config:
         hook_banner=_build(HookBannerConfig, data.get("hook_banner", {}), "hook_banner"),
         emphasis=_build(EmphasisConfig, data.get("emphasis", {}), "emphasis"),
         cold_open=_build(ColdOpenConfig, data.get("cold_open", {}), "cold_open"),
+        loop=_build(LoopConfig, data.get("loop", {}), "loop"),
         social_overlay=_build(SocialOverlayConfig, data.get("social_overlay", {}), "social_overlay"),
         outro_card=_build(OutroCardConfig, data.get("outro_card", {}), "outro_card"),
         top_moments=_build(TopMomentsConfig, data.get("top_moments", {}), "top_moments"),
@@ -799,6 +821,16 @@ def _validate(config: Config) -> None:
     if config.cold_open.transition_duration <= 0:
         raise ConfigError(
             f"cold_open.transition_duration must be > 0, got {config.cold_open.transition_duration}"
+        )
+    # MUST mirror scripts.loop.VALID_LOOP_TRANSITIONS - duplicated rather
+    # than imported, same rationale as cold_open above.
+    if config.loop.transition not in {"cut", "crossfade"}:
+        raise ConfigError(
+            f"loop.transition must be one of cut/crossfade, got {config.loop.transition!r}"
+        )
+    if config.loop.transition_duration <= 0:
+        raise ConfigError(
+            f"loop.transition_duration must be > 0, got {config.loop.transition_duration}"
         )
     if config.social_overlay.duration_seconds <= 0:
         raise ConfigError(

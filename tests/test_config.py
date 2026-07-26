@@ -1759,3 +1759,54 @@ def test_config_cold_open_transition_enum_matches_cold_open_module():
     from scripts.cold_open import VALID_COLD_OPEN_TRANSITIONS
 
     assert {"cut", "crossfade", "whip_pan", "mask_wipe"} == VALID_COLD_OPEN_TRANSITIONS
+
+
+def test_load_config_loop_defaults(tmp_path):
+    path = write_config(tmp_path, 'input_dir: "F:/in"\noutput_dir: "F:/out"\n')
+
+    config = load_config(path)
+
+    assert config.loop.enabled is False
+    assert config.loop.transition == "crossfade"
+    assert config.loop.transition_duration == 0.4
+
+
+def test_load_config_loop_custom_values(tmp_path):
+    path = write_config(
+        tmp_path,
+        """
+        input_dir: "F:/in"
+        output_dir: "F:/out"
+        loop:
+          enabled: true
+          transition: cut
+          transition_duration: 0.6
+        """,
+    )
+
+    config = load_config(path)
+
+    assert config.loop.enabled is True
+    assert config.loop.transition == "cut"
+    assert config.loop.transition_duration == 0.6
+
+
+def test_load_config_rejects_bad_loop_values(tmp_path):
+    cases = [
+        ("loop:\n  transition: whip_pan\n", "loop.transition"),
+        ("loop:\n  transition_duration: 0\n", "loop.transition_duration"),
+        ("loop:\n  transition_duration: -1\n", "loop.transition_duration"),
+    ]
+    for section, marker in cases:
+        path = write_config(tmp_path, f'input_dir: "F:/in"\noutput_dir: "F:/out"\n{section}\n')
+        with pytest.raises(ConfigError, match=marker):
+            load_config(path)
+
+
+def test_config_loop_transition_enum_matches_loop_module():
+    # Drift guard: config.py duplicates the enum (rather than importing
+    # scripts.loop) so config.py stays import-safe with just yaml/stdlib -
+    # this test catches the two sets silently diverging.
+    from scripts.loop import VALID_LOOP_TRANSITIONS
+
+    assert {"cut", "crossfade"} == VALID_LOOP_TRANSITIONS

@@ -1470,6 +1470,51 @@ def test_render_clip_cold_open_fails_open_when_window_exceeds_clip_duration():
     assert not any("teaserbasev" in " ".join(c) for c in commands)
 
 
+def test_render_clip_runs_loop_finalize_pass_when_enabled():
+    commands = []
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom", "loop": True}
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        loop_enabled=True, loop_transition="crossfade", loop_transition_duration=0.4,
+        runner=_overlay_capture_runner(commands),
+    )
+    finalize = [c for c in commands if "-filter_complex" in c and "loopbasev" in
+                c[c.index("-filter_complex") + 1]]
+    assert len(finalize) == 1
+    graph = finalize[0][finalize[0].index("-filter_complex") + 1]
+    # _overlay_capture_runner's fake ffprobe always reports duration=30.0
+    assert "trim=start=0:end=0.4" in graph
+    assert "xfade=transition=fade:duration=0.4:offset=29.6" in graph
+
+
+def test_render_clip_skips_loop_when_flag_disabled():
+    commands = []
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom", "loop": True}
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        loop_enabled=False,
+        runner=_overlay_capture_runner(commands),
+    )
+    # exactly one command (the base render) - the plan entry's loop is
+    # ignored entirely when the CLI-level flag is off (harmless-no-op
+    # convention, same as cold_open_enabled/social_enabled).
+    assert len(commands) == 1
+
+
+def test_render_clip_skips_loop_when_plan_entry_has_no_field():
+    commands = []
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom"}
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        loop_enabled=True,
+        runner=_overlay_capture_runner(commands),
+    )
+    assert len(commands) == 1
+
+
 def test_render_clip_uses_jumpcut_command_when_keep_segments_present():
     class FakeResult:
         returncode = 0
