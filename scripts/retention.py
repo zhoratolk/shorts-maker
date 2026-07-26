@@ -348,7 +348,7 @@ def main() -> None:
 
     end_date = args.end_date or youtube_analytics.default_end_date()
     credentials = youtube_analytics.load_credentials(args.client_secret, args.token)
-    data_service, analytics_service = youtube_analytics.build_services(credentials)
+    data_service, analytics_service, _reporting_service = youtube_analytics.build_services(credentials)
     channel = youtube_analytics.get_own_channel(data_service)
     videos = youtube_analytics.list_uploaded_videos(data_service, channel["uploads_playlist_id"])
 
