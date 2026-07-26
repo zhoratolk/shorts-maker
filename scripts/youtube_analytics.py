@@ -153,6 +153,38 @@ def fetch_analytics_for_videos(
     return result
 
 
+def fetch_impressions_for_videos(
+    analytics_service, channel_id: str, video_ids: list[str], start_date: str, end_date: str
+) -> dict[str, dict]:
+    """One reports.query call for thumbnail impressions and click-through
+    rate (videoThumbnailImpressions/videoThumbnailImpressionsClickRate,
+    added to the Analytics API 2026-01-15) - the only metrics that show how
+    many times the Shorts feed actually surfaced a clip and what fraction of
+    those surfaces turned into a watch, as opposed to averageViewPercentage
+    which only measures completion among people who already watched.
+    """
+    if not video_ids:
+        return {}
+    response = analytics_service.reports().query(
+        ids=f"channel=={channel_id}",
+        startDate=start_date,
+        endDate=end_date,
+        metrics="videoThumbnailImpressions,videoThumbnailImpressionsClickRate",
+        dimensions="video",
+        filters=f"video=={','.join(video_ids)}",
+        maxResults=len(video_ids),
+    ).execute()
+
+    result = {}
+    for row in response.get("rows", []):
+        video_id, thumbnail_impressions, thumbnail_impressions_click_rate = row
+        result[video_id] = {
+            "thumbnail_impressions": thumbnail_impressions,
+            "thumbnail_impressions_click_rate": thumbnail_impressions_click_rate,
+        }
+    return result
+
+
 def fetch_traffic_sources_for_videos(
     analytics_service, channel_id: str, video_ids: list[str], start_date: str, end_date: str
 ) -> dict[str, dict[str, int]]:
@@ -185,12 +217,15 @@ def merge_performance_records(
     statistics: dict[str, dict],
     analytics: dict[str, dict],
     traffic_sources: dict[str, dict[str, int]],
+    impressions: dict[str, dict] | None = None,
 ) -> list[dict]:
     """Combines playlist metadata + Data API stats + Analytics API metrics
     into one record per video, in the same order as `videos`.
     """
+    impressions = impressions or {}
     empty_statistics = {"view_count": None, "like_count": None, "comment_count": None}
     empty_analytics = {"views_in_range": None, "average_view_duration": None, "average_view_percentage": None}
+    empty_impressions = {"thumbnail_impressions": None, "thumbnail_impressions_click_rate": None}
 
     merged = []
     for video in videos:
@@ -200,6 +235,7 @@ def merge_performance_records(
                 **video,
                 **statistics.get(video_id, empty_statistics),
                 **analytics.get(video_id, empty_analytics),
+                **impressions.get(video_id, empty_impressions),
                 "traffic_sources": traffic_sources.get(video_id, {}),
             }
         )
@@ -238,7 +274,22 @@ def fetch_channel_performance(
         )
         analytics, traffic_sources = {}, {}
 
-    return merge_performance_records(videos, statistics, analytics, traffic_sources)
+    # Separate try/except: videoThumbnailImpressions is a newer metric
+    # (2026-01-15) some accounts/quota tiers may not have access to yet -
+    # fail open independently so a rejection here doesn't also drop the
+    # retention/traffic-source data fetched above.
+    try:
+        impressions = fetch_impressions_for_videos(
+            analytics_service, channel["channel_id"], video_ids, start_date, end_date
+        )
+    except Exception as error:
+        print(
+            f"[warn] thumbnail impressions unavailable ({error}); continuing without them this run",
+            file=sys.stderr,
+        )
+        impressions = {}
+
+    return merge_performance_records(videos, statistics, analytics, traffic_sources, impressions)
 
 
 def main() -> None:

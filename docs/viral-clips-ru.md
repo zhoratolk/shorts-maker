@@ -21,6 +21,8 @@ the sentence allows, even if that cuts a bit of setup a human editor might
 have kept. A clip that opens mid-laugh/mid-reaction outperforms one that
 opens with "so basically what happened was...".
 
+**Why this channel's clips stall after 1-3 hours (2026-07-26 analysis).** YouTube Shorts gives every new upload a small test push (roughly 500-2000 viewers) and decides within that window whether to keep promoting it, based mainly on the *swipe-through rate* of that initial audience — not the full-video completion percentage. Own-channel data backs this up directly: across 85 clips, `average_view_percentage` has essentially zero correlation with total views (Pearson r≈0.15; top-third and bottom-third clips by views have nearly identical average watch %, ~48% both). That means the stall isn't a downstream "people didn't finish it" problem — it's decided in the first 1-3 seconds, before completion even matters. `scripts/youtube_analytics.py` now also fetches `thumbnail_impressions`/`thumbnail_impressions_click_rate` (added to the Analytics API 2026-01-15) precisely to make this visible per clip instead of inferred — a clip with high impressions but low click-through has a hook-framing problem specifically, not a content problem.
+
 ## Length sweet spot
 
 15-34 seconds gets the highest completion rates for a single self-contained
@@ -73,6 +75,16 @@ one that trails off after it.
   nonsense. It's a signal that a *real, unstaged* reaction is happening
   there (see the point above), not a replacement for judging whether the
   moment is actually interesting.
+
+## Structural signals from this channel's own top clips (2026-07-26)
+
+Mined from the channel's actual highest-retention clips (`work/_analytics/retention_insights.json`), not generic research — these are patterns, not exact wording, so judge by structure when scanning a transcript:
+
+- **Contradiction/confusion loop** (top performer, `mean_average_watch` 61%) — two or more speakers repeat and flip-flop the same disputed claim ("это не зельда" → "нет это гача" → "нет" → repeat), a confident wrong guess immediately re-contradicted. The comedy is in the loop itself, not any single line — don't trim it down to just one exchange.
+- **Escalating self-deprecating story** (55%) — a personal anecdote told as a chain of beats where each one tops the last in embarrassment/absurdity ("готовился неделю" → "пришёл бухой" → "поймал солнечный удар"). Resolve on the worst/funniest beat, don't trail past it.
+- **One-breath absurd exaggeration of a game event** (57%, short ~20-25s clips) — a single dense, vulgar, exaggerated description of something that just happened in-game, delivered fast with no dead air. Works even very short — don't pad it.
+
+These reinforce, with real data, what's already documented above (pattern interrupt, one clean escalation) — treat them as concrete shapes to recognize, on top of the qualitative judgment, not a replacement for it.
 
 ## Pacing and the ending
 

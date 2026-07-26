@@ -2,6 +2,7 @@ from scripts.youtube_analytics import (
     chunk_video_ids,
     fetch_analytics_for_videos,
     fetch_channel_performance,
+    fetch_impressions_for_videos,
     fetch_traffic_sources_for_videos,
     fetch_video_statistics,
     get_own_channel,
@@ -197,6 +198,30 @@ def test_fetch_analytics_for_videos_missing_row_simply_absent():
     assert "vid2" not in result
 
 
+def test_fetch_impressions_for_videos_returns_empty_dict_for_no_ids():
+    assert fetch_impressions_for_videos(FakeAnalyticsService({}), "UC123", [], "2026-01-01", "2026-07-01") == {}
+
+
+def test_fetch_impressions_for_videos_parses_rows():
+    service = FakeAnalyticsService({"rows": [["vid1", 5000, 8.2], ["vid2", 200, 3.1]]})
+
+    result = fetch_impressions_for_videos(service, "UC123", ["vid1", "vid2"], "2026-01-01", "2026-07-01")
+
+    assert result == {
+        "vid1": {"thumbnail_impressions": 5000, "thumbnail_impressions_click_rate": 8.2},
+        "vid2": {"thumbnail_impressions": 200, "thumbnail_impressions_click_rate": 3.1},
+    }
+    assert service.query_kwargs["metrics"] == "videoThumbnailImpressions,videoThumbnailImpressionsClickRate"
+
+
+def test_fetch_impressions_for_videos_missing_row_simply_absent():
+    service = FakeAnalyticsService({"rows": [["vid1", 5000, 8.2]]})
+
+    result = fetch_impressions_for_videos(service, "UC123", ["vid1", "vid2"], "2026-01-01", "2026-07-01")
+
+    assert "vid2" not in result
+
+
 def test_fetch_traffic_sources_for_videos_groups_by_video():
     service = FakeAnalyticsService(
         {
@@ -222,8 +247,9 @@ def test_merge_performance_records_combines_all_sources():
     statistics = {"vid1": {"view_count": 786, "like_count": 10, "comment_count": 0}}
     analytics = {"vid1": {"views_in_range": 786, "average_view_duration": 12.5, "average_view_percentage": 43.3}}
     traffic = {"vid1": {"YT_SHORTS": 775}}
+    impressions = {"vid1": {"thumbnail_impressions": 5000, "thumbnail_impressions_click_rate": 8.2}}
 
-    merged = merge_performance_records(videos, statistics, analytics, traffic)
+    merged = merge_performance_records(videos, statistics, analytics, traffic, impressions)
 
     assert merged == [
         {
@@ -236,6 +262,8 @@ def test_merge_performance_records_combines_all_sources():
             "views_in_range": 786,
             "average_view_duration": 12.5,
             "average_view_percentage": 43.3,
+            "thumbnail_impressions": 5000,
+            "thumbnail_impressions_click_rate": 8.2,
             "traffic_sources": {"YT_SHORTS": 775},
         }
     ]
@@ -312,6 +340,8 @@ def test_fetch_channel_performance_fails_open_when_analytics_unreachable(capsys)
             "views_in_range": None,
             "average_view_duration": None,
             "average_view_percentage": None,
+            "thumbnail_impressions": None,
+            "thumbnail_impressions_click_rate": None,
             "traffic_sources": {},
         }
     ]
@@ -334,6 +364,8 @@ def test_merge_performance_records_fills_gaps_for_video_with_no_data_yet():
             "views_in_range": None,
             "average_view_duration": None,
             "average_view_percentage": None,
+            "thumbnail_impressions": None,
+            "thumbnail_impressions_click_rate": None,
             "traffic_sources": {},
         }
     ]
