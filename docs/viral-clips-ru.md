@@ -21,6 +21,16 @@ the sentence allows, even if that cuts a bit of setup a human editor might
 have kept. A clip that opens mid-laugh/mid-reaction outperforms one that
 opens with "so basically what happened was...".
 
+**"Close to the hook" is not the same as "inside the window" (2026-07-27).**
+Trimming `start` right up against *a* real sentence doesn't help if that
+sentence itself doesn't finish until after the window closes — the decision
+still lands mid-clause. Check where the first spoken clause after `start`
+actually resolves (word timestamps, not eyeballing the transcript block); if
+it runs past ~3s, look for a later `start` where the hook line itself — not
+just the nearest real sentence — lands inside the window. See SKILL.md step
+5's "first ~3s must resolve a complete thought" bullet for the concrete rule
+and a real example this bit.
+
 **Why this channel's clips stall after 1-3 hours (2026-07-26 analysis).** YouTube Shorts gives every new upload a small test push (roughly 500-2000 viewers) and decides within that window whether to keep promoting it, based mainly on the *swipe-through rate* of that initial audience — not the full-video completion percentage. Own-channel data backs this up directly: across 85 clips, `average_view_percentage` has essentially zero correlation with total views (Pearson r≈0.15; top-third and bottom-third clips by views have nearly identical average watch %, ~48% both). That means the stall isn't a downstream "people didn't finish it" problem — it's decided in the first 1-3 seconds, before completion even matters. `scripts/youtube_analytics.py` now also fetches `thumbnail_impressions`/`thumbnail_impressions_click_rate` (added to the Analytics API 2026-01-15) precisely to make this visible per clip instead of inferred — a clip with high impressions but low click-through has a hook-framing problem specifically, not a content problem.
 
 ## Length sweet spot
