@@ -936,6 +936,7 @@ def build_jumpcut_command(
     crf: int | None = None,
     banner_filter: str | None = None,
     emphasis_filter: str | None = None,
+    boundary_pad_seconds: list[float] | None = None,
 ) -> list[str]:
     """Like build_ffmpeg_command, but keep_segments (absolute source-file
     seconds, from jumpcuts.compute_keep_segments) are trimmed out of the
@@ -955,6 +956,15 @@ def build_jumpcut_command(
     transition, the graph is instead built as a sequential fold (see
     _build_transition_fold) that borrows overlap from boundary_gaps -
     04-RESEARCH.md Pitfall 1/2, Pattern 3.
+
+    boundary_pad_seconds (one entry per boundary, len == len(keep_segments)-1,
+    optional) inserts real silence + a frozen last frame after a segment
+    before the next one starts - unlike boundary_transitions/boundary_gaps
+    (which borrow overlap from existing pause dead air already inside the
+    source), this synthesizes a gap that doesn't exist in the source at all,
+    e.g. a relocated hook (see SKILL.md "Hook relocation") spliced directly
+    against a segment whose first word has zero lead-in silence. Only applied
+    on the plain-concat (non-fold) path; ignored when uses_fold is True.
     """
     if not keep_segments:
         raise RenderError("keep_segments must not be empty")
@@ -976,15 +986,24 @@ def build_jumpcut_command(
     )
 
     if not uses_fold:
+        pads = boundary_pad_seconds or [0.0] * (len(relative_segments) - 1)
         trim_stages = []
         concat_refs = []
         for index, (seg_start, seg_end) in enumerate(relative_segments):
-            trim_stages.append(f"[0:v]trim=start={seg_start}:end={seg_end},setpts=PTS-STARTPTS[v{index}]")
-            trim_stages.append(f"[0:a]atrim=start={seg_start}:end={seg_end},asetpts=PTS-STARTPTS[a{index}]")
+            pad = pads[index] if index < len(pads) else 0.0
+            video_trim = f"[0:v]trim=start={seg_start}:end={seg_end},setpts=PTS-STARTPTS"
+            audio_trim = f"[0:a]atrim=start={seg_start}:end={seg_end},asetpts=PTS-STARTPTS"
+            if pad > 0:
+                video_trim += f",tpad=stop_mode=clone:stop_duration={pad}"
+                audio_trim += f",apad=pad_dur={pad}"
+            trim_stages.append(f"{video_trim}[v{index}]")
+            trim_stages.append(f"{audio_trim}[a{index}]")
             concat_refs.append(f"[v{index}][a{index}]")
         concat_stage = f"{''.join(concat_refs)}concat=n={len(relative_segments)}:v=1:a=1[vcat][acat]"
         stages = trim_stages + [concat_stage]
-        total_duration = round(sum(seg_end - seg_start for seg_start, seg_end in relative_segments), 3)
+        total_duration = round(
+            sum(seg_end - seg_start for seg_start, seg_end in relative_segments) + sum(pads), 3
+        )
     else:
         trim_stages, fold_stages, total_duration = _build_transition_fold(
             relative_segments, boundary_transitions, boundary_gaps, transition_duration, min_overlap_seconds
@@ -1624,6 +1643,14 @@ def render_clip(
                 from scripts.jumpcuts import compute_boundary_gaps
 
                 boundary_gaps = compute_boundary_gaps(keep_segments)
+            boundary_pad_seconds = plan_entry.get("boundary_pad_seconds")
+            if boundary_pad_seconds is not None:
+                expected_length = len(keep_segments) - 1
+                if len(boundary_pad_seconds) != expected_length:
+                    raise RenderError(
+                        f"boundary_pad_seconds length ({len(boundary_pad_seconds)}) must equal "
+                        f"len(keep_segments) - 1 ({expected_length})"
+                    )
             command = build_jumpcut_command(
                 input_path, output_path, start, end, keep_segments, crop_filter, subtitles_path,
                 fade_seconds, subtitle_style, denoise, loudnorm,
@@ -1633,6 +1660,7 @@ def render_clip(
                 preset=preset, crf=crf,
                 banner_filter=banner_filter,
                 emphasis_filter=emphasis_filter,
+                boundary_pad_seconds=boundary_pad_seconds,
             )
         else:
             command = build_ffmpeg_command(
