@@ -55,6 +55,11 @@ SUBTITLE_MARGIN_V = {"bottom": 380, "top": 120, "center": 0}
 # reach scripts.transitions.
 VALID_TRANSITIONS = frozenset({"cut", "crossfade", "whip_pan", "mask_wipe", "glitch", "match_cut"})
 
+# Hard ceiling on boundary_pad_seconds (see build_jumpcut_command) - a synthetic
+# gap this is meant to be a brief breath, not a stall; too long kills the
+# clip's momentum. 0.3s is a deliberate "still feels tight" upper bound.
+MAX_BOUNDARY_PAD_SECONDS = 0.3
+
 # xfade transition names for the 4 types that map directly onto a single
 # native ffmpeg xfade transition (04-RESEARCH.md Pattern 3). glitch has no
 # single matching xfade name and is built as a small chain (Pattern 4);
@@ -968,6 +973,13 @@ def build_jumpcut_command(
     """
     if not keep_segments:
         raise RenderError("keep_segments must not be empty")
+
+    if boundary_pad_seconds is not None:
+        for pad in boundary_pad_seconds:
+            if pad < 0 or pad > MAX_BOUNDARY_PAD_SECONDS:
+                raise RenderError(
+                    f"boundary_pad_seconds entries must be within [0, {MAX_BOUNDARY_PAD_SECONDS}], got {pad}"
+                )
 
     if boundary_transitions is not None:
         for transition_type in boundary_transitions:
