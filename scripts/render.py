@@ -875,8 +875,20 @@ def _build_transition_fold(
 
     trim_stages = []
     for index in range(segment_count):
-        trim_stages.append(f"[0:v]trim=start={starts[index]}:end={ends[index]},setpts=PTS-STARTPTS[v{index}]")
-        trim_stages.append(f"[0:a]atrim=start={starts[index]}:end={ends[index]},asetpts=PTS-STARTPTS[a{index}]")
+        # settb/asettb: the fold below alternates concat and xfade depending on
+        # each boundary's transition. concat emits AVTB (1/1000000) while a
+        # freshly trimmed segment keeps the source timebase (1/1000 for these
+        # mkv sources), and xfade refuses inputs whose timebases differ -
+        # "First input link main timebase do not match ... xfade timebase".
+        # Pinning every segment to AVTB makes the two paths interchangeable.
+        trim_stages.append(
+            f"[0:v]trim=start={starts[index]}:end={ends[index]},"
+            f"setpts=PTS-STARTPTS,settb=AVTB[v{index}]"
+        )
+        trim_stages.append(
+            f"[0:a]atrim=start={starts[index]}:end={ends[index]},"
+            f"asetpts=PTS-STARTPTS,asettb=AVTB[a{index}]"
+        )
 
     fold_stages = []
     acc_v, acc_a = "v0", "a0"

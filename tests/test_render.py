@@ -831,6 +831,24 @@ def test_build_jumpcut_command_multiple_segments_trims_and_concats_each():
     assert "[v0][a0][v1][a1]concat=n=2:v=1:a=1[vcat][acat]" in filter_complex
 
 
+def test_build_jumpcut_command_pins_timebase_so_concat_and_xfade_can_mix():
+    # three segments, only the second boundary gets a transition: the fold
+    # concats boundary 0 then xfades boundary 1, and ffmpeg rejects an xfade
+    # whose two inputs disagree on timebase unless every segment is pinned
+    command = build_jumpcut_command(
+        "in.mp4", "out.mp4", clip_start=0.0, clip_end=60.0,
+        keep_segments=[(0.0, 20.0), (25.0, 40.0), (45.0, 60.0)],
+        crop_filter="scale=1080:1920",
+        boundary_transitions=["cut", "crossfade"],
+        transition_duration=0.35,
+    )
+
+    filter_complex = command[command.index("-filter_complex") + 1]
+    for index in range(3):
+        assert f"setpts=PTS-STARTPTS,settb=AVTB[v{index}]" in filter_complex
+        assert f"asetpts=PTS-STARTPTS,asettb=AVTB[a{index}]" in filter_complex
+
+
 def test_build_jumpcut_command_applies_denoise_loudnorm_and_fade_to_acat():
     command = build_jumpcut_command(
         "in.mp4", "out.mp4", clip_start=0.0, clip_end=10.0,
