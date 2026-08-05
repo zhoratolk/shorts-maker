@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from scripts.jumpcuts import (
+    clamp_cuts_to_words,
     compute_boundary_gaps,
     compute_boundary_windows,
     compute_keep_segments,
@@ -14,6 +15,54 @@ from scripts.jumpcuts import (
     remap_words,
     total_kept_duration,
 )
+
+
+def test_clamp_cuts_to_words_keeps_dead_air_cut():
+    cuts = [(10.0, 14.0)]
+    words = [{"word": "раз", "start": 5.0, "end": 6.0}, {"word": "два", "start": 20.0, "end": 21.0}]
+
+    assert clamp_cuts_to_words(cuts, words) == [(10.0, 14.0)]
+
+
+def test_clamp_cuts_to_words_trims_overlap_instead_of_dropping_word():
+    # the pause window swallows the tail of "База" and the head of the next word
+    cuts = [(10.0, 14.0)]
+    words = [
+        {"word": "База", "start": 9.0, "end": 10.5},
+        {"word": "дальше", "start": 13.8, "end": 15.0},
+    ]
+
+    assert clamp_cuts_to_words(cuts, words) == [(10.6, 13.7)]
+
+
+def test_clamp_cuts_to_words_drops_cut_buried_in_a_word():
+    cuts = [(10.0, 10.4)]
+    words = [{"word": "растянутое", "start": 9.0, "end": 12.0}]
+
+    assert clamp_cuts_to_words(cuts, words) == []
+
+
+def test_clamp_cuts_to_words_without_words_is_a_noop():
+    assert clamp_cuts_to_words([(1.0, 2.0)], []) == [(1.0, 2.0)]
+
+
+def test_compute_keep_segments_with_words_never_cuts_speech():
+    pauses = [{"start": 10.0, "end": 14.0}]
+    words = [{"word": "База", "start": 9.0, "end": 10.5}]
+
+    segments = compute_keep_segments(0.0, 20.0, pauses, 1.0, words=words)
+
+    # the cut now starts after the word ends plus the guard, so "База" survives
+    assert segments == [(0.0, 10.6), (14.0, 20.0)]
+    assert remap_words(words, segments) == [{"word": "База", "start": 9.0, "end": 10.5}]
+
+
+def test_compute_keep_segments_drops_cut_shortened_below_threshold():
+    pauses = [{"start": 10.0, "end": 11.5}]
+    words = [{"word": "хвост", "start": 9.0, "end": 10.9}]
+
+    # clamped to (11.0, 11.5) = 0.5s, no longer worth cutting at a 1.0s threshold
+    assert compute_keep_segments(0.0, 20.0, pauses, 1.0, words=words) == [(0.0, 20.0)]
 
 
 def test_compute_keep_segments_no_long_pauses_returns_single_segment():

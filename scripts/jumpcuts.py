@@ -5,8 +5,56 @@ import json
 from pathlib import Path
 
 
+def clamp_cuts_to_words(
+    cuts: list[tuple[float, float]],
+    words: list[dict],
+    guard_seconds: float = 0.1,
+) -> list[tuple[float, float]]:
+    """Trims each cut window back so it never overlaps a transcribed word.
+
+    silence.py derives its threshold from the file's own loudnorm gate, which
+    sits above the quiet leading/trailing edges of real speech - so a detected
+    "pause" routinely swallows the first or last fraction of a word. Cutting
+    there deletes that word outright (remap_words drops anything inside a gap),
+    and across five consecutive batches that ate the punchline: "База",
+    "Насистил", "ебал". Trim instead of drop, so genuine dead air is still cut.
+
+    A cut fully covered by speech disappears; one that merely brushes a word is
+    pulled back to that word's boundary plus guard_seconds.
+    """
+    if not words:
+        return cuts
+
+    spans = sorted((float(w["start"]), float(w["end"])) for w in words)
+    trimmed: list[tuple[float, float]] = []
+    for cut_start, cut_end in cuts:
+        start, end = cut_start, cut_end
+        for word_start, word_end in spans:
+            if word_end <= start or word_start >= end:
+                continue
+            if word_start <= start and word_end >= end:
+                start = end  # cut is entirely inside a word, drop it
+                break
+            if word_start <= start:
+                start = max(start, word_end + guard_seconds)
+            if word_end >= end:
+                end = min(end, word_start - guard_seconds)
+            if start >= end:
+                break
+        if end > start:
+            # round: the guard arithmetic otherwise leaves 13.700000000000001
+            # in a file downstream stages read back and compare against
+            trimmed.append((round(start, 3), round(end, 3)))
+    return trimmed
+
+
 def compute_keep_segments(
-    clip_start: float, clip_end: float, pauses: list[dict], max_pause_seconds: float
+    clip_start: float,
+    clip_end: float,
+    pauses: list[dict],
+    max_pause_seconds: float,
+    words: list[dict] | None = None,
+    guard_seconds: float = 0.1,
 ) -> list[tuple[float, float]]:
     """Given a clip's absolute [clip_start, clip_end) window and a list of
     {"start", "end"} pause dicts (absolute source-file seconds, e.g. from
@@ -14,6 +62,10 @@ def compute_keep_segments(
     keep - any pause inside the clip longer than max_pause_seconds is cut
     out as a jump cut. Short, natural breathing pauses at or under that
     length are left in place untouched.
+
+    Pass `words` (the clip's absolute-seconds word list) to keep cuts off real
+    speech; see clamp_cuts_to_words for why that matters. A cut shortened below
+    max_pause_seconds by that clamp is no longer worth making and is dropped.
     """
     if clip_end <= clip_start:
         raise ValueError("clip_end must be greater than clip_start")
@@ -25,6 +77,9 @@ def compute_keep_segments(
         and pause["start"] < clip_end
         and pause["end"] > clip_start
     )
+    if words:
+        cuts = clamp_cuts_to_words(cuts, words, guard_seconds=guard_seconds)
+        cuts = [(start, end) for start, end in cuts if end - start > max_pause_seconds]
 
     segments: list[tuple[float, float]] = []
     cursor = clip_start
@@ -115,7 +170,15 @@ def remap_words(words: list[dict], keep_segments: list[tuple[float, float]]) -> 
 
 def _cmd_keep_segments(args: argparse.Namespace) -> None:
     pauses = json.loads(Path(args.pauses_json).read_text(encoding="utf-8"))
-    segments = compute_keep_segments(args.clip_start, args.clip_end, pauses, args.max_pause_seconds)
+    words = json.loads(Path(args.words_json).read_text(encoding="utf-8")) if args.words_json else None
+    segments = compute_keep_segments(
+        args.clip_start,
+        args.clip_end,
+        pauses,
+        args.max_pause_seconds,
+        words=words,
+        guard_seconds=args.guard_seconds,
+    )
     Path(args.output_json).write_text(json.dumps(segments, indent=2), encoding="utf-8")
     print(f"{len(segments)} segment(s) written to {args.output_json}")
 
@@ -160,6 +223,14 @@ def main() -> None:
     keep_segments_parser.add_argument(
         "--max-pause-seconds", type=float, default=0.4,
         help="Only pauses longer than this are cut out (default: 0.4)",
+    )
+    keep_segments_parser.add_argument(
+        "--words-json", default=None,
+        help="Clip's absolute-seconds {word,start,end} list; keeps cuts off real speech",
+    )
+    keep_segments_parser.add_argument(
+        "--guard-seconds", type=float, default=0.1,
+        help="Extra margin kept around each word when clamping a cut (default: 0.1)",
     )
     keep_segments_parser.set_defaults(func=_cmd_keep_segments)
 
