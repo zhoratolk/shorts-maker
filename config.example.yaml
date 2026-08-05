@@ -510,3 +510,29 @@ thumbnail:
   # video's custom thumbnail via thumbnails.set after upload. Fail-open: a
   # thumbnail error is logged, never fails an already-uploaded video.
   upload: false
+
+video:
+  # ffmpeg encoder settings, mirroring render.py's --video-codec/--preset/--crf.
+  # These defaults reproduce render.py's own: libx264 with the encoder's
+  # built-in preset/quality. h264_nvenc switches to NVIDIA hardware encoding,
+  # where preset/crf don't apply - leave both unset there.
+  codec: libx264
+  preset: ""
+  crf: null
+
+publish:
+  # Dry-run until this is explicitly turned on: publishing is public and hard
+  # to undo, so nothing uploads while this is false.
+  enabled: false
+  # Slot times in UTC, sorted chronologically - next_free_slot walks the list
+  # in order and only ever picks a strictly-future slot. Example below is one
+  # upload every 4 hours; convert from your own timezone (MSK = UTC+3).
+  daily_slots_utc: ["01:00", "05:00", "09:00", "13:00", "17:00", "21:00"]
+  queue_path: "work/_publish/queue.json"
+  notifications_path: "work/_publish/notifications.log"
+  client_secret_path: "client_secret.json"
+  upload_token_path: "upload_token.json"
+  # TikTok and Instagram each carry their own independent enabled flag, so
+  # taking one platform live can never accidentally flip another.
+  tiktok_enabled: false
+  instagram_enabled: false

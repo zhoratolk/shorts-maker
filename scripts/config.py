@@ -481,6 +481,19 @@ class ThumbnailConfig:
 
 
 @dataclasses.dataclass
+class VideoConfig:
+    # ffmpeg encoder settings, mirroring render.py's --video-codec/--preset/--crf.
+    # Defaults reproduce render.py's own defaults exactly: libx264 with the
+    # encoder's built-in preset/quality, byte-identical to a run that never
+    # passed the flags. h264_nvenc switches to NVIDIA hardware encoding, where
+    # preset/crf don't apply (that encoder has its own vocabulary) - leave both
+    # unset there.
+    codec: str = "libx264"
+    preset: str = ""
+    crf: int | None = None
+
+
+@dataclasses.dataclass
 class Config:
     input_dir: str
     output_dir: str
@@ -510,6 +523,7 @@ class Config:
     outro_card: OutroCardConfig = dataclasses.field(default_factory=OutroCardConfig)
     top_moments: TopMomentsConfig = dataclasses.field(default_factory=TopMomentsConfig)
     thumbnail: ThumbnailConfig = dataclasses.field(default_factory=ThumbnailConfig)
+    video: VideoConfig = dataclasses.field(default_factory=VideoConfig)
 
 
 def _build(section_cls, data: dict, section_name: str):
@@ -557,6 +571,7 @@ def load_config(path: str) -> Config:
         outro_card=_build(OutroCardConfig, data.get("outro_card", {}), "outro_card"),
         top_moments=_build(TopMomentsConfig, data.get("top_moments", {}), "top_moments"),
         thumbnail=_build(ThumbnailConfig, data.get("thumbnail", {}), "thumbnail"),
+        video=_build(VideoConfig, data.get("video", {}), "video"),
     )
     _validate(config)
     return config
