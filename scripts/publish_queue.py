@@ -76,6 +76,15 @@ def save_queue(queue: dict[str, Any], path: str = DEFAULT_QUEUE_PATH) -> None:
     )
 
 
+def default_thumbnail_path(video_path: str) -> str:
+    """The poster render_batch.py writes next to a clip (<clip>.thumb.png), or
+    "" when there isn't one. Convention over configuration: the render step and
+    the publish step agree on the filename, so nothing has to be threaded
+    through by hand and a forgotten argument can't silently drop the poster."""
+    poster = Path(video_path).with_suffix(".thumb.png")
+    return str(poster) if poster.exists() else ""
+
+
 def enqueue(
     queue: dict[str, Any],
     clip_id: str,
@@ -105,14 +114,20 @@ def enqueue(
     and LENGTH of moment it was (the auto-select learning loop). Both default
     to None and never affect scheduling or upload.
 
-    thumbnail_path is the optional poster image (scripts/thumbnail.py output)
-    to set as the video's custom thumbnail after upload; None means leave the
-    auto-generated YouTube thumbnail. Setting it is fail-open (see
-    upload_and_schedule) - a thumbnail error never fails the upload.
+    thumbnail_path is the poster image to set as the video's custom thumbnail
+    after upload. Left as None it is DERIVED from video_path - the sibling
+    <clip>.thumb.png render_batch.py writes - so a caller that forgets to pass
+    it still publishes the poster instead of silently falling back to
+    YouTube's auto-generated frame. Pass "" to deliberately publish without a
+    custom thumbnail. Setting it is fail-open (see upload_and_schedule) - a
+    thumbnail error never fails the upload.
     """
     for entry in queue["entries"]:
         if entry["clip_id"] == clip_id:
             return entry
+
+    if thumbnail_path is None:
+        thumbnail_path = default_thumbnail_path(video_path)
 
     next_seq = max((entry["seq"] for entry in queue["entries"]), default=0) + 1
     now = datetime.now(timezone.utc).isoformat()
@@ -135,6 +150,28 @@ def enqueue(
     }
     queue["entries"].append(entry)
     return entry
+
+
+def attach_missing_thumbnails(queue: dict[str, Any]) -> list[dict[str, Any]]:
+    """Fills in thumbnail_path for entries that don't have one yet but whose
+    poster now exists on disk, and returns the entries that changed.
+
+    Exists for the entries enqueued before posters were turned on, and for a
+    poster regenerated after the clip was already queued. Only entries not yet
+    uploaded are touched: once a video is live, its thumbnail is set through
+    the API, not by editing the manifest.
+    """
+    changed = []
+    for entry in queue["entries"]:
+        if entry.get("thumbnail_path") or entry["status"] not in (QUEUED, PAUSED):
+            continue
+        poster = default_thumbnail_path(entry["video_path"])
+        if not poster:
+            continue
+        entry["thumbnail_path"] = poster
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+        changed.append(entry)
+    return changed
 
 
 def interleave_loops(items: list[Any], is_loop) -> list[Any]:
@@ -269,6 +306,7 @@ def upload_and_schedule(
     config,
     now: datetime | None = None,
     queue_path: str = DEFAULT_QUEUE_PATH,
+    thumbnail_upload: bool = True,
 ) -> dict[str, Any] | str:
     """Orchestrates the dry-run gate -> write-ahead uploading -> insert ->
     record scheduled flow for one queue entry.
@@ -343,7 +381,7 @@ def upload_and_schedule(
     # not eligible for custom thumbnails, transient API error) must NOT undo
     # or fail that. Fail-open - record the outcome on the entry and move on.
     thumbnail_path = entry.get("thumbnail_path")
-    if thumbnail_path:
+    if thumbnail_path and thumbnail_upload:
         entry["thumbnail_set"] = _try_set_thumbnail(service, video_id, thumbnail_path)
         entry["updated_at"] = datetime.now(timezone.utc).isoformat()
         save_queue(queue, queue_path)
@@ -682,7 +720,13 @@ def _error_notification_text(entry: dict[str, Any], reason: str) -> str:
     return f"[error] {entry['seq']}: {reason}"
 
 
-def _upload_one(entry: dict[str, Any], queue: dict[str, Any], service_factory, config) -> None:
+def _upload_one(
+    entry: dict[str, Any],
+    queue: dict[str, Any],
+    service_factory,
+    config,
+    thumbnail_upload: bool = True,
+) -> None:
     """Shared upload step for both --check and --now: calls the exact same
     upload_and_schedule() (Plan 02) and appends the matching notification
     line - the two trigger paths never diverge (D-05, T-03-14 key link).
@@ -691,7 +735,8 @@ def _upload_one(entry: dict[str, Any], queue: dict[str, Any], service_factory, c
     """
     try:
         result = upload_and_schedule(
-            queue, entry, service_factory, config, queue_path=config.queue_path
+            queue, entry, service_factory, config,
+            queue_path=config.queue_path, thumbnail_upload=thumbnail_upload,
         )
     except Exception as error:
         append_notification(
@@ -719,13 +764,19 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--kill", metavar="CLIP_ID", help="Kill a clip_id (local-only if not yet uploaded, API revert+verify if already scheduled)")
     parser.add_argument("--resume", metavar="CLIP_ID", help="Resume a paused clip_id back to queued")
     parser.add_argument("--list", action="store_true", help="Print the queue's seq/status/title so numbering is visible")
+    parser.add_argument(
+        "--sync-thumbnails", action="store_true",
+        help="Attach the poster (<clip>.thumb.png) to every not-yet-uploaded entry that lacks one",
+    )
     parser.add_argument("--client-secret", default="client_secret.json", help="OAuth client secret JSON path")
     parser.add_argument("--token", default="upload_token.json", help="Cached upload-scoped OAuth token JSON path")
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml")
     return parser
 
 
-def run_command(args: argparse.Namespace, service_factory, config) -> None:
+def run_command(
+    args: argparse.Namespace, service_factory, config, thumbnail_upload: bool = True
+) -> None:
     """Dispatches one CLI invocation. Factored out from main() so tests can
     drive it with a fake service_factory + a config carrying tmp-path
     queue/notifications paths, without ever touching real OAuth (main()'s
@@ -744,7 +795,17 @@ def run_command(args: argparse.Namespace, service_factory, config) -> None:
     if args.list:
         queue = load_queue(queue_path)
         for entry in sorted(queue["entries"], key=lambda e: e["seq"]):
-            print(f"{entry['seq']}\t{entry['status']}\t{entry['title']}")
+            poster = "+thumb" if entry.get("thumbnail_path") else ""
+            print(f"{entry['seq']}\t{entry['status']}\t{poster}\t{entry['title']}")
+        return
+
+    if args.sync_thumbnails:
+        queue = load_queue(queue_path)
+        attached = attach_missing_thumbnails(queue)
+        save_queue(queue, queue_path)
+        for entry in attached:
+            print(f"{entry['seq']}\t{Path(entry['thumbnail_path']).name}")
+        print(f"{len(attached)} entries gained a poster")
         return
 
     if args.pause:
@@ -787,7 +848,7 @@ def run_command(args: argparse.Namespace, service_factory, config) -> None:
         except KeyError:
             print(f"error: no queue entry with clip_id={args.now!r}", file=sys.stderr)
             raise SystemExit(2)
-        _upload_one(entry, queue, service_factory, config)
+        _upload_one(entry, queue, service_factory, config, thumbnail_upload)
         return
 
     if args.check:
@@ -814,7 +875,7 @@ def run_command(args: argparse.Namespace, service_factory, config) -> None:
 
         # --check uploads AT MOST ONE item per invocation (D-05 "one at a
         # time") - this is also the natural quota debounce (Pitfall 4).
-        _upload_one(entry, queue, service_factory, config)
+        _upload_one(entry, queue, service_factory, config, thumbnail_upload)
         return
 
     print("no action given - use --check/--now/--pause/--kill/--resume/--list")
@@ -828,13 +889,14 @@ def main() -> None:
     from scripts.youtube_analytics import load_credentials
     from googleapiclient.discovery import build
 
-    config = load_config(args.config).publish
+    full_config = load_config(args.config)
+    config = full_config.publish
 
     def service_factory():
         credentials = load_credentials(args.client_secret, args.token, [UPLOAD_SCOPE])
         return build("youtube", "v3", credentials=credentials)
 
-    run_command(args, service_factory, config)
+    run_command(args, service_factory, config, full_config.thumbnail.upload)
 
 
 if __name__ == "__main__":

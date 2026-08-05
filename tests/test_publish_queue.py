@@ -13,10 +13,12 @@ from scripts.publish_queue import (
     UPLOAD_SCOPE,
     VALID_STATUSES,
     append_notification,
+    attach_missing_thumbnails,
     build_argument_parser,
     build_insert_body,
     cancel_scheduled_release,
     collect_scheduled_slots,
+    default_thumbnail_path,
     enqueue,
     interleave_loops,
     kill_item,
@@ -1309,3 +1311,119 @@ def test_pause_and_resume_via_cli_dispatch(tmp_path):
     resume_args = build_argument_parser().parse_args(["--resume", "clip-1"])
     run_command(resume_args, service_factory=lambda: None, config=config)
     assert load_queue(queue_path)["entries"][0]["status"] == QUEUED
+
+
+def test_default_thumbnail_path_finds_the_sibling_poster(tmp_path):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"")
+    assert default_thumbnail_path(str(clip)) == ""
+
+    poster = tmp_path / "clip.thumb.png"
+    poster.write_bytes(b"")
+    assert default_thumbnail_path(str(clip)) == str(poster)
+
+
+def test_enqueue_derives_the_poster_when_the_caller_forgets(tmp_path):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"")
+    poster = tmp_path / "clip.thumb.png"
+    poster.write_bytes(b"")
+    queue = {"entries": []}
+
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(clip), metadata_path="clip.txt",
+        title="T", description="D", tags=[],
+    )
+
+    assert entry["thumbnail_path"] == str(poster)
+
+
+def test_enqueue_honours_an_explicit_no_thumbnail(tmp_path):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"")
+    (tmp_path / "clip.thumb.png").write_bytes(b"")
+    queue = {"entries": []}
+
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(clip), metadata_path="clip.txt",
+        title="T", description="D", tags=[], thumbnail_path="",
+    )
+
+    assert entry["thumbnail_path"] == ""
+
+
+def test_attach_missing_thumbnails_skips_already_uploaded_entries(tmp_path):
+    def clip_with_poster(name):
+        (tmp_path / f"{name}.mp4").write_bytes(b"")
+        (tmp_path / f"{name}.thumb.png").write_bytes(b"")
+        return str(tmp_path / f"{name}.mp4")
+
+    queue = {
+        "entries": [
+            make_entry(clip_id="a", seq=1, status=QUEUED, video_path=clip_with_poster("a")),
+            make_entry(clip_id="b", seq=2, status=SCHEDULED, video_path=clip_with_poster("b")),
+            make_entry(clip_id="c", seq=3, status=QUEUED, video_path=str(tmp_path / "missing.mp4")),
+        ]
+    }
+
+    changed = attach_missing_thumbnails(queue)
+
+    assert [entry["clip_id"] for entry in changed] == ["a"]
+    assert queue["entries"][1].get("thumbnail_path") is None  # already uploaded
+    assert queue["entries"][2].get("thumbnail_path") is None  # no poster on disk
+
+
+def test_attach_missing_thumbnails_never_overwrites_an_existing_path(tmp_path):
+    (tmp_path / "a.mp4").write_bytes(b"")
+    (tmp_path / "a.thumb.png").write_bytes(b"")
+    queue = {
+        "entries": [
+            make_entry(
+                clip_id="a", seq=1, status=QUEUED,
+                video_path=str(tmp_path / "a.mp4"), thumbnail_path="chosen/by/hand.png",
+            )
+        ]
+    }
+
+    assert attach_missing_thumbnails(queue) == []
+    assert queue["entries"][0]["thumbnail_path"] == "chosen/by/hand.png"
+
+
+def test_sync_thumbnails_cli_writes_the_paths_back(tmp_path, capsys):
+    (tmp_path / "a.mp4").write_bytes(b"")
+    (tmp_path / "a.thumb.png").write_bytes(b"")
+    queue_path = make_cli_queue(
+        tmp_path,
+        [make_entry(clip_id="a", seq=1, status=QUEUED, video_path=str(tmp_path / "a.mp4"))],
+    )
+    config = FakeCliPublishConfig(enabled=False, queue_path=queue_path)
+
+    args = build_argument_parser().parse_args(["--sync-thumbnails"])
+    run_command(args, service_factory=lambda: None, config=config)
+
+    assert load_queue(queue_path)["entries"][0]["thumbnail_path"].endswith("a.thumb.png")
+    assert "1 entries gained a poster" in capsys.readouterr().out
+
+
+def test_thumbnail_upload_disabled_skips_the_api_call(tmp_path):
+    """config.thumbnail.upload=false must reach the upload path - it used to be
+    a dead config key that nothing ever read."""
+    (tmp_path / "a.mp4").write_bytes(b"")
+    poster = tmp_path / "a.thumb.png"
+    poster.write_bytes(b"")
+    entry = make_entry(
+        clip_id="a", seq=1, status=QUEUED,
+        video_path=str(tmp_path / "a.mp4"), thumbnail_path=str(poster),
+    )
+    queue = {"entries": [entry]}
+    service = FakeVideosAndThumbnailsService(video_id="vid-1")
+
+    upload_and_schedule(
+        queue, entry, lambda: service, FakePublishConfig(enabled=True),
+        now=datetime(2026, 8, 6, 8, 0, tzinfo=timezone.utc),
+        queue_path=str(tmp_path / "queue.json"),
+        thumbnail_upload=False,
+    )
+
+    assert service.thumbnail_set_calls == []
+    assert "thumbnail_set" not in entry

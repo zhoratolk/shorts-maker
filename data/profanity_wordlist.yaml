@@ -10,7 +10,7 @@
 # actually re-checked. scripts/profanity.py::load_wordlist copies it verbatim
 # via `data.setdefault("updated", "unknown")` handling, mirroring
 # data/monetization_rules.yaml's convention.
-updated: "2026-07-13"
+updated: "2026-08-06"
 
 # Applied to each Whisper word token BEFORE stem matching (case-fold first,
 # then substitute, then strip censor chars, then collapse repeats) - this is
@@ -47,6 +47,27 @@ ru:
   - root: "суч"
   - root: "пидор"
   - root: "пидар"
+  # Second live sweep, 2026-08-06: these went out unmasked in a published
+  # batch. "хуй" is prefix-anchored on the literal stem, so every form where
+  # the й becomes another vowel ("хуенно", "хуево", "хуяк") slipped past it,
+  # as did every prefixed form whose prefix wasn't already listed.
+  - root: "хуе"
+  - root: "хуё"
+  - root: "хуя"
+  - root: "ахуе"
+  - root: "ахуя"
+  - root: "дохуя"
+  - root: "нехуй"
+  - root: "заеб"
+  - root: "наеб"
+  - root: "поеб"
+  - root: "выеб"
+  - root: "уеб"
+  - root: "въеб"
+  - root: "отъеб"
+  - root: "подъеб"
+  - root: "разъеб"
+  - root: "объеб"
 en:
   - root: "fuck"
   - root: "shit"

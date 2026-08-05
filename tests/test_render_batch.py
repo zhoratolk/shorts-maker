@@ -184,7 +184,20 @@ def test_write_pass_plan_writes_bom_free_utf8(tmp_path):
     ],
 )
 def test_thumbnail_text_falls_back_through_the_plan_entry(entry, expected):
-    assert _thumbnail_text(entry) == expected
+    config = make_config(hook_banner={"enabled": True, "mode": "hook"})
+    assert _thumbnail_text(entry, config) == expected
+
+
+def test_persistent_banner_is_not_repeated_as_the_poster_caption():
+    """The banner is burned into every frame in persistent mode, so borrowing
+    it would print the same sentence twice on one image."""
+    config = make_config(hook_banner={"enabled": True, "mode": "persistent"})
+
+    assert _thumbnail_text({"banner_text": "Мешаю своим же"}, config) == ""
+    # an explicit caption still wins - it is deliberate, not a fallback
+    assert _thumbnail_text(
+        {"banner_text": "Мешаю своим же", "thumbnail_text": "свои же"}, config
+    ) == "свои же"
 
 
 def test_run_pass_invokes_render_as_a_module():

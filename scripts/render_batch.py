@@ -236,10 +236,22 @@ def write_pass_plan(entries: list[dict], plan_path: str, suffix: str) -> str:
     return str(target)
 
 
-def _thumbnail_text(entry: dict) -> str:
-    """Poster caption, in falling order of intent: an explicit thumbnail_text,
-    then the hook banner's own text, then a clean text-free frame."""
-    return str(entry.get("thumbnail_text") or entry.get("banner_text") or "")
+def _thumbnail_text(entry: dict, config: Config) -> str:
+    """Poster caption: an explicit thumbnail_text wins, otherwise the hook
+    banner's text, otherwise a clean text-free frame.
+
+    The banner is only borrowed when it ISN'T already burned into the frame.
+    In persistent banner mode it is on screen for the whole clip, so reusing it
+    as the poster caption prints the same sentence twice on one image - which
+    is exactly what the first live batch produced.
+    """
+    explicit = entry.get("thumbnail_text")
+    if explicit:
+        return str(explicit)
+    banner_text = entry.get("banner_text")
+    if not banner_text or (config.hook_banner.enabled and config.hook_banner.mode == "persistent"):
+        return ""
+    return str(banner_text)
 
 
 def generate_thumbnails(config: Config, entries: list[dict], output_dir: str) -> list[str]:
@@ -260,7 +272,7 @@ def generate_thumbnails(config: Config, entries: list[dict], output_dir: str) ->
             timestamp = pick_thumbnail_timestamp(duration, spikes)
             generate_thumbnail(
                 str(clip_path),
-                _thumbnail_text(entry),
+                _thumbnail_text(entry, config),
                 str(poster_path),
                 timestamp=timestamp,
                 width=thumbnail.width,
