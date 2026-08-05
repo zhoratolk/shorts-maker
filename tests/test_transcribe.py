@@ -7,6 +7,7 @@ from scripts import transcribe as transcribe_module
 from scripts.transcribe import (
     is_cached,
     load_whisper_model,
+    split_segments_on_gaps,
     transcribe_video,
     transcript_cache_path,
 )
@@ -51,7 +52,11 @@ class FakeInfo:
 
 
 class FakeModel:
-    def transcribe(self, video_path, language, word_timestamps):
+    def __init__(self):
+        self.kwargs = None
+
+    def transcribe(self, video_path, **kwargs):
+        self.kwargs = kwargs
         segments = [
             FakeSegment(0.0, 2.0, "hello", [FakeWord("hello", 0.0, 2.0)]),
             FakeSegment(2.0, 4.0, "world", [FakeWord("world", 2.0, 4.0)]),
@@ -63,8 +68,14 @@ def test_transcribe_video_writes_cache(tmp_path):
     video_path = str(tmp_path / "video.mp4")
     transcripts_dir = str(tmp_path / "transcripts")
 
-    result = transcribe_video(video_path, transcripts_dir, FakeModel())
+    model = FakeModel()
+    result = transcribe_video(video_path, transcripts_dir, model)
 
+    assert model.kwargs["beam_size"] == 1
+    assert model.kwargs["vad_filter"] is True
+    assert model.kwargs["vad_parameters"]["threshold"] == 0.2
+    # batching is off by default at the function level, so no batch_size is forwarded
+    assert "batch_size" not in model.kwargs
     assert result == {
         "video_path": video_path,
         "language": "en",
@@ -119,7 +130,7 @@ def test_load_whisper_model_resolves_auto_device(monkeypatch):
 
     load_whisper_model("medium", "auto")
 
-    assert captured == {"model_size": "medium", "device": "cuda", "compute_type": "float16"}
+    assert captured == {"model_size": "medium", "device": "cuda", "compute_type": "int8_float16"}
 
 
 def test_load_whisper_model_respects_explicit_device(monkeypatch):
@@ -157,7 +168,7 @@ def test_load_whisper_model_falls_back_to_cpu_on_gpu_failure(monkeypatch, capsys
     load_whisper_model("medium", "auto")
 
     assert calls == [
-        {"model_size": "medium", "device": "cuda", "compute_type": "float16"},
+        {"model_size": "medium", "device": "cuda", "compute_type": "int8_float16"},
         {"model_size": "medium", "device": "cpu", "compute_type": "int8"},
     ]
     assert "falling back to CPU" in capsys.readouterr().out
@@ -177,6 +188,87 @@ def test_load_whisper_model_reraises_when_already_on_cpu(monkeypatch):
         raise AssertionError("expected RuntimeError to propagate")
     except RuntimeError as error:
         assert "out of memory" in str(error)
+
+
+def test_load_whisper_model_respects_explicit_compute_type(monkeypatch):
+    captured = {}
+
+    class FakeWhisperModel:
+        def __init__(self, model_size, device, compute_type):
+            captured["compute_type"] = compute_type
+
+    fake_module = types.ModuleType("faster_whisper")
+    fake_module.WhisperModel = FakeWhisperModel
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake_module)
+
+    load_whisper_model("small", "cpu", compute_type="float32")
+
+    assert captured == {"compute_type": "float32"}
+
+
+def test_load_whisper_model_wraps_in_batched_pipeline(monkeypatch):
+    class FakeWhisperModel:
+        def __init__(self, model_size, device, compute_type):
+            pass
+
+    class FakeBatchedPipeline:
+        def __init__(self, model):
+            self.model = model
+
+    fake_module = types.ModuleType("faster_whisper")
+    fake_module.WhisperModel = FakeWhisperModel
+    fake_module.BatchedInferencePipeline = FakeBatchedPipeline
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake_module)
+
+    plain = load_whisper_model("small", "cpu", batch_size=0)
+    batched = load_whisper_model("small", "cpu", batch_size=8)
+
+    assert isinstance(plain, FakeWhisperModel)
+    assert isinstance(batched, FakeBatchedPipeline)
+
+
+def test_split_segments_on_gaps_splits_at_long_pause():
+    segments = [
+        {
+            "start": 0.0,
+            "end": 10.0,
+            "text": "раз два три",
+            "words": [
+                {"word": "раз", "start": 0.0, "end": 0.5},
+                {"word": " два", "start": 0.7, "end": 1.2},
+                {"word": " три", "start": 9.0, "end": 10.0},
+            ],
+        }
+    ]
+
+    out = split_segments_on_gaps(segments, max_gap_seconds=0.8)
+
+    assert [(s["start"], s["end"], s["text"]) for s in out] == [
+        (0.0, 1.2, "раз два"),
+        (9.0, 10.0, "три"),
+    ]
+
+
+def test_split_segments_on_gaps_keeps_tight_segment_intact():
+    segments = [
+        {
+            "start": 0.0,
+            "end": 1.2,
+            "text": "раз два",
+            "words": [
+                {"word": "раз", "start": 0.0, "end": 0.5},
+                {"word": " два", "start": 0.7, "end": 1.2},
+            ],
+        }
+    ]
+
+    assert split_segments_on_gaps(segments) == segments
+
+
+def test_split_segments_on_gaps_passes_through_wordless_segment():
+    segments = [{"start": 0.0, "end": 2.0, "text": "нет слов", "words": []}]
+
+    assert split_segments_on_gaps(segments) == segments
 
 
 def test_register_nvidia_dll_dirs_skips_on_non_windows(monkeypatch):

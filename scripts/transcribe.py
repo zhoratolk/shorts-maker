@@ -37,11 +37,52 @@ def is_cached(video_path: str, transcripts_dir: str) -> bool:
     return Path(transcript_cache_path(video_path, transcripts_dir)).exists()
 
 
+def split_segments_on_gaps(segments: list[dict], max_gap_seconds: float = 0.8) -> list[dict]:
+    """Re-split segments wherever speech pauses, using the word timestamps.
+
+    Batched inference returns very coarse segments (~50s vs ~6s unbatched) because it
+    groups whole VAD speech regions. Downstream that hurts anything keyed off segment
+    boundaries — diarization labels one speaker per segment, so a long segment spanning
+    two voices collapses to a single label and the coherence signal degrades. The word
+    timestamps are unaffected by batching, so restore the granularity from them.
+    """
+    out: list[dict] = []
+    for segment in segments:
+        words = segment.get("words") or []
+        if len(words) < 2:
+            out.append(segment)
+            continue
+
+        groups: list[list[dict]] = [[words[0]]]
+        for previous, word in zip(words, words[1:]):
+            if word["start"] - previous["end"] > max_gap_seconds:
+                groups.append([])
+            groups[-1].append(word)
+
+        if len(groups) == 1:
+            out.append(segment)
+            continue
+
+        for group in groups:
+            out.append(
+                {
+                    "start": group[0]["start"],
+                    "end": group[-1]["end"],
+                    "text": "".join(word["word"] for word in group).strip(),
+                    "words": group,
+                }
+            )
+    return out
+
+
 def transcribe_video(
     video_path: str,
     transcripts_dir: str,
     model,
     language: str = "auto",
+    beam_size: int = 1,
+    vad_filter: bool = True,
+    batch_size: int = 0,
 ) -> dict:
     cache_path = Path(transcript_cache_path(video_path, transcripts_dir))
     if cache_path.exists():
@@ -50,7 +91,27 @@ def transcribe_video(
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     whisper_language = None if language == "auto" else language
-    segments_iter, info = model.transcribe(video_path, language=whisper_language, word_timestamps=True)
+    transcribe_kwargs = {
+        "language": whisper_language,
+        "word_timestamps": True,
+        "beam_size": beam_size,
+        # A stream recording is mostly game audio and dead air; without VAD every
+        # silent second still goes through the encoder, and long silences are what
+        # sends Whisper into repeat-loop hallucinations (the "9" run on 2026-07-28).
+        "vad_filter": vad_filter,
+    }
+    if vad_filter:
+        # Softer than Silero's defaults: the stock threshold of 0.5 drops ~24% of the
+        # words on this mic (quiet interjections read as non-speech), while 0.2 with
+        # generous padding costs ~5% and keeps nearly all of the batching speedup.
+        transcribe_kwargs["vad_parameters"] = {
+            "threshold": 0.2,
+            "min_speech_duration_ms": 0,
+            "speech_pad_ms": 600,
+        }
+    if batch_size > 0:
+        transcribe_kwargs["batch_size"] = batch_size
+    segments_iter, info = model.transcribe(video_path, **transcribe_kwargs)
 
     segments = [
         {
@@ -64,6 +125,8 @@ def transcribe_video(
         }
         for segment in segments_iter
     ]
+    if batch_size > 0:
+        segments = split_segments_on_gaps(segments)
     result = {
         "video_path": video_path,
         "language": info.language,
@@ -74,7 +137,12 @@ def transcribe_video(
     return result
 
 
-def load_whisper_model(model_size: str, device: str):
+def load_whisper_model(
+    model_size: str,
+    device: str,
+    compute_type: str = "auto",
+    batch_size: int = 0,
+):
     _register_nvidia_dll_dirs()
 
     from faster_whisper import WhisperModel
@@ -83,7 +151,11 @@ def load_whisper_model(model_size: str, device: str):
     from scripts.setup import check_gpu
 
     resolved_device = check_gpu() if device == "auto" else device
-    compute_type = "float16" if resolved_device == "cuda" else "int8"
+    if compute_type == "auto":
+        # int8_float16 over plain float16 on CUDA: the GTX 1650 (TU117) has no tensor
+        # cores, so float16 buys little speed while medium still eats 3 of its 4 GB —
+        # quantized weights roughly halve that and leave room for batched inference.
+        compute_type = "int8_float16" if resolved_device == "cuda" else "int8"
 
     def build_and_warm_up(device: str, compute_type: str):
         model = WhisperModel(model_size, device=device, compute_type=compute_type)
@@ -95,6 +167,10 @@ def load_whisper_model(model_size: str, device: str):
 
             segments, _ = model.transcribe(np.zeros(16000, dtype="float32"), language=None)
             next(segments, None)
+        if batch_size > 0:
+            from faster_whisper import BatchedInferencePipeline
+
+            return BatchedInferencePipeline(model=model)
         return model
 
     try:
@@ -116,14 +192,26 @@ def main() -> None:
     parser.add_argument("--model", default="medium")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--language", default="auto")
+    parser.add_argument("--compute-type", default="auto")
+    parser.add_argument("--beam-size", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=8, help="0 disables batched inference")
+    parser.add_argument("--no-vad", dest="vad_filter", action="store_false", default=True)
     args = parser.parse_args()
 
     if is_cached(args.video_path, args.transcripts_dir):
         print(transcript_cache_path(args.video_path, args.transcripts_dir))
         return
 
-    model = load_whisper_model(args.model, args.device)
-    transcribe_video(args.video_path, args.transcripts_dir, model, args.language)
+    model = load_whisper_model(args.model, args.device, args.compute_type, args.batch_size)
+    transcribe_video(
+        args.video_path,
+        args.transcripts_dir,
+        model,
+        args.language,
+        beam_size=args.beam_size,
+        vad_filter=args.vad_filter,
+        batch_size=args.batch_size,
+    )
     print(transcript_cache_path(args.video_path, args.transcripts_dir))
 
 
