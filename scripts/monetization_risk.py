@@ -64,7 +64,13 @@ def score_transcript(text: str, platform: str, rules: dict) -> dict:
     if not text or not platform_rules:
         return _empty_risk(platform, last_checked)
 
-    lowered = text.lower()
+    # Collapse whitespace before matching. Every caller builds this text from a
+    # Whisper word list, where each token carries its own leading space, so a
+    # naive join yields "член  ломать" with two spaces and a multi-word keyword
+    # silently never matches (2026-08-06: the age-restriction rule missed the
+    # exact clip it was written for). Offsets in flagged_spans are into this
+    # normalized text.
+    lowered = re.sub(r"\s+", " ", text.lower()).strip()
     matched_flags: list[str] = []
     flagged_spans: list[dict] = []
     best_severity = "none"
@@ -105,6 +111,43 @@ def score_transcript(text: str, platform: str, rules: dict) -> dict:
     }
 
 
+def extract_text(raw_text: str) -> str:
+    """Pulls the spoken text out of whatever transcript shape was handed over.
+
+    Handles the four the pipeline actually produces: a full transcript dict
+    (`text` or `segments`), a bare list of word objects (the per-clip
+    `<clip>_words.json`, which is what a caller naturally reaches for), a bare
+    list of segment objects, and plain text.
+
+    The word-list case used to fall through to "score the raw JSON source",
+    which silently scored `{"word": " член"}, {"word": " ломать"}` - punctuation
+    between every token, so no multi-word keyword could ever match and every
+    clip came back clean (2026-08-06).
+    """
+    try:
+        data = json.loads(raw_text)
+    except json.JSONDecodeError:
+        return raw_text
+
+    if isinstance(data, dict):
+        if data.get("text"):
+            return data["text"]
+        if "segments" in data:
+            return " ".join(segment.get("text", "") for segment in data["segments"])
+        return raw_text
+
+    if isinstance(data, list):
+        parts = [
+            str(item.get("word") or item.get("text") or "")
+            for item in data
+            if isinstance(item, dict)
+        ]
+        if any(part.strip() for part in parts):
+            return " ".join(parts)
+
+    return raw_text
+
+
 def score_all_platforms(text: str, rules: dict) -> dict:
     """Scores a transcript against every platform present in the ruleset."""
     platforms = [key for key in rules.keys() if key != "updated"]
@@ -125,14 +168,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    raw_text = Path(args.transcript_path).read_text(encoding="utf-8")
-    try:
-        data = json.loads(raw_text)
-        text = data.get("text") if isinstance(data, dict) else raw_text
-        if isinstance(data, dict) and "segments" in data and not text:
-            text = " ".join(segment.get("text", "") for segment in data["segments"])
-    except json.JSONDecodeError:
-        text = raw_text
+    text = extract_text(Path(args.transcript_path).read_text(encoding="utf-8"))
 
     rules = load_rules(args.rules)
 

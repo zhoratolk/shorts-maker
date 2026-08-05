@@ -9,7 +9,7 @@
 # categories/keywords below against the platform's current guidelines. The
 # scorer copies this date verbatim into every flag's `last_checked` field so a
 # stale ruleset is visible to the creator, not silently presented as current.
-updated: "2026-07-07"
+updated: "2026-08-06"
 
 # Each platform lists its own category -> {keywords, severity, confidence}
 # table. Coverage deliberately differs per platform (a topic YouTube treats as
@@ -33,6 +33,30 @@ youtube:
     keywords: ["разжигание ненависти"]
     severity: high
     confidence: low
+  # Age restriction (ytRating=ytAgeRestricted), not demonetization: YouTube
+  # gates a Short outright over sexual/anatomical wording, and an age-gated
+  # Short is effectively dead in the feed. Observed 2026-08-06 on a clip whose
+  # only trigger was "надо было член ломать" - which the cold-open teaser also
+  # copied to the very first second of the video.
+  #
+  # Keywords are deliberately PHRASES, never the bare word: "член экипажа" is
+  # ordinary tank-game speech on this channel (a published clip is literally
+  # titled "Два члена экипажа"), and a bare stem would flag every one of them.
+  age_restriction:
+    keywords:
+      - "член ломать"
+      - "сломать член"
+      - "сломал член"
+      - "член сломал"
+      - "по члену"
+      - "за член"
+      - "в жопу"
+      - "в очко"
+      - "отсоси"
+      - "сосать"
+      - "изнасил"
+    severity: high
+    confidence: medium
 
 tiktok:
   gambling:
