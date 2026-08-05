@@ -334,6 +334,7 @@ def generate_thumbnails(
                 box_opacity=thumbnail.box_opacity,
                 position=thumbnail.position,
                 max_lines=thumbnail.max_lines,
+                focus_x_pct=float(entry.get("focus_x_pct", 50.0)),
             )
         except Exception as error:  # noqa: BLE001 - fail-open by design
             print(f"[warn] no thumbnail for {clip_path.name}: {error}", file=sys.stderr)

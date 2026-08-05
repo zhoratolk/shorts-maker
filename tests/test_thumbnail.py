@@ -118,3 +118,26 @@ def test_generate_thumbnail_raises_on_ffmpeg_failure(tmp_path):
 
     with pytest.raises(ThumbnailError, match="ffmpeg failed"):
         generate_thumbnail("clip.mp4", "x", str(tmp_path / "t.png"), timestamp=1.0, runner=fake_runner)
+
+
+def test_crop_window_is_centred_by_default():
+    command = build_thumbnail_command("clip.mp4", 5.0, "", "out.png", width=1080, height=1920)
+
+    filters = command[command.index("-vf") + 1]
+    assert "crop=1080:1920:(iw-ow)*0.5000:0" in filters
+
+
+def test_focus_x_pct_shifts_the_crop_window_like_renders_zoom_style():
+    """render.py's zoom crop_style can shift its window off-centre; a poster
+    for such a clip has to land on the same slice, not the middle."""
+    left = build_thumbnail_command("clip.mp4", 5.0, "", "out.png", focus_x_pct=0.0)
+    right = build_thumbnail_command("clip.mp4", 5.0, "", "out.png", focus_x_pct=100.0)
+
+    assert "(iw-ow)*0.0000:0" in left[left.index("-vf") + 1]
+    assert "(iw-ow)*1.0000:0" in right[right.index("-vf") + 1]
+
+
+def test_focus_x_pct_is_clamped_to_the_frame():
+    for value, expected in ((-40.0, "0.0000"), (250.0, "1.0000")):
+        command = build_thumbnail_command("clip.mp4", 5.0, "", "out.png", focus_x_pct=value)
+        assert f"(iw-ow)*{expected}:0" in command[command.index("-vf") + 1]

@@ -106,6 +106,7 @@ def build_thumbnail_command(
     position: str = "bottom",
     max_lines: int = 3,
     line_gap: int = 24,
+    focus_x_pct: float = 50.0,
 ) -> list[str]:
     """Builds the single-pass ffmpeg argv that grabs the frame at `timestamp`,
     covers it to width x height, and chains one boxed drawtext clause per
@@ -126,8 +127,16 @@ def build_thumbnail_command(
     if not 0.0 <= box_opacity <= 1.0:
         raise ThumbnailError(f"box_opacity must be within [0, 1], got {box_opacity}")
 
-    # Cover-fit: upscale to fill, then centre-crop to the exact poster size.
-    filters = [f"scale={width}:{height}:force_original_aspect_ratio=increase", f"crop={width}:{height}"]
+    # Cover-fit: upscale to fill, then crop to the exact poster size. The crop
+    # window sits where focus_x_pct puts it (50 = centre), matching render.py's
+    # zoom crop_style - so a poster for a clip already framed by that style
+    # reproduces the clip's own framing instead of picking a different slice of
+    # the frame.
+    focus = max(0.0, min(100.0, focus_x_pct)) / 100.0
+    filters = [
+        f"scale={width}:{height}:force_original_aspect_ratio=increase",
+        f"crop={width}:{height}:(iw-ow)*{focus:.4f}:0",
+    ]
 
     caption = (text or "").strip()
     if caption:
