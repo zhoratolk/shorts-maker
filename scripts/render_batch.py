@@ -322,7 +322,9 @@ def generate_thumbnails(
     written: list[str] = []
     for entry in entries:
         clip_path = Path(output_dir) / entry["output_filename"]
-        poster_path = clip_path.with_suffix(".thumb.png")
+        # JPEG, not PNG: a 1080x1920 PNG of a busy game frame runs up to
+        # ~2.2 MB and YouTube refuses a thumbnail over 2 MB outright.
+        poster_path = clip_path.with_suffix(".thumb.jpg")
         try:
             start, end = entry_source_window(entry)
             timestamp = start + pick_thumbnail_timestamp(

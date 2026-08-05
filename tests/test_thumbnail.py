@@ -1,6 +1,9 @@
+import subprocess
+
 import pytest
 
 from scripts.thumbnail import (
+    MAX_THUMBNAIL_BYTES,
     ThumbnailError,
     build_thumbnail_command,
     generate_thumbnail,
@@ -141,3 +144,44 @@ def test_focus_x_pct_is_clamped_to_the_frame():
     for value, expected in ((-40.0, "0.0000"), (250.0, "1.0000")):
         command = build_thumbnail_command("clip.mp4", 5.0, "", "out.png", focus_x_pct=value)
         assert f"(iw-ow)*{expected}:0" in command[command.index("-vf") + 1]
+
+
+def test_jpeg_output_carries_a_quality_flag():
+    command = build_thumbnail_command("clip.mp4", 5.0, "", "out.jpg", quality=4)
+
+    assert command[command.index("-q:v") + 1] == "4"
+
+
+def test_png_output_gets_no_quality_flag():
+    """-q:v means nothing to the PNG encoder and makes ffmpeg warn."""
+    command = build_thumbnail_command("clip.mp4", 5.0, "", "out.png")
+
+    assert "-q:v" not in command
+
+
+def test_generate_thumbnail_retries_until_the_jpeg_fits_youtubes_limit(tmp_path):
+    output = tmp_path / "poster.jpg"
+    qualities = []
+    # Shrinks as quality rises; only the third attempt fits.
+    sizes = iter([MAX_THUMBNAIL_BYTES + 500_000, MAX_THUMBNAIL_BYTES + 1, MAX_THUMBNAIL_BYTES - 1])
+
+    def runner(command, **kwargs):
+        qualities.append(int(command[command.index("-q:v") + 1]))
+        output.write_bytes(b"x" * next(sizes))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    generate_thumbnail("clip.mp4", "", str(output), timestamp=1.0, runner=runner)
+
+    assert qualities == [3, 6, 9]
+
+
+def test_generate_thumbnail_warns_instead_of_looping_forever_on_png(tmp_path, capsys):
+    output = tmp_path / "poster.png"
+
+    def runner(command, **kwargs):
+        output.write_bytes(b"x" * (MAX_THUMBNAIL_BYTES + 1))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    generate_thumbnail("clip.mp4", "", str(output), timestamp=1.0, runner=runner)
+
+    assert "over YouTube's" in capsys.readouterr().err

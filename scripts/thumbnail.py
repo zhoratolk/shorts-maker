@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import subprocess
+import sys
 from pathlib import Path
 
 from scripts.render_common import (
@@ -33,6 +34,16 @@ from scripts.render_common import (
 # the outro card / fade-out - neither makes a good poster.
 DEFAULT_SAFE_LO_FRAC = 0.15
 DEFAULT_SAFE_HI_FRAC = 0.85
+
+# YouTube rejects a custom thumbnail over 2 MB ("Media larger than: 2097152").
+# A 1080x1920 PNG of a busy game frame lands anywhere from 0.6 to 2.2 MB, so
+# the limit is not theoretical - it cost one clip its poster on 2026-08-06.
+MAX_THUMBNAIL_BYTES = 2 * 1024 * 1024
+# ffmpeg -q:v for JPEG output: 2 is near-lossless, higher is smaller. Each
+# retry step below bumps it when the file still comes out too big.
+DEFAULT_JPEG_QUALITY = 3
+JPEG_QUALITY_STEP = 3
+MAX_JPEG_QUALITY = 15
 
 
 class ThumbnailError(ValueError):
@@ -107,6 +118,7 @@ def build_thumbnail_command(
     max_lines: int = 3,
     line_gap: int = 24,
     focus_x_pct: float = 50.0,
+    quality: int = DEFAULT_JPEG_QUALITY,
 ) -> list[str]:
     """Builds the single-pass ffmpeg argv that grabs the frame at `timestamp`,
     covers it to width x height, and chains one boxed drawtext clause per
@@ -163,14 +175,18 @@ def build_thumbnail_command(
                 f"x=(w-text_w)/2:y={y0 + index * line_height}:box=1:boxcolor={boxcolor}:boxborderw=28"
             )
 
-    return [
+    command = [
         "ffmpeg", "-y",
         "-ss", f"{timestamp:.3f}",
         "-i", clip_path,
         "-frames:v", "1",
         "-vf", ",".join(filters),
-        output_path,
     ]
+    # -q:v only means anything to the JPEG encoder; a PNG output ignores it and
+    # ffmpeg warns, so only add it when the extension actually asks for JPEG.
+    if Path(output_path).suffix.lower() in (".jpg", ".jpeg"):
+        command += ["-q:v", str(quality)]
+    return command + [output_path]
 
 
 def generate_thumbnail(
@@ -187,11 +203,30 @@ def generate_thumbnail(
     behaviour - e.g. the render pipeline - catch it and continue without a
     poster)."""
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    command = build_thumbnail_command(clip_path, timestamp, text, output_path, **kwargs)
-    result = runner(command, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise ThumbnailError(f"ffmpeg failed to write thumbnail: {result.stderr.strip()[:500]}")
-    return output_path
+    quality = kwargs.pop("quality", DEFAULT_JPEG_QUALITY)
+    is_jpeg = Path(output_path).suffix.lower() in (".jpg", ".jpeg")
+
+    while True:
+        command = build_thumbnail_command(
+            clip_path, timestamp, text, output_path, quality=quality, **kwargs
+        )
+        result = runner(command, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise ThumbnailError(f"ffmpeg failed to write thumbnail: {result.stderr.strip()[:500]}")
+
+        size = Path(output_path).stat().st_size if Path(output_path).exists() else 0
+        if size <= MAX_THUMBNAIL_BYTES:
+            return output_path
+        # Over YouTube's limit. JPEG can be squeezed; PNG can't, so say so
+        # rather than silently handing the publish step a file it will reject.
+        if not is_jpeg or quality >= MAX_JPEG_QUALITY:
+            print(
+                f"[warn] {Path(output_path).name} is {size / 1048576:.2f} MB, over YouTube's "
+                f"{MAX_THUMBNAIL_BYTES / 1048576:.0f} MB thumbnail limit - it will be refused on upload",
+                file=sys.stderr,
+            )
+            return output_path
+        quality += JPEG_QUALITY_STEP
 
 
 def main() -> None:

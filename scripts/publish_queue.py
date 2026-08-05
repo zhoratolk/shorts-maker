@@ -50,6 +50,10 @@ MAX_TAGS_TOTAL_LENGTH = 500
 # Explicit video category improves search/browse classification for Shorts
 # (uploads without one land in the default "People & Blogs"). 20 = Gaming.
 GAMING_CATEGORY_ID = "20"
+# YouTube's custom-thumbnail size ceiling. Kept next to the other API limits
+# above rather than imported from thumbnail.py: this module stays import-safe
+# on the standard library alone.
+MAX_THUMBNAIL_BYTES = 2 * 1024 * 1024
 
 
 def load_queue(path: str = DEFAULT_QUEUE_PATH) -> dict[str, Any]:
@@ -77,12 +81,20 @@ def save_queue(queue: dict[str, Any], path: str = DEFAULT_QUEUE_PATH) -> None:
 
 
 def default_thumbnail_path(video_path: str) -> str:
-    """The poster render_batch.py writes next to a clip (<clip>.thumb.png), or
+    """The poster render_batch.py writes next to a clip (<clip>.thumb.jpg), or
     "" when there isn't one. Convention over configuration: the render step and
     the publish step agree on the filename, so nothing has to be threaded
-    through by hand and a forgotten argument can't silently drop the poster."""
-    poster = Path(video_path).with_suffix(".thumb.png")
-    return str(poster) if poster.exists() else ""
+    through by hand and a forgotten argument can't silently drop the poster.
+
+    .png is still accepted for batches rendered before posters moved to JPEG
+    (PNG overshot YouTube's 2 MB thumbnail limit on busy frames).
+    """
+    clip = Path(video_path)
+    for suffix in (".thumb.jpg", ".thumb.png"):
+        poster = clip.with_suffix(suffix)
+        if poster.exists():
+            return str(poster)
+    return ""
 
 
 def enqueue(
@@ -401,8 +413,20 @@ def set_thumbnail(service, video_id: str, image_path: str) -> None:
 def _try_set_thumbnail(service, video_id: str, image_path: str) -> bool:
     """Fail-open wrapper around set_thumbnail: returns True on success, False
     (with a [warn]) on a missing file or any API error. Never raises."""
-    if not Path(image_path).exists():
+    poster = Path(image_path)
+    if not poster.exists():
         print(f"[warn] thumbnail not set for {video_id}: file not found: {image_path}", file=sys.stderr)
+        return False
+    # Check the size here rather than letting the API answer with a bare
+    # "Media larger than: 2097152" - that error names no file and no limit
+    # anyone can act on (seen 2026-08-06).
+    size = poster.stat().st_size
+    if size > MAX_THUMBNAIL_BYTES:
+        print(
+            f"[warn] thumbnail not set for {video_id}: {poster.name} is {size / 1048576:.2f} MB, "
+            f"over YouTube's {MAX_THUMBNAIL_BYTES / 1048576:.0f} MB limit",
+            file=sys.stderr,
+        )
         return False
     try:
         set_thumbnail(service, video_id, image_path)
