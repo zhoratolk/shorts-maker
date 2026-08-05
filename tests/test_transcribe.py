@@ -71,10 +71,10 @@ def test_transcribe_video_writes_cache(tmp_path):
     model = FakeModel()
     result = transcribe_video(video_path, transcripts_dir, model)
 
-    assert model.kwargs["beam_size"] == 1
-    assert model.kwargs["vad_filter"] is True
-    assert model.kwargs["vad_parameters"]["threshold"] == 0.2
-    # batching is off by default at the function level, so no batch_size is forwarded
+    assert model.kwargs["beam_size"] == 5
+    # VAD and batching are opt-in: both cost word recall, see transcribe_video's comment
+    assert model.kwargs["vad_filter"] is False
+    assert "vad_parameters" not in model.kwargs
     assert "batch_size" not in model.kwargs
     assert result == {
         "video_path": video_path,
@@ -93,6 +93,26 @@ def test_transcribe_video_writes_cache(tmp_path):
     }
     cache_file = Path(transcripts_dir) / "video.json"
     assert json.loads(cache_file.read_text(encoding="utf-8")) == result
+
+
+def test_transcribe_video_forwards_vad_and_batching_when_asked(tmp_path):
+    model = FakeModel()
+
+    transcribe_video(
+        str(tmp_path / "video.mp4"),
+        str(tmp_path / "transcripts"),
+        model,
+        vad_filter=True,
+        batch_size=8,
+    )
+
+    assert model.kwargs["vad_filter"] is True
+    assert model.kwargs["vad_parameters"] == {
+        "threshold": 0.2,
+        "min_speech_duration_ms": 0,
+        "speech_pad_ms": 600,
+    }
+    assert model.kwargs["batch_size"] == 8
 
 
 def test_transcribe_video_uses_cache_when_present(tmp_path):

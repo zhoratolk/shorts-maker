@@ -80,8 +80,8 @@ def transcribe_video(
     transcripts_dir: str,
     model,
     language: str = "auto",
-    beam_size: int = 1,
-    vad_filter: bool = True,
+    beam_size: int = 5,
+    vad_filter: bool = False,
     batch_size: int = 0,
 ) -> dict:
     cache_path = Path(transcript_cache_path(video_path, transcripts_dir))
@@ -94,16 +94,20 @@ def transcribe_video(
     transcribe_kwargs = {
         "language": whisper_language,
         "word_timestamps": True,
+        # Greedy decoding is not cheaper here — beam_size 1 and 5 both measure ~x7 on
+        # this GPU — but greedy loses content, so there is nothing to trade away.
         "beam_size": beam_size,
-        # A stream recording is mostly game audio and dead air; without VAD every
-        # silent second still goes through the encoder, and long silences are what
-        # sends Whisper into repeat-loop hallucinations (the "9" run on 2026-07-28).
+        # Off by default. VAD is the only way to get batched inference (faster-whisper
+        # raises "No clip timestamps found" without it) and that is 4x faster, but it
+        # costs ~9 points of word recall against a no-VAD reference: the drops are short
+        # interjections, which on this channel are often the punchline. Turn it on with
+        # --vad --batch-size N when throughput matters more than completeness.
         "vad_filter": vad_filter,
     }
     if vad_filter:
         # Softer than Silero's defaults: the stock threshold of 0.5 drops ~24% of the
         # words on this mic (quiet interjections read as non-speech), while 0.2 with
-        # generous padding costs ~5% and keeps nearly all of the batching speedup.
+        # generous padding costs ~5%.
         transcribe_kwargs["vad_parameters"] = {
             "threshold": 0.2,
             "min_speech_duration_ms": 0,
@@ -193,9 +197,11 @@ def main() -> None:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--language", default="auto")
     parser.add_argument("--compute-type", default="auto")
-    parser.add_argument("--beam-size", type=int, default=1)
-    parser.add_argument("--batch-size", type=int, default=8, help="0 disables batched inference")
-    parser.add_argument("--no-vad", dest="vad_filter", action="store_false", default=True)
+    parser.add_argument("--beam-size", type=int, default=5)
+    parser.add_argument(
+        "--batch-size", type=int, default=0, help="0 disables batched inference; needs --vad"
+    )
+    parser.add_argument("--vad", dest="vad_filter", action="store_true", default=False)
     args = parser.parse_args()
 
     if is_cached(args.video_path, args.transcripts_dir):
