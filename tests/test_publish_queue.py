@@ -1,3 +1,4 @@
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1427,3 +1428,44 @@ def test_thumbnail_upload_disabled_skips_the_api_call(tmp_path):
 
     assert service.thumbnail_set_calls == []
     assert "thumbnail_set" not in entry
+
+
+def test_main_logs_a_crash_that_happens_outside_the_upload_path(tmp_path, monkeypatch):
+    """The scheduler runs this under pythonw.exe with no console, so an
+    unlogged crash leaves only a non-zero exit code behind."""
+    import scripts.publish_queue as module
+
+    notifications = tmp_path / "notifications.log"
+    config = FakeCliPublishConfig(
+        enabled=True,
+        queue_path=str(tmp_path / "queue.json"),
+        notifications_path=str(notifications),
+    )
+
+    class FakeFullConfig:
+        publish = config
+        thumbnail = type("T", (), {"upload": True})()
+
+    monkeypatch.setattr(module, "run_command", _raise_boom)
+    monkeypatch.setattr(sys, "argv", ["publish_queue.py", "--check"])
+    monkeypatch.setitem(
+        sys.modules, "scripts.config",
+        type("M", (), {"load_config": staticmethod(lambda path: FakeFullConfig())}),
+    )
+    monkeypatch.setitem(
+        sys.modules, "scripts.youtube_analytics",
+        type("M", (), {"load_credentials": staticmethod(lambda *a, **k: None)}),
+    )
+    monkeypatch.setitem(
+        sys.modules, "googleapiclient.discovery",
+        type("M", (), {"build": staticmethod(lambda *a, **k: None)}),
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        module.main()
+
+    assert "[error] RuntimeError: boom" in notifications.read_text(encoding="utf-8")
+
+
+def _raise_boom(*args, **kwargs):
+    raise RuntimeError("boom")

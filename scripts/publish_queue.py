@@ -896,7 +896,17 @@ def main() -> None:
         credentials = load_credentials(args.client_secret, args.token, [UPLOAD_SCOPE])
         return build("youtube", "v3", credentials=credentials)
 
-    run_command(args, service_factory, config, full_config.thumbnail.upload)
+    # This normally runs unattended from the scheduler, under pythonw.exe -
+    # no console, so anything printed is discarded and a crash leaves nothing
+    # but a non-zero exit code in Task Scheduler (seen 2026-08-06 00:00, cause
+    # unrecoverable after the fact). _upload_one already logs upload errors;
+    # this catches everything outside it - config, OAuth refresh, reconcile -
+    # so the notification log always says what happened.
+    try:
+        run_command(args, service_factory, config, full_config.thumbnail.upload)
+    except Exception as error:
+        append_notification(f"[error] {type(error).__name__}: {error}", config.notifications_path)
+        raise
 
 
 if __name__ == "__main__":

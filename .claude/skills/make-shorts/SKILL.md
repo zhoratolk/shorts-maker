@@ -383,15 +383,31 @@ python scripts/thumbnail.py "<rendered-clip.mp4>" "<rendered-clip>.thumb.png" --
 
 Pick `--timestamp` from the strongest audio-energy spike inside the clip when there is one (`spike_time − clip_start`, step 1d); otherwise pass `--duration <clip_seconds>` for the midpoint. Either way avoid the first/last ~15% — fades, banner animation, outro card.
 
-</details>
-
-**Publishing a poster.** The poster is written next to the clip. In the publish step, pass its path as `thumbnail_path` to `enqueue` — along with that clip's `moment_tag` (from its `PLAN.json` entry, step 5's "Moment tag" bullet) and its `source_duration` (the clip's rendered length in seconds — `end − start` for a single clip, or the sum of the members' `segments` for a compilation). Both are inert for publishing but let `scripts/retention.py` attribute the published video's retention curve back to the KIND (`moment_tag`) and LENGTH (`source_duration`) of moment — the `by_tag` learning loop. `config.thumbnail.upload` then controls whether `publish_queue` sets the poster as the video's custom thumbnail after upload (fail-open). See [docs/publish-queue.md](docs/publish-queue.md).
-
-**Enqueue order — interleave the loop clips (2026-08-05).** Because loop clips are rendered in their own pass, the batch naturally arrives as "all the regular ones, then all the loops", and enqueuing in that order puts every looping clip back to back on the grid — it reads as a stylistic tic rather than a variation. Before enqueuing, order the batch with `scripts/publish_queue.py`'s `interleave_loops(items, is_loop)`, which spreads the loop clips evenly through the regular ones while preserving each group's own order. Enqueue in the order it returns.
-
 Optional encode-speed knobs (default unset — output byte-identical to before): `--preset <name>` (e.g. `veryfast`) and `--crf <n>` tune the x264/x265 encoder for a faster encode at a size cost. Leave both unset for the default quality, or when using a hardware encoder (`--video-codec h264_nvenc`), which has its own vocabulary.
 
 This probes the source video once, then renders every entry in `PLAN.json` into `config.output_dir`, printing each output path. `render.py` also renders `"type": "compilation"` entries (step 5b) automatically via this exact same invocation — no new CLI flags are required for compilations. When a plan entry has `keep_segments`, that clip is trimmed and concatenated from those sub-segments (the jump cuts from step 5) instead of a single continuous `start`–`end`; every other flag below still applies on top of the spliced result. Each clip's audio is optionally cleaned up (in this order): noise reduction (`--denoise`, FFmpeg `afftdn`, strength set by `--denoise-strength` in dB — default `6`, gentler than FFmpeg's own default of `12`, because on a mixed game+voice track a strong setting reads as a wind-like/musical-noise artifact smeared across the non-voice audio while voice survives; raise it for a genuinely hissy mic, lower it further if game audio still sounds smeared) to strip mic hiss/hum, then loudness normalization (`--loudnorm`, FFmpeg `loudnorm`) to even out volume across clips, then the profanity mask (a plan entry's `profanity_spans`, if set, gets ducked+garbled via `--profanity-*` — audio keeps flowing under the mask, it is not a silence cut), then the fade. Each clip's video can also get a cinematic pass: `--vignette` darkens the frame edges, `--grain-strength` (0-100, 0 = off) adds film grain, and a plan entry's `punch_zoom_at` (if set) triggers a snap-zoom-in sized by `--punch-zoom-amount` and paced by `--punch-zoom-ramp`. When `--emphasis-enabled` is passed, a plan entry's `emphasis_moves` (if set) add transient mid-clip zoom pulses on top — each ramps in and back out (sized by `--emphasis-zoom-amount`, paced by `--emphasis-ramp`/`--emphasis-min-hold`, capped by `--emphasis-max-moves`), unlike `punch_zoom_at`'s hold-till-end zoom, and work on any crop style. Each clip also fades video and audio to black/silence over the last `config.clip.fade_seconds` seconds (default 0.5s) — the fade only starts once the last word has fully finished (extending a bit into unused source footage past the clip's end when available, for non-jump-cut clips), it does not overlap or cut into speech. When a clip has `subtitles_path` set, the `--sub-*` flags style the burned-in captions (font/size/colors/position); the `--sub-position bottom` default keeps a safe margin from the very bottom of the frame so captions don't sit under TikTok/Reels/Shorts' own UI buttons. Add `--censor-subtitles` **only when `config.subtitles.censor_profanity` is `true`** (store-true, omit when `false`) to partially mask profane words in the burned-in captions — it keeps a leading prefix and replaces the rest with `*` (e.g. `хуй` → `х**`), so the word stays recognizable without being spelled out. This is the on-screen text counterpart to the audio profanity mask and is independently toggleable (a clip can bleep audio without masking text, or vice versa). When on, also pass `--censor-keep-ratio <config.subtitles.censor_keep_ratio>` and `--profanity-wordlist <config.profanity.wordlist_path>` (reuse the same wordlist as the audio mask so both layers hide the same words); fail-open — a missing/malformed wordlist masks nothing rather than blocking the render.
+
+</details>
+
+### 7. Enqueue onto the publish grid
+
+```bash
+python scripts/enqueue_batch.py work/<video_stem>/PLAN.json
+```
+
+Or fold it into the render so the batch goes out in one command:
+
+```bash
+python scripts/render_batch.py "<video>" work/<video_stem>/PLAN.json --enqueue
+```
+
+This reads what the pipeline already wrote — title/description/tags from `metadata_data/<clip>.json`, `moment_tag` and the duration from the plan entry, the poster from `<clip>.thumb.png` — and enqueues the batch in publish order, with the loop clips spread evenly through the regular ones rather than back to back (they render in their own pass, so they arrive grouped, and a run of looping clips on the grid reads as a tic rather than a variation).
+
+**Don't hand-write an enqueue script.** `enqueue()` takes seven optional arguments and none of them error when missing — a forgotten `thumbnail_path` publishes with YouTube's auto-frame, a forgotten `moment_tag`/`source_duration` silently drops that clip out of the retention learning loop, and a forgotten interleave stacks the loops. That is what this script exists to prevent.
+
+Safe to re-run: `enqueue` is idempotent on `clip_id`, so a second pass over the same plan adds nothing and renumbers nothing. A plan entry whose clip didn't render is skipped with a warning (`--strict` makes it an error instead); missing metadata is always a hard error rather than a blank title.
+
+Publishing itself stays on the periodic check — `python scripts/publish_queue.py --check` uploads at most one due item per invocation, `--now <clip_id>` forces one out of band, and `--list` shows the queue with a `+thumb` marker for entries carrying a poster. Nothing uploads at all while `config.publish.enabled` is `false`.
 
 ## Library-wide search
 

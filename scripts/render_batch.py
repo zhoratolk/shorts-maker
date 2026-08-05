@@ -268,6 +268,14 @@ def load_energy_spikes(config: Config, video_path: str) -> list[dict]:
     stem = Path(video_path).stem
     cache = Path(config.output_dir) / "transcripts" / f"{stem}_energy_spikes.json"
     if not cache.exists():
+        # Loud, because the degradation is otherwise invisible: posters just
+        # quietly become clip midpoints. Missing means the audio-energy pass
+        # never ran for this recording - re-run scripts/ingest.py.
+        print(
+            f"[warn] no audio-energy cache at {cache} - every poster falls back to the "
+            "clip midpoint; run scripts/ingest.py for this recording",
+            file=sys.stderr,
+        )
         return []
     try:
         raw = json.loads(cache.read_text(encoding="utf-8-sig"))
@@ -380,6 +388,10 @@ def main() -> None:
     parser.add_argument(
         "--dry-run", action="store_true", help="Print the render commands instead of running them"
     )
+    parser.add_argument(
+        "--enqueue", action="store_true",
+        help="Put the batch on the publish grid once it has rendered (scripts/enqueue_batch.py)",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -411,6 +423,14 @@ def main() -> None:
     if config.thumbnail.enabled:
         generate_thumbnails(config, rendered, output_dir, args.input_video)
     print(f"{len(rendered)} clips rendered into {output_dir}")
+
+    if args.enqueue:
+        # Imported here, not at module scope: enqueue_batch imports this module
+        # back for is_loop_entry, and rendering must not depend on the publish
+        # half being importable.
+        from scripts.enqueue_batch import enqueue_batch
+
+        enqueue_batch(config, args.plan_json, output_dir)
 
 
 if __name__ == "__main__":
