@@ -240,6 +240,12 @@ For each approved candidate, re-read that moment's transcript window (from the c
 
 - **Hook banner text (HOOK-01/HOOK-04)** — only when `config.hook_banner.enabled` is `true`: derive `banner_text` for the plan entry below from the final `youtube.title` drafted above (it already passed the hook-formula + anti-AI-tone bar — do NOT redraft or reword it here, this is a pure mechanical strip): remove every hashtag (`#\S+`), remove emoji and pictographs, drop a leading `⚠️ 18+` content-warning prefix if the mature-content bullet above added one (that warning belongs in metadata text, not burned into pixels), and collapse repeated whitespace. If the result is empty, omit `banner_text` entirely (fail-open, HOOK-03). Keep it short — `render.py` wraps at ~22 characters/line and truncates past 2 lines with an ellipsis, so a hook that fits the ≤7-word rule from metadata-writing-ru.md renders cleanly. `render.py` draws it as a styled plate (persistent mode by default, with `config.hook_banner.cta_text` as an optional nick/CTA line under it — the personality-first plate). Skip this bullet entirely when `config.hook_banner.enabled` is `false` or `config.metadata.enabled` is `false` (no title exists to derive from).
 
+- **Poster caption** (`config.thumbnail.enabled`) — the thumbnail is generated as part of the render (step 6), from a frame of the **source** recording at this clip's strongest audio-energy moment. The only judgment call is its caption, so make it here, with the rest of the per-clip decisions:
+  - Leave `thumbnail_text` off and the poster reuses `banner_text` — right for most clips, since that line already passed the hook bar.
+  - Set `thumbnail_text` when the banner line would make a poor poster caption: it wraps to ~13 characters per line at the configured font size and truncates past `config.thumbnail.max_lines`, so anything long becomes an ellipsis. A 2-4 word teaser reads; a full title doesn't.
+  - Set `thumbnail_text` to `""` deliberately when the frame speaks for itself and text would only cover it.
+  - The caption is drawn at `config.thumbnail.position` — keep it clear of what the frame is actually about. Nothing else about the poster is a decision: the frame, the zoom and the crop window all follow from the clip's own plan entry.
+
 ### 5b. Group sub-threshold candidates into compilations
 
 Only run this subsection if at least one approved candidate this run was marked `sub_threshold` in step 5 above. If none were, skip straight to "Write the merged results to PLAN.json" below.
@@ -306,12 +312,13 @@ Write the merged results to `work/<video_stem>/PLAN.json`: a JSON list of object
   "subtitles_path": "work/<video_stem>/subtitles/mystream-0001-boss-rage-quit.srt",
   "profanity_spans": [[12.1, 12.6]],
   "banner_text": "БОСС ДОВЁЛ ДО РУЧКИ?",
+  "thumbnail_text": "БОСС СЛОМАЛСЯ",
   "moment_tag": "реакция на смерть",
   "output_filename": "mystream-0001-boss-rage-quit.mp4",
   "metadata_path": "<config.output_dir>/mystream-0001-boss-rage-quit.txt"
 }
 ```
-(`keep_segments`, `boundary_transitions`, `punch_zoom_at`, `emphasis_moves`, `cold_open`, `loop`, `subtitles_path`, `profanity_spans`, `banner_text`, and `metadata_path` are each omitted entirely when the corresponding feature is disabled or wasn't used for this clip. `emphasis_moves`, when present, is the list from the "Mid-clip emphasis moves" bullet above, verbatim; it applies to a compilation entry too (decided once on the compilation's own rendered timeline, same as `punch_zoom_at`). `cold_open`, when present, is the object from the "Cold-open teaser" bullet above, verbatim — single-clip entries only (v1 scope); never set it on a `type: compilation` entry. `loop`, when present, is the literal boolean `true` from the "Loop-ability" bullet above — single-clip entries only (never combine with `cold_open`, and never set it on a `type: compilation` entry). `banner_text`, when present, is the hashtag/emoji-stripped `youtube.title` from the "Hook banner text" bullet above, verbatim — the same field works on a compilation entry (derived from the compilation's own title). `boundary_transitions`, when present, must have exactly one entry per boundary — `len(keep_segments) - 1` — matching the `select-transitions` output above verbatim. `profanity_spans`, when present, is a `[[start, end], ...]` list of clip-relative seconds — the "Profanity auto-bleep" bullet above's `scripts/profanity.py` output, verbatim. `moment_tag` is the exception to the omit convention — it should be set on **every** entry, single clip or compilation (the "Moment tag" bullet in step 5); it is inert for rendering and only feeds the retention learning loop, but leaving it off means that clip contributes nothing to the `by_tag` signal once published.)
+(`keep_segments`, `boundary_transitions`, `punch_zoom_at`, `emphasis_moves`, `cold_open`, `loop`, `subtitles_path`, `profanity_spans`, `banner_text`, `thumbnail_text`, and `metadata_path` are each omitted entirely when the corresponding feature is disabled or wasn't used for this clip. `emphasis_moves`, when present, is the list from the "Mid-clip emphasis moves" bullet above, verbatim; it applies to a compilation entry too (decided once on the compilation's own rendered timeline, same as `punch_zoom_at`). `cold_open`, when present, is the object from the "Cold-open teaser" bullet above, verbatim — single-clip entries only (v1 scope); never set it on a `type: compilation` entry. `loop`, when present, is the literal boolean `true` from the "Loop-ability" bullet above — single-clip entries only (never combine with `cold_open`, and never set it on a `type: compilation` entry). `banner_text`, when present, is the hashtag/emoji-stripped `youtube.title` from the "Hook banner text" bullet above, verbatim — the same field works on a compilation entry (derived from the compilation's own title). `thumbnail_text`, when present, overrides what the poster is captioned with (the "Poster caption" bullet above); omitted, the poster reuses `banner_text`, and an explicit `""` leaves the frame clean. `boundary_transitions`, when present, must have exactly one entry per boundary — `len(keep_segments) - 1` — matching the `select-transitions` output above verbatim. `profanity_spans`, when present, is a `[[start, end], ...]` list of clip-relative seconds — the "Profanity auto-bleep" bullet above's `scripts/profanity.py` output, verbatim. `moment_tag` is the exception to the omit convention — it should be set on **every** entry, single clip or compilation (the "Moment tag" bullet in step 5); it is inert for rendering and only feeds the retention learning loop, but leaving it off means that clip contributes nothing to the `by_tag` signal once published.)
 
 A compilation entry (step 5b) has a different shape — `"type": "compilation"` is what distinguishes it, and a `segments` list replaces the single-clip `start`/`end`/`keep_segments` fields for that entry (one `{"start", "end", "keep_segments"?}` object per member, in the group's strongest-first order):
 ```json
@@ -350,7 +357,7 @@ What the wrapper does, so you know what to check when something looks wrong:
 - **Posters** — when `config.thumbnail.enabled`, one per clip next to the `.mp4` as `<clip>.thumb.png`, captioned from the plan entry's `thumbnail_text` (falling back to `banner_text`, then a clean text-free frame). The frame is cut from the **source recording**, not from the rendered clip: a rendered `pad`/`original-16:9` clip is letterboxed and carries burned-in captions, so a poster lifted from it has black bars and a subtitle across it. From the clean 16:9 source, the cover-fit zooms edge to edge. The moment is the strongest audio-energy spike inside the clip's source window (step 1d's `<stem>_energy_spikes.json`, weighted by how long the spike lasts), or the window's midpoint when that pass never ran. Fail-open: a poster failure warns and never undoes a rendered clip.
 - **`--dry-run`** prints the exact commands instead of running them — use it to verify a flag set without burning an encode. `--output-dir` overrides `config.output_dir` for one run.
 
-Set `thumbnail_text` on a plan entry in step 5 when the banner text would make a poor poster caption: keep it to a 2-4 word teaser that wraps within `config.thumbnail.max_lines`, not the full title. `config.thumbnail.position` should stay clear of the burned-in captions — `center` on this channel, since `bottom` lands the poster caption straight on top of the subtitles.
+The poster's only judgment call, its caption, is made back in step 5's "Poster caption" bullet — nothing about it is decided here.
 
 <details>
 <summary>Underlying <code>render.py</code> flags (reference only — do not assemble this by hand)</summary>
@@ -407,7 +414,15 @@ This reads what the pipeline already wrote — title/description/tags from `meta
 
 Safe to re-run: `enqueue` is idempotent on `clip_id`, so a second pass over the same plan adds nothing and renumbers nothing. A plan entry whose clip didn't render is skipped with a warning (`--strict` makes it an error instead); missing metadata is always a hard error rather than a blank title.
 
-Publishing itself stays on the periodic check — `python scripts/publish_queue.py --check` uploads at most one due item per invocation, `--now <clip_id>` forces one out of band, and `--list` shows the queue with a `+thumb` marker for entries carrying a poster. Nothing uploads at all while `config.publish.enabled` is `false`.
+**Enqueuing is local — it does not upload anything.** A queued entry sits in `work/_publish/queue.json` until `--check` picks it up:
+
+```bash
+python scripts/publish_queue.py --check
+```
+
+That uploads at most one due item per invocation and schedules it for the next free grid slot. `--now <clip_id>` forces one out of band, `--list` shows the queue with a `+thumb` marker for entries carrying a poster. Nothing uploads at all while `config.publish.enabled` is `false`.
+
+There is no scheduled task driving this any more (removed 2026-08-06 at the channel owner's request — uploads are triggered deliberately, not on a timer), so after enqueuing a batch, run `--check` once per clip you want live, or tell the user the batch is queued and waiting. Clips already in `scheduled` status are a different matter: they are uploaded and YouTube releases them at their `publish_at` on its own, with or without anything running locally.
 
 ## Library-wide search
 
