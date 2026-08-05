@@ -6,6 +6,7 @@ import pytest
 from scripts.publish_queue import (
     KILLED,
     PAUSED,
+    PUBLISHED,
     QUEUED,
     SCHEDULED,
     UPLOADING,
@@ -17,11 +18,13 @@ from scripts.publish_queue import (
     cancel_scheduled_release,
     collect_scheduled_slots,
     enqueue,
+    interleave_loops,
     kill_item,
     load_queue,
     next_free_slot,
     pause_item,
     read_unread_notifications,
+    reconcile_all_scheduled,
     reconcile_all_uploading,
     reconcile_uploading,
     resume_item,
@@ -90,6 +93,46 @@ def test_sequential_numbering(tmp_path):
     assert entry1["publish_at"] is None
     assert entry1["enqueued_at"]
     assert entry1["updated_at"]
+
+
+def test_interleave_loops_spreads_two_loops_through_nine_regular():
+    items = [f"r{index}" for index in range(9)] + ["L0", "L1"]
+
+    ordered = interleave_loops(items, lambda item: item.startswith("L"))
+
+    loop_positions = [index for index, item in enumerate(ordered) if item.startswith("L")]
+    assert len(ordered) == 11
+    assert sorted(ordered) == sorted(items)
+    # not adjacent, and not both crammed at one end
+    assert loop_positions[1] - loop_positions[0] > 1
+    assert loop_positions == [2, 8]
+
+
+def test_interleave_loops_preserves_order_within_each_group():
+    items = ["r0", "r1", "r2", "r3", "L0", "L1"]
+
+    ordered = interleave_loops(items, lambda item: item.startswith("L"))
+
+    assert [item for item in ordered if item.startswith("r")] == ["r0", "r1", "r2", "r3"]
+    assert [item for item in ordered if item.startswith("L")] == ["L0", "L1"]
+
+
+def test_interleave_loops_is_a_noop_when_one_group_is_empty():
+    only_regular = ["r0", "r1"]
+    only_loops = ["L0", "L1"]
+    predicate = lambda item: item.startswith("L")  # noqa: E731
+
+    assert interleave_loops(only_regular, predicate) == only_regular
+    assert interleave_loops(only_loops, predicate) == only_loops
+
+
+def test_interleave_loops_handles_loops_outnumbering_regular():
+    items = ["r0", "L0", "L1", "L2"]
+
+    ordered = interleave_loops(items, lambda item: item.startswith("L"))
+
+    assert len(ordered) == 4
+    assert sorted(ordered) == sorted(items)
 
 
 def test_enqueue_is_idempotent_on_clip_id(tmp_path):
@@ -875,6 +918,134 @@ def test_select_next_due_reconciles_uploading_entries_before_selecting_new_item(
     assert queue["entries"][0]["video_id"] == "vid_match"
     assert next_entry["clip_id"] == "clip-2"
     assert service.insert_calls == []
+
+
+# --- reconcile_all_scheduled - SCHEDULED->PUBLISHED drift fix --------------
+
+
+class FakeVideosListService:
+    """videos().list(part="status,snippet", id="a,b,...") - videos keyed by
+    id, each carrying the fields reconcile_all_scheduled reads."""
+
+    def __init__(self, videos_by_id):
+        self._videos_by_id = videos_by_id
+        self.list_calls = []
+
+    def videos(self):
+        return self
+
+    def list(self, **kwargs):
+        self.list_calls.append(kwargs)
+        ids = kwargs["id"].split(",")
+        items = []
+        for video_id in ids:
+            video = self._videos_by_id.get(video_id)
+            if video is not None:
+                items.append(video)
+        return self
+
+    def execute(self):
+        return {"items": self._last_items()}
+
+    def _last_items(self):
+        ids = self.list_calls[-1]["id"].split(",")
+        return [self._videos_by_id[v] for v in ids if v in self._videos_by_id]
+
+
+def test_reconcile_all_scheduled_flips_past_due_public_video_to_published():
+    queue = {
+        "entries": [
+            make_entry(
+                clip_id="clip-1", seq=1, status=SCHEDULED, video_id="vid1",
+                publish_at="2026-07-16T11:00:00Z",
+            )
+        ]
+    }
+    service = FakeVideosListService({
+        "vid1": {
+            "id": "vid1",
+            "status": {"privacyStatus": "public"},
+            "snippet": {"publishedAt": "2026-07-16T11:02:13Z"},
+        }
+    })
+
+    def service_factory():
+        return service
+
+    reconcile_all_scheduled(queue, service_factory, now=datetime(2026, 7, 28, 18, 0, tzinfo=timezone.utc))
+
+    entry = queue["entries"][0]
+    assert entry["status"] == PUBLISHED
+    assert entry["published_at"] == "2026-07-16T11:02:13Z"
+
+
+def test_reconcile_all_scheduled_leaves_still_private_entry_scheduled():
+    queue = {
+        "entries": [
+            make_entry(
+                clip_id="clip-1", seq=1, status=SCHEDULED, video_id="vid1",
+                publish_at="2026-07-16T11:00:00Z",
+            )
+        ]
+    }
+    service = FakeVideosListService({
+        "vid1": {
+            "id": "vid1",
+            "status": {"privacyStatus": "private"},
+            "snippet": {},
+        }
+    })
+
+    def service_factory():
+        return service
+
+    reconcile_all_scheduled(queue, service_factory, now=datetime(2026, 7, 28, 18, 0, tzinfo=timezone.utc))
+
+    entry = queue["entries"][0]
+    assert entry["status"] == SCHEDULED
+    assert "published_at" not in entry
+
+
+def test_reconcile_all_scheduled_ignores_not_yet_due_entries():
+    queue = {
+        "entries": [
+            make_entry(
+                clip_id="clip-future", seq=1, status=SCHEDULED, video_id="vid1",
+                publish_at="2026-07-30T11:00:00Z",
+            )
+        ]
+    }
+    calls = []
+
+    def service_factory():
+        calls.append(1)
+        raise AssertionError("must not call service_factory when nothing is due")
+
+    reconcile_all_scheduled(queue, service_factory, now=datetime(2026, 7, 28, 18, 0, tzinfo=timezone.utc))
+
+    assert calls == []
+    assert queue["entries"][0]["status"] == SCHEDULED
+
+
+def test_reconcile_all_scheduled_leaves_entry_untouched_when_video_missing_from_response():
+    # Fail-open: a video_id that no longer resolves (deleted, transient API
+    # gap) must not be guessed at - leave the entry SCHEDULED.
+    queue = {
+        "entries": [
+            make_entry(
+                clip_id="clip-1", seq=1, status=SCHEDULED, video_id="vid-gone",
+                publish_at="2026-07-16T11:00:00Z",
+            )
+        ]
+    }
+    service = FakeVideosListService({})
+
+    def service_factory():
+        return service
+
+    reconcile_all_scheduled(queue, service_factory, now=datetime(2026, 7, 28, 18, 0, tzinfo=timezone.utc))
+
+    assert queue["entries"][0]["status"] == SCHEDULED
 
 
 # --- Task 1: notification log - append + read-unread with a marker (D-06) --

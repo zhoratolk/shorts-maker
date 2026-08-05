@@ -137,6 +137,40 @@ def enqueue(
     return entry
 
 
+def interleave_loops(items: list[Any], is_loop) -> list[Any]:
+    """Spreads the loop clips of one batch evenly through the regular ones.
+
+    Loop clips are rendered in their own pass (they cannot carry the outro
+    card, see SKILL.md), so a batch arrives as "all the regular ones, then all
+    the loops". Enqueuing in that order puts every looping clip back to back on
+    the grid, which reads as a stylistic tic rather than a variation. Placing
+    them at evenly spaced positions keeps the batch's own ordering within each
+    group while separating the loops.
+
+    `is_loop` is a predicate applied to each item. Order within the loop group
+    and within the regular group is preserved.
+    """
+    loops = [item for item in items if is_loop(item)]
+    regular = [item for item in items if not is_loop(item)]
+    if not loops or not regular:
+        return list(items)
+
+    total = len(loops) + len(regular)
+    # evenly spaced slots: the i-th of L loops lands at (i + 0.5) / L of the way
+    positions = {min(total - 1, int((index + 0.5) * total / len(loops))) for index in range(len(loops))}
+    while len(positions) < len(loops):  # collisions when loops crowd the batch
+        positions.add(max(set(range(total)) - positions))
+
+    ordered: list[Any] = []
+    loop_iter, regular_iter = iter(loops), iter(regular)
+    for index in range(total):
+        if index in positions:
+            ordered.append(next(loop_iter))
+        else:
+            ordered.append(next(regular_iter))
+    return ordered
+
+
 def collect_scheduled_slots(queue: dict[str, Any]) -> list[str]:
     """Returns the publish_at values of every entry currently in SCHEDULED
     status - the set of grid slots already spoken for, so next_free_slot
@@ -577,6 +611,63 @@ def reconcile_all_uploading(queue: dict[str, Any], service_factory) -> None:
             reconcile_uploading(queue, entry, service_factory)
 
 
+def reconcile_all_scheduled(
+    queue: dict[str, Any], service_factory, now: datetime | None = None
+) -> None:
+    """Flips SCHEDULED entries whose publish_at has already passed over to
+    PUBLISHED once YouTube confirms the video actually went public.
+
+    Nothing else ever makes the SCHEDULED->PUBLISHED transition: YouTube
+    auto-publishes at publishAt with no callback into this pipeline, so
+    without this check a past-due entry stays labeled SCHEDULED forever even
+    though it's long since gone live - the local manifest silently drifts
+    from reality (found 2026-07-28: 48 stale SCHEDULED entries going back to
+    2026-07-16). Wired as a --check step alongside reconcile_all_uploading.
+
+    Batches lookups via videos.list's id filter (same chunk_video_ids helper
+    youtube_analytics.py uses for statistics) instead of one call per entry -
+    the backlog this is meant to drain can be dozens of entries deep.
+
+    records entry["published_at"] from the API's snippet.publishedAt (the
+    real observed go-live moment) alongside the flip, distinct from
+    publish_at (what we originally asked YouTube to schedule) - comparing the
+    two is how a delayed/mis-scheduled publish gets caught after the fact.
+
+    Fail-open: an entry whose video_id no longer resolves (deleted, revoked
+    access, transient API gap) is left SCHEDULED rather than guessed at -
+    same convention as diarization/audio-energy elsewhere in this project.
+    """
+    now = now or datetime.now(timezone.utc)
+    now_iso = now.isoformat().replace("+00:00", "Z")
+    due = [
+        entry
+        for entry in queue["entries"]
+        if entry["status"] == SCHEDULED
+        and entry.get("video_id")
+        and entry.get("publish_at")
+        and entry["publish_at"] <= now_iso
+    ]
+    if not due:
+        return
+
+    from scripts.youtube_analytics import chunk_video_ids
+
+    service = service_factory()
+    by_video_id = {entry["video_id"]: entry for entry in due}
+
+    for chunk in chunk_video_ids(list(by_video_id.keys())):
+        response = service.videos().list(part="status,snippet", id=",".join(chunk)).execute()
+        for video in response.get("items", []):
+            entry = by_video_id.get(video["id"])
+            if entry is None:
+                continue
+            privacy_status = video.get("status", {}).get("privacyStatus")
+            if privacy_status == "public":
+                entry["status"] = PUBLISHED
+                entry["published_at"] = video.get("snippet", {}).get("publishedAt")
+                entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+
 # --- CLI (D-05: --check / --now / --pause / --kill / --resume / --list) ----
 
 
@@ -704,6 +795,12 @@ def run_command(args: argparse.Namespace, service_factory, config) -> None:
         # Reconcile-first (PUB-05): any crash-mid-upload entry must be
         # resolved before a fresh item is ever selected.
         reconcile_all_uploading(queue, service_factory)
+        save_queue(queue, queue_path)
+
+        # Flip any past-due SCHEDULED entry over to PUBLISHED once YouTube
+        # confirms it actually went live - otherwise the local manifest
+        # drifts from reality forever (nothing else makes this transition).
+        reconcile_all_scheduled(queue, service_factory)
         save_queue(queue, queue_path)
 
         if not config.enabled:
