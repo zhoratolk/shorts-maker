@@ -15,9 +15,12 @@ import pytest
 from scripts.config import Config
 from scripts.render_batch import (
     build_render_args,
+    entry_source_window,
     is_loop_entry,
+    load_energy_spikes,
     run_pass,
     split_plan,
+    spikes_within,
     write_pass_plan,
     _thumbnail_text,
 )
@@ -184,20 +187,52 @@ def test_write_pass_plan_writes_bom_free_utf8(tmp_path):
     ],
 )
 def test_thumbnail_text_falls_back_through_the_plan_entry(entry, expected):
-    config = make_config(hook_banner={"enabled": True, "mode": "hook"})
-    assert _thumbnail_text(entry, config) == expected
+    assert _thumbnail_text(entry) == expected
 
 
-def test_persistent_banner_is_not_repeated_as_the_poster_caption():
-    """The banner is burned into every frame in persistent mode, so borrowing
-    it would print the same sentence twice on one image."""
-    config = make_config(hook_banner={"enabled": True, "mode": "persistent"})
+def test_entry_source_window_spans_the_whole_moment_across_jump_cuts():
+    assert entry_source_window({"start": 10.0, "end": 40.0}) == (10.0, 40.0)
+    assert entry_source_window(
+        {"start": 10.0, "end": 40.0, "keep_segments": [[12.0, 20.0], [25.0, 38.0]]}
+    ) == (12.0, 38.0)
 
-    assert _thumbnail_text({"banner_text": "Мешаю своим же"}, config) == ""
-    # an explicit caption still wins - it is deliberate, not a fallback
-    assert _thumbnail_text(
-        {"banner_text": "Мешаю своим же", "thumbnail_text": "свои же"}, config
-    ) == "свои же"
+
+def test_load_energy_spikes_weighs_by_how_long_a_spike_lasts(tmp_path):
+    cache = tmp_path / "transcripts"
+    cache.mkdir()
+    (cache / "rec_energy_spikes.json").write_text(
+        json.dumps([
+            {"start": 10.0, "end": 10.4, "reason": "audio energy spike"},
+            {"start": 30.0, "end": 32.0, "reason": "audio energy spike"},
+        ]),
+        encoding="utf-8",
+    )
+    config = make_config()
+    config.output_dir = str(tmp_path)
+
+    spikes = load_energy_spikes(config, "F:/rec.mkv")
+
+    assert spikes == [{"at": 10.2, "weight": 0.4}, {"at": 31.0, "weight": 2.0}]
+
+
+def test_load_energy_spikes_fails_open_when_the_pass_never_ran(tmp_path):
+    config = make_config()
+    config.output_dir = str(tmp_path)
+
+    assert load_energy_spikes(config, "F:/never_analysed.mkv") == []
+
+
+def test_spikes_within_rebases_onto_the_clips_own_timeline():
+    spikes = [
+        {"at": 5.0, "weight": 1.0},     # before the clip
+        {"at": 105.0, "weight": 2.0},
+        {"at": 130.0, "weight": 3.0},
+        {"at": 500.0, "weight": 4.0},   # after the clip
+    ]
+
+    inside = spikes_within(spikes, 100.0, 140.0)
+
+    assert inside == [{"at": 5.0, "weight": 2.0}, {"at": 30.0, "weight": 3.0}]
 
 
 def test_run_pass_invokes_render_as_a_module():

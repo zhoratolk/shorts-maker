@@ -236,43 +236,93 @@ def write_pass_plan(entries: list[dict], plan_path: str, suffix: str) -> str:
     return str(target)
 
 
-def _thumbnail_text(entry: dict, config: Config) -> str:
-    """Poster caption: an explicit thumbnail_text wins, otherwise the hook
-    banner's text, otherwise a clean text-free frame.
+def _thumbnail_text(entry: dict) -> str:
+    """Poster caption: an explicit thumbnail_text, else the hook banner's text,
+    else a clean text-free frame.
 
-    The banner is only borrowed when it ISN'T already burned into the frame.
-    In persistent banner mode it is on screen for the whole clip, so reusing it
-    as the poster caption prints the same sentence twice on one image - which
-    is exactly what the first live batch produced.
+    The banner text is safe to reuse because the poster is cut from the SOURCE
+    recording, not from the rendered clip - there is no burned-in banner on
+    that frame to duplicate.
     """
-    explicit = entry.get("thumbnail_text")
-    if explicit:
-        return str(explicit)
-    banner_text = entry.get("banner_text")
-    if not banner_text or (config.hook_banner.enabled and config.hook_banner.mode == "persistent"):
-        return ""
-    return str(banner_text)
+    return str(entry.get("thumbnail_text") or entry.get("banner_text") or "")
 
 
-def generate_thumbnails(config: Config, entries: list[dict], output_dir: str) -> list[str]:
-    """Best-effort poster per rendered clip. Fail-open like every other
-    optional feature: a poster failure is warned about and never undoes an
-    already-rendered clip."""
-    from scripts.render import probe_video
+def entry_source_window(entry: dict) -> tuple[float, float]:
+    """The clip's span in SOURCE seconds. With jump cuts that's the first kept
+    segment's start to the last one's end - the poster frame only has to land
+    inside the moment, not inside a specific kept sub-segment."""
+    keep = entry.get("keep_segments")
+    if keep:
+        return float(keep[0][0]), float(keep[-1][1])
+    return float(entry["start"]), float(entry["end"])
+
+
+def load_energy_spikes(config: Config, video_path: str) -> list[dict]:
+    """Reads the cached audio-energy spikes for a recording, or [] when the
+    pass never ran (fail-open, same as everywhere else in the pipeline).
+
+    Written by scripts/audio_energy.py as {"start","end","reason"} - no
+    strength field - so spikes are weighted here by how long they last: a
+    sustained burst is a better poster moment than a single transient tick.
+    """
+    stem = Path(video_path).stem
+    cache = Path(config.output_dir) / "transcripts" / f"{stem}_energy_spikes.json"
+    if not cache.exists():
+        return []
+    try:
+        raw = json.loads(cache.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"[warn] energy spikes unreadable, poster falls back to midpoint: {error}", file=sys.stderr)
+        return []
+    return [
+        {"at": round((float(spike["start"]) + float(spike["end"])) / 2.0, 3),
+         "weight": round(float(spike["end"]) - float(spike["start"]), 3)}
+        for spike in raw
+    ]
+
+
+def spikes_within(spikes: list[dict], start: float, end: float) -> list[dict]:
+    """The spikes falling inside one clip's source window, re-based to seconds
+    from the window's start so pick_thumbnail_timestamp's safe-band maths works
+    on the clip's own timeline."""
+    return [
+        {"at": spike["at"] - start, "weight": spike["weight"]}
+        for spike in spikes
+        if start <= spike["at"] <= end
+    ]
+
+
+def generate_thumbnails(
+    config: Config, entries: list[dict], output_dir: str, video_path: str
+) -> list[str]:
+    """Best-effort poster per clip, cut from the SOURCE recording rather than
+    from the rendered clip.
+
+    The rendered clip is already letterboxed for pad/original-16:9 crop styles
+    and carries burned-in captions, so a frame lifted from it makes a poster
+    with black bars and a subtitle across it. The source frame is clean 16:9:
+    the cover-fit in build_thumbnail_command zooms it to fill 1080x1920 edge to
+    edge, which is what a thumbnail needs.
+
+    Fail-open like every other optional feature: a poster failure is warned
+    about and never undoes an already-rendered clip.
+    """
     from scripts.thumbnail import generate_thumbnail, pick_thumbnail_timestamp
 
     thumbnail = config.thumbnail
+    all_spikes = load_energy_spikes(config, video_path) if thumbnail.timestamp_strategy == "energy" else []
     written: list[str] = []
     for entry in entries:
         clip_path = Path(output_dir) / entry["output_filename"]
         poster_path = clip_path.with_suffix(".thumb.png")
         try:
-            duration = probe_video(str(clip_path))["duration"]
-            spikes = entry.get("energy_spikes") if thumbnail.timestamp_strategy == "energy" else None
-            timestamp = pick_thumbnail_timestamp(duration, spikes)
+            start, end = entry_source_window(entry)
+            timestamp = start + pick_thumbnail_timestamp(
+                end - start, spikes_within(all_spikes, start, end)
+            )
             generate_thumbnail(
-                str(clip_path),
-                _thumbnail_text(entry, config),
+                video_path,
+                _thumbnail_text(entry),
                 str(poster_path),
                 timestamp=timestamp,
                 width=thumbnail.width,
@@ -358,7 +408,7 @@ def main() -> None:
     if args.dry_run:
         return
     if config.thumbnail.enabled:
-        generate_thumbnails(config, rendered, output_dir)
+        generate_thumbnails(config, rendered, output_dir, args.input_video)
     print(f"{len(rendered)} clips rendered into {output_dir}")
 
 
