@@ -5,6 +5,33 @@ import json
 from pathlib import Path
 
 
+def pauses_from_word_gaps(
+    words: list[dict], min_gap_seconds: float = 1.0, guard_seconds: float = 0.1
+) -> list[dict]:
+    """Derives pause windows from gaps between spoken words.
+
+    silence.py only sees *amplitude*: on a gameplay track the engine, gunfire
+    and music hold the level above the file's own loudnorm gate, so a stretch
+    where nobody says anything is not "silent" and no pause is reported. On the
+    2026-08-01 batch that left a 6.8s dead spot inside a 43.9s clip with zero
+    detected pauses. The transcript knows better - a gap between consecutive
+    words is dead talk regardless of how loud the game is underneath.
+
+    Returns the same {"start", "end"} shape as silence.find_pauses so the two
+    sources can be concatenated and fed to compute_keep_segments together.
+    Cutting one of these does jump the game audio (it was never silent), which
+    is why the caller should pair it with a boundary transition rather than a
+    hard cut.
+    """
+    pauses: list[dict] = []
+    for previous, word in zip(words, words[1:]):
+        start = float(previous["end"]) + guard_seconds
+        end = float(word["start"]) - guard_seconds
+        if end - start >= min_gap_seconds:
+            pauses.append({"start": round(start, 3), "end": round(end, 3)})
+    return pauses
+
+
 def clamp_cuts_to_words(
     cuts: list[tuple[float, float]],
     words: list[dict],

@@ -11,10 +11,44 @@ from scripts.jumpcuts import (
     compute_boundary_windows,
     compute_keep_segments,
     drop_boundary,
+    pauses_from_word_gaps,
     remap_timestamp,
     remap_words,
     total_kept_duration,
 )
+
+
+def test_pauses_from_word_gaps_finds_gap_amplitude_detection_would_miss():
+    words = [
+        {"word": "блядь", "start": 20.0, "end": 22.5},
+        {"word": "Не", "start": 29.3, "end": 29.6},
+    ]
+
+    assert pauses_from_word_gaps(words, min_gap_seconds=1.0) == [{"start": 22.6, "end": 29.2}]
+
+
+def test_pauses_from_word_gaps_ignores_natural_breathing_gaps():
+    words = [
+        {"word": "раз", "start": 0.0, "end": 1.0},
+        {"word": "два", "start": 1.6, "end": 2.0},
+        {"word": "три", "start": 2.5, "end": 3.0},
+    ]
+
+    assert pauses_from_word_gaps(words, min_gap_seconds=1.0) == []
+
+
+def test_pauses_from_word_gaps_merges_with_silence_pauses_for_keep_segments():
+    words = [
+        {"word": "раз", "start": 0.0, "end": 2.0},
+        {"word": "два", "start": 10.0, "end": 11.0},
+    ]
+    silence_pauses = [{"start": 14.0, "end": 18.0}]
+
+    merged = silence_pauses + pauses_from_word_gaps(words, min_gap_seconds=1.0)
+    segments = compute_keep_segments(0.0, 20.0, merged, 1.0, words=words)
+
+    assert segments == [(0.0, 2.1), (9.9, 14.0), (18.0, 20.0)]
+    assert [w["word"] for w in remap_words(words, segments)] == ["раз", "два"]
 
 
 def test_clamp_cuts_to_words_keeps_dead_air_cut():
