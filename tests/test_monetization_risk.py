@@ -5,7 +5,9 @@ from pathlib import Path
 import pytest
 
 from scripts.monetization_risk import (
+    censor_words,
     extract_text,
+    find_risky_spans,
     load_rules,
     main,
     score_all_platforms,
@@ -164,3 +166,57 @@ def test_cli_flags_the_restricted_clip_from_its_words_file(tmp_path, capsys, mon
     result = json.loads(printed.rsplit("\n", 2)[0])
     assert result["flags"] == ["age_restriction"]
     assert result["risk_level"] == "high"
+
+
+def _words(*tokens, step=0.5):
+    return [
+        {"word": f" {token}", "start": round(index * step, 3), "end": round(index * step + 0.3, 3)}
+        for index, token in enumerate(tokens)
+    ]
+
+
+RISK_RULES = {
+    "updated": "2026-08-06",
+    "youtube": {"age_restriction": {"keywords": ["член ломать"], "severity": "high"}},
+}
+
+
+def test_find_risky_spans_maps_a_phrase_back_onto_the_clip_timeline():
+    words = _words("надо", "было", "член", "ломать", "нахуй")
+
+    spans, indices = find_risky_spans(words, RISK_RULES, pad_seconds=0.1)
+
+    assert indices == [2, 3]
+    # "член" starts at 1.0, "ломать" ends at 1.8, padded by 0.1 each side
+    assert spans == [[0.9, 1.9]]
+
+
+def test_find_risky_spans_ignores_categories_it_was_not_asked_for():
+    words = _words("надо", "было", "член", "ломать")
+
+    spans, indices = find_risky_spans(words, RISK_RULES, categories=("hate_speech",))
+
+    assert (spans, indices) == ([], [])
+
+
+def test_find_risky_spans_fails_open_on_empty_input():
+    assert find_risky_spans([], RISK_RULES) == ([], [])
+    assert find_risky_spans(_words("что-то"), {}) == ([], [])
+
+
+def test_find_risky_spans_does_not_match_across_a_crew_member_phrase():
+    words = _words("выбило", "члена", "экипажа", "надо", "чинить")
+
+    assert find_risky_spans(words, load_rules(RULES_PATH)) == ([], [])
+
+
+def test_censor_words_stars_the_word_and_keeps_its_timing():
+    words = _words("надо", "член", "ломать")
+    original_start = words[1]["start"]
+
+    censor_words(words, [1])
+
+    # same convention as the subtitle profanity mask: keep_ratio of the
+    # characters stay visible, the tail becomes '*'
+    assert words[1]["word"] == " чл**"
+    assert words[1]["start"] == original_start

@@ -216,10 +216,48 @@ def main() -> None:
     parser.add_argument(
         "--max-spans", type=int, default=None, help="Fail-open cap on merged span count (see Pitfall 5)"
     )
+    parser.add_argument(
+        "--risk-rules", default=None,
+        help="Also mask platform-risk phrases from this ruleset (data/monetization_rules.yaml). "
+        "Their spans are merged into the output AND the matched words are starred out in the "
+        "words file in place, since a burned-in caption is read as readily as the audio.",
+    )
+    parser.add_argument(
+        "--risk-platform", default="youtube", help="Which platform's rules --risk-rules scores against"
+    )
+    parser.add_argument(
+        "--risk-categories", default="age_restriction",
+        help="Comma-separated rule categories to mask. Only categories that are a hard publishing "
+        "problem belong here - advisory ones (hate_speech) are for the creator to judge, not to bleep.",
+    )
+    parser.add_argument("--keep-ratio", type=float, default=0.4, help="Fraction of a starred word left visible")
     args = parser.parse_args()
 
     words = json.loads(Path(args.words_json).read_text(encoding="utf-8"))
     wordlist = load_wordlist(args.wordlist)
+
+    # Risky phrases are resolved BEFORE the profanity pass so both kinds of
+    # mask land in one list: a clip has exactly one set of spans to bleep, and
+    # deciding it in one place is what stops one of them being forgotten.
+    risk_spans: list[list[float]] = []
+    if args.risk_rules:
+        from scripts.monetization_risk import censor_words, find_risky_spans, load_rules
+
+        risk_spans, hit_indices = find_risky_spans(
+            words,
+            load_rules(args.risk_rules),
+            platform=args.risk_platform,
+            categories=tuple(c.strip() for c in args.risk_categories.split(",") if c.strip()),
+            pad_seconds=args.pad_seconds,
+        )
+        if hit_indices:
+            censor_words(words, hit_indices, keep_ratio=args.keep_ratio)
+            Path(args.words_json).write_text(
+                json.dumps(words, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            starred = ", ".join(words[i]["word"].strip() for i in hit_indices)
+            print(f"[risk] masked in audio and captions: {starred}", file=sys.stderr)
+
     spans = find_profane_spans(
         words,
         wordlist,
@@ -228,6 +266,7 @@ def main() -> None:
         clip_duration=args.clip_duration,
         max_spans=args.max_spans,
     )
+    spans = sorted([list(span) for span in spans] + risk_spans)
 
     print(json.dumps(spans, ensure_ascii=False))
     print(args.words_json)

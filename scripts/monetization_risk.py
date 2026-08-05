@@ -111,6 +111,79 @@ def score_transcript(text: str, platform: str, rules: dict) -> dict:
     }
 
 
+def find_risky_spans(
+    words: list[dict],
+    rules: dict,
+    platform: str = "youtube",
+    categories: tuple[str, ...] = ("age_restriction",),
+    pad_seconds: float = 0.08,
+) -> tuple[list[list[float]], list[int]]:
+    """Turns risky PHRASES into maskable word spans on the clip's timeline.
+
+    Returns (spans, word_indices): time spans ready to merge into a plan
+    entry's `profanity_spans`, and the indices of the words to star out in the
+    burned captions. YouTube reads the picture as well as the audio, so a
+    phrase has to go from both or it hasn't gone at all.
+
+    The rules match on phrases (never bare stems - "член экипажа" is ordinary
+    speech), which is why this maps character offsets back to words rather than
+    testing tokens one at a time the way profanity matching does.
+
+    Fail-open: no rules, no words, or no match yields ([], []).
+    """
+    if not words or not rules:
+        return [], []
+
+    # Build exactly the text score_transcript will normalize to, remembering
+    # where each word landed, so a match's character offsets map back to words.
+    pieces, bounds, cursor = [], [], 0
+    for index, word in enumerate(words):
+        token = str(word.get("word", "")).strip()
+        if not token:
+            continue
+        if pieces:
+            cursor += 1  # the single joining space
+        pieces.append(token)
+        bounds.append((cursor, cursor + len(token), index))
+        cursor += len(token)
+
+    result = score_transcript(" ".join(pieces), platform, rules)
+
+    spans: list[list[float]] = []
+    hit_indices: list[int] = []
+    for flagged in result["flagged_spans"]:
+        if flagged["reason"] not in categories:
+            continue
+        touched = [
+            index for start, end, index in bounds
+            if start < flagged["end"] and end > flagged["start"]
+        ]
+        if not touched:
+            continue
+        hit_indices.extend(touched)
+        spans.append([
+            round(float(words[touched[0]]["start"]) - pad_seconds, 3),
+            round(float(words[touched[-1]]["end"]) + pad_seconds, 3),
+        ])
+
+    return spans, sorted(set(hit_indices))
+
+
+def censor_words(words: list[dict], indices: list[int], keep_ratio: float = 0.4) -> list[dict]:
+    """Stars out the given words in place, preserving their timings - the
+    burned captions are built from this list, so this is what keeps the phrase
+    off the screen as well as out of the audio."""
+    from scripts.profanity import mask_token
+
+    for index in indices:
+        token = str(words[index].get("word", ""))
+        stripped = token.strip()
+        if not stripped:
+            continue
+        words[index]["word"] = token.replace(stripped, mask_token(stripped, keep_ratio))
+    return words
+
+
 def extract_text(raw_text: str) -> str:
     """Pulls the spoken text out of whatever transcript shape was handed over.
 
