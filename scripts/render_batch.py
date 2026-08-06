@@ -27,6 +27,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Running this file directly puts scripts/ on sys.path, not the repo root, so
+# `scripts` is not importable as a package - and SKILL.md documents running it
+# exactly that way. Put the repo root first, before the sibling imports below.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from scripts.config import Config, load_config
 
 SOCIAL_PLATFORMS = ("twitch", "kick", "telegram")

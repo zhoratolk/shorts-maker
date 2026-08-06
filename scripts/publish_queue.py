@@ -906,9 +906,20 @@ def run_command(
 
 
 def main() -> None:
+    # Clip titles are Russian and the Windows console defaults to cp1251, so
+    # --list died with UnicodeEncodeError on any title carrying a character
+    # outside that codepage - an em dash was enough. Printing is this tool's
+    # whole read path; make it independent of the console's codepage.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
     parser = build_argument_parser()
     args = parser.parse_args()
 
+    if __package__ in (None, ""):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from scripts.config import load_config
     from scripts.youtube_analytics import load_credentials
     from googleapiclient.discovery import build

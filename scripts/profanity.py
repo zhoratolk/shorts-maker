@@ -241,6 +241,14 @@ def main() -> None:
     # deciding it in one place is what stops one of them being forgotten.
     risk_spans: list[list[float]] = []
     if args.risk_rules:
+        # This is the one place a script reaches for a sibling module, so it is
+        # also the one place `python scripts/profanity.py ...` can fail on the
+        # import: running a file directly puts scripts/ on sys.path, not the
+        # repo root, and `scripts` is then not a package. Tests never saw it -
+        # pytest sets pythonpath=["."]. Put the repo root on the path first.
+        repo_root = str(Path(__file__).resolve().parent.parent)
+        if repo_root not in sys.path:
+            sys.path.insert(0, repo_root)
         from scripts.monetization_risk import censor_words, find_risky_spans, load_rules
 
         risk_spans, hit_indices = find_risky_spans(

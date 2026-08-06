@@ -19,6 +19,12 @@ import json
 import sys
 from pathlib import Path
 
+# Running this file directly puts scripts/ on sys.path, not the repo root, so
+# `scripts` is not importable as a package - and SKILL.md documents running it
+# exactly that way. Put the repo root first, before the sibling imports below.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from scripts.config import Config, load_config
 from scripts.publish_queue import enqueue, interleave_loops, load_queue, save_queue
 from scripts.render_batch import is_loop_entry

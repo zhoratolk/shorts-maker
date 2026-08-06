@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import subprocess
 import sys
@@ -383,3 +384,33 @@ def test_mask_cues_empty_wordlist_returns_unchanged():
     masked = mask_cues(cues, {"ru": [], "en": []}, keep_ratio=0.4)
 
     assert masked[0]["text"] == "бля fuck"
+
+
+def test_cli_risk_rules_works_when_run_as_a_script(tmp_path):
+    """`python scripts/profanity.py ... --risk-rules ...` is how SKILL.md step 5
+    invokes this, and running a file directly puts scripts/ on sys.path rather
+    than the repo root - so the sibling import used to raise ModuleNotFoundError
+    for every real call while passing here, because pytest sets pythonpath=["."].
+    """
+    words = tmp_path / "clip_words.json"
+    words.write_text(
+        json.dumps([{"word": w, "start": index * 0.5, "end": index * 0.5 + 0.3}
+                    for index, w in enumerate((" надо", " было", " член", " ломать"))]),
+        encoding="utf-8",
+    )
+    repo_root = Path(__file__).resolve().parent.parent
+
+    # The child writes Cyrillic to stderr; without this it encodes to the
+    # Windows console codepage and decoding it as UTF-8 here blows up.
+    environment = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    result = subprocess.run(
+        [sys.executable, "scripts/profanity.py", str(words),
+         "--wordlist", "data/profanity_wordlist.yaml",
+         "--risk-rules", "data/monetization_rules.yaml"],
+        cwd=repo_root, capture_output=True, text=True, encoding="utf-8", env=environment,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout.splitlines()[0]), "the risky phrase should produce a span"
+    assert "[risk]" in result.stderr
+    assert "**" in words.read_text(encoding="utf-8"), "matched words are starred in place"

@@ -1,3 +1,6 @@
+import json
+import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1469,3 +1472,34 @@ def test_main_logs_a_crash_that_happens_outside_the_upload_path(tmp_path, monkey
 
 def _raise_boom(*args, **kwargs):
     raise RuntimeError("boom")
+
+
+def test_cli_list_prints_titles_a_cp1251_console_cannot_encode(tmp_path):
+    """--list is the queue's read path and it died with UnicodeEncodeError on any
+    title carrying a character outside the Windows console codepage - an em dash
+    was enough. PYTHONIOENCODING=cp1251 reproduces that console here.
+    """
+    queue_path = tmp_path / "queue.json"
+    queue_path.write_text(json.dumps({"entries": [
+        {"clip_id": "c1", "seq": 1, "status": "queued", "title": "Слабоумие и отвага — и сразу минус",
+         "video_path": str(tmp_path / "c1.mp4"), "description": "", "tags": []},
+    ]}, ensure_ascii=False), encoding="utf-8")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        f"input_dir: {json.dumps(str(tmp_path))}\n"
+        f"output_dir: {json.dumps(str(tmp_path))}\n"
+        "publish:\n  enabled: true\n"
+        f"  queue_path: {json.dumps(str(queue_path))}\n"
+        f"  notifications_path: {json.dumps(str(tmp_path / 'notify.log'))}\n",
+        encoding="utf-8",
+    )
+    repo_root = Path(__file__).resolve().parent.parent
+
+    result = subprocess.run(
+        [sys.executable, "scripts/publish_queue.py", "--list", "--config", str(config_path)],
+        cwd=repo_root, capture_output=True, text=True, encoding="utf-8",
+        env={**os.environ, "PYTHONIOENCODING": "cp1251"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Слабоумие и отвага" in result.stdout
