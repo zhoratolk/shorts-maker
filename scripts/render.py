@@ -508,6 +508,7 @@ def build_profanity_mask_filter(
 def build_profanity_sound_filter(
     spans: list[tuple[float, float]],
     sound_input_index: int,
+    sound_volume: float = 1.0,
 ) -> tuple[str, list[str], int] | None:
     """Builds the mute-clause + censor-branch pieces of the custom-sound
     profanity mask (07-05 mask_mode="sound"): instead of duck+garble, the
@@ -524,11 +525,18 @@ def build_profanity_sound_filter(
     stage is only present when there is more than one span (single-span case
     reads directly from [sound_input_index:a], no asplit needed).
 
+    sound_volume (config.profanity.mask_sound_volume) is a gain applied to
+    the looped censor clip itself, independent of duck_volume (which only
+    applies to the "garble" mask mode) - the underlying speech is already
+    fully muted in-span, so this is purely how loud the beep plays.
+
     Returns None when spans is empty (no masking needed - mirrors
     build_profanity_mask_filter).
     """
     if not spans:
         return None
+    if sound_volume <= 0:
+        raise RenderError(f"sound_volume must be > 0, got {sound_volume}")
     for start, end in spans:
         if start < 0 or end <= start:
             raise RenderError(f"invalid profanity span ({start}, {end})")
@@ -545,12 +553,13 @@ def build_profanity_sound_filter(
     else:
         sources = [f"[{sound_input_index}:a]"]
 
+    volume_clause = f",volume={sound_volume}" if sound_volume != 1.0 else ""
     for index, (start, end) in enumerate(spans):
         span_duration = round(end - start, 3)
         start_ms = round(start * 1000)
         censor_branches.append(
             f"{sources[index]}aloop=loop=-1:size=2e9,atrim=0:{span_duration},"
-            f"asetpts=PTS-STARTPTS,adelay={start_ms}:all=1[c{index}]"
+            f"asetpts=PTS-STARTPTS{volume_clause},adelay={start_ms}:all=1[c{index}]"
         )
 
     return mute_clause, censor_branches, 1
@@ -1417,6 +1426,7 @@ def render_clip(
     profanity_warble_depth: float = 0.7,
     profanity_mask_mode: str = "garble",
     profanity_mask_sound_path: str = "",
+    profanity_mask_sound_volume: float = 1.0,
     video_codec: str = "libx264",
     preset: str | None = None,
     crf: int | None = None,
@@ -1609,7 +1619,9 @@ def render_clip(
         profanity_sound = None
         if profanity_sound_pending is not None:
             spans, sound_path = profanity_sound_pending
-            sound_filter_result = build_profanity_sound_filter(spans, sound_input_index=len(members))
+            sound_filter_result = build_profanity_sound_filter(
+                spans, sound_input_index=len(members), sound_volume=profanity_mask_sound_volume
+            )
             if sound_filter_result is not None:
                 mute_clause, censor_branches, _ = sound_filter_result
                 profanity_sound = (sound_path, mute_clause, censor_branches)
@@ -1645,7 +1657,9 @@ def render_clip(
             spans, sound_path = profanity_sound_pending
             # Single existing -i input for both build_jumpcut_command and
             # build_ffmpeg_command, so the sound file always lands at index 1.
-            sound_filter_result = build_profanity_sound_filter(spans, sound_input_index=1)
+            sound_filter_result = build_profanity_sound_filter(
+                spans, sound_input_index=1, sound_volume=profanity_mask_sound_volume
+            )
             if sound_filter_result is not None:
                 mute_clause, censor_branches, _ = sound_filter_result
                 profanity_sound = (sound_path, mute_clause, censor_branches)
@@ -1938,6 +1952,11 @@ def main() -> None:
         "(a missing file fails open to the garble mask)",
     )
     parser.add_argument(
+        "--profanity-mask-sound-volume", type=float, default=1.0,
+        help="Gain applied to the censor sound clip itself, used only when --profanity-mask-mode=sound "
+        "(the underlying speech is already fully muted in-span; this is purely how loud the beep plays)",
+    )
+    parser.add_argument(
         "--video-codec", default="libx264",
         help="ffmpeg -c:v encoder to use, e.g. h264_nvenc for NVIDIA hardware encoding (default: libx264)",
     )
@@ -2118,6 +2137,7 @@ def main() -> None:
             crf=args.crf,
             profanity_mask_mode=args.profanity_mask_mode,
             profanity_mask_sound_path=args.profanity_mask_sound_path,
+            profanity_mask_sound_volume=args.profanity_mask_sound_volume,
             banner_mode=args.banner_mode,
             banner_font=args.banner_font,
             banner_size=args.banner_size,

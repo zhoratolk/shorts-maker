@@ -284,6 +284,12 @@ class ProfanityConfig:
     # recover the word from its onset + context); 0 = mask from the word's
     # start (current behavior, byte-identical).
     mask_onset_seconds: float = 0.0
+    # Gain applied to the censor sound clip itself, only when mask_mode ==
+    # "sound" - the underlying speech is fully muted in-span regardless, so
+    # this is purely how loud the beep plays over that silence. 1.0 = clip's
+    # native volume (can read as jarringly loud next to ducked/normal
+    # speech); < 1.0 attenuates it down.
+    mask_sound_volume: float = 0.6
 
 
 @dataclasses.dataclass
@@ -768,6 +774,10 @@ def _validate(config: Config) -> None:
         raise ConfigError(
             "profanity.mask_sound_path must be set to a non-empty path when "
             "profanity.mask_mode is 'sound'"
+        )
+    if config.profanity.mask_sound_volume <= 0:
+        raise ConfigError(
+            f"profanity.mask_sound_volume must be > 0, got {config.profanity.mask_sound_volume}"
         )
     if config.hook_banner.mode not in ("hook", "persistent"):
         raise ConfigError(

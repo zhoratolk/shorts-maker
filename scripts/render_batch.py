@@ -128,7 +128,10 @@ def build_render_args(
             "--profanity-mask-mode", profanity.mask_mode,
         ]
         if profanity.mask_sound_path:
-            args += ["--profanity-mask-sound-path", profanity.mask_sound_path]
+            args += [
+                "--profanity-mask-sound-path", profanity.mask_sound_path,
+                "--profanity-mask-sound-volume", str(profanity.mask_sound_volume),
+            ]
 
     if config.hook_banner.enabled:
         banner = config.hook_banner

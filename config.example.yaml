@@ -302,6 +302,10 @@ profanity:
   # clean - keep this <= ~0.12, larger values let speech-to-text recover
   # the word from its onset + context. 0 = mask from the word's start.
   mask_onset_seconds: 0.0
+  # Gain on the censor sound clip itself, only used when mask_mode is
+  # sound - speech is already fully muted in-span, this is purely how
+  # loud the beep plays. 1.0 = clip's native volume.
+  mask_sound_volume: 1.0
 
 transitions:
   # Context-driven transitions (crossfade/whip pan/mask-wipe/glitch/match cut)
