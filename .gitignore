@@ -24,6 +24,10 @@ tiktok_client_key.json
 tiktok_token.json
 instagram_client_secret.json
 instagram_token.json
+comments_token.json
+# Catch-all for any other OAuth token file dropped at repo root, named or not
+# yet listed explicitly above - never rely on remembering to list one by name.
+*_token.json
 # Rotated/revoked credential backups (e.g. token.json.revoked-YYYY-MM-DD,
 # upload_token.json.expired-YYYY-MM-DD) - same secrets, must never be tracked.
 *token*.revoked-*
