@@ -248,8 +248,10 @@ class ProfanityConfig:
     # masking, to absorb Whisper's inherent word-boundary alignment drift
     # (measured ~100-400ms in published Whisper-family comparisons) so the
     # mask doesn't clip the onset/tail of the actual spoken word
-    # (07-RESEARCH.md Pitfall 2).
-    pad_seconds: float = 0.08
+    # (07-RESEARCH.md Pitfall 2). 0.2 sits mid-range of that measured drift -
+    # 0.08 (the original default) undershot it, letting a word's tail leak
+    # past the mask often enough in practice to be a recurring complaint.
+    pad_seconds: float = 0.2
     # Fail-open defensive cap on spans masked per clip - an unrealistically
     # large match count (pathological wordlist, normalization bug, or a
     # genuinely very sweary clip) skips masking (warn + continue) instead of

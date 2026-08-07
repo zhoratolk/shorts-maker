@@ -271,7 +271,7 @@ profanity:
   # Pads every detected word span this many seconds on each side before
   # masking, to absorb Whisper's own word-timestamp alignment drift so the
   # mask doesn't clip the onset/tail of the actual spoken word.
-  pad_seconds: 0.08
+  pad_seconds: 0.2
   # Fail-open defensive cap on masked spans per clip - an unrealistically
   # large match count skips masking (warn + continue) instead of growing
   # the ffmpeg filter graph unbounded.
