@@ -165,6 +165,26 @@ def test_encoder_settings_come_from_config():
     assert flag_value(args, "--crf") == "21"
 
 
+def test_hwaccel_none_is_omitted_default():
+    args = build_render_args(make_config(), "v", "p", "o")
+    assert "--hwaccel" not in args
+
+
+def test_hwaccel_cuda_is_passed_through():
+    args = build_render_args(make_config(video={"hwaccel": "cuda"}), "v", "p", "o")
+    assert flag_value(args, "--hwaccel") == "cuda"
+
+
+def test_parallel_clips_one_is_omitted_default():
+    args = build_render_args(make_config(), "v", "p", "o")
+    assert "--render-parallel-clips" not in args
+
+
+def test_parallel_clips_above_one_is_passed_through():
+    args = build_render_args(make_config(video={"parallel_clips": 4}), "v", "p", "o")
+    assert flag_value(args, "--render-parallel-clips") == "4"
+
+
 def test_write_pass_plan_writes_bom_free_utf8(tmp_path):
     plan = tmp_path / "PLAN.json"
     plan.write_text("[]", encoding="utf-8")

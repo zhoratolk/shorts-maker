@@ -523,6 +523,17 @@ video:
   codec: libx264
   preset: ""
   crf: null
+  # ffmpeg -hwaccel for the source input's decode only (e.g. "cuda" on an
+  # NVIDIA ffmpeg build) - "none" omits the flag, byte-identical. The
+  # filter chain (crop/subtitles/effects) stays CPU-side regardless, so
+  # this only ever speeds up decode.
+  hwaccel: none
+  # How many clips render.py runs concurrently from one PLAN.json. 1 is
+  # today's plain sequential loop. Raising it overlaps one clip's decode/
+  # filters with another's encode - stay under your GPU driver's NVENC
+  # session ceiling when codec is a hardware encoder (8 on modern
+  # drivers), e.g. min(4, cpu_count // 4).
+  parallel_clips: 1
 
 publish:
   # Dry-run until this is explicitly turned on: publishing is public and hard

@@ -18,6 +18,7 @@ from scripts.render_common import (
     _escape_drawtext_text,
     _wrap_banner_lines,
     encode_flags,
+    hwaccel_flags,
     resolve_banner_font,
 )
 
@@ -715,6 +716,7 @@ def build_ffmpeg_command(
     crf: int | None = None,
     banner_filter: str | None = None,
     emphasis_filter: str | None = None,
+    hwaccel: str = "none",
 ) -> list[str]:
     """profanity_sound, when set, is (sound_path, mute_clause,
     censor_branches) from build_profanity_sound_filter - folds BOTH video
@@ -780,6 +782,9 @@ def build_ffmpeg_command(
         return [
             "ffmpeg", "-y",
             "-loglevel", "error",
+            # hwaccel binds to the NEXT -i only (input_path here, never the
+            # censor sound's), so it must precede -ss/-t/-i as one block.
+            *hwaccel_flags(hwaccel),
             # -t must precede its -i: placed after input_path it would bind
             # to the NEXT input (the censor sound), leaving the main input
             # unbounded and encoding the whole rest of the source.
@@ -803,6 +808,7 @@ def build_ffmpeg_command(
     return [
         "ffmpeg", "-y",
         "-loglevel", "error",
+        *hwaccel_flags(hwaccel),
         "-ss", str(start),
         "-t", str(total_duration),
         "-i", input_path,
@@ -963,6 +969,7 @@ def build_jumpcut_command(
     banner_filter: str | None = None,
     emphasis_filter: str | None = None,
     boundary_pad_seconds: list[float] | None = None,
+    hwaccel: str = "none",
 ) -> list[str]:
     """Like build_ffmpeg_command, but keep_segments (absolute source-file
     seconds, from jumpcuts.compute_keep_segments) are trimmed out of the
@@ -1103,6 +1110,9 @@ def build_jumpcut_command(
     return [
         "ffmpeg", "-y",
         "-loglevel", "error",
+        # hwaccel binds to the NEXT -i only (input_path here, never
+        # extra_inputs' censor sound), so it precedes -ss/-t/-i as one block.
+        *hwaccel_flags(hwaccel),
         # -t before -i: as a trailing option it would bind to the next input
         # (extra_inputs' censor sound) instead of bounding this clip.
         "-ss", str(clip_start),
@@ -1225,6 +1235,7 @@ def build_compilation_command(
     crf: int | None = None,
     banner_filter: str | None = None,
     emphasis_filter: str | None = None,
+    hwaccel: str = "none",
 ) -> list[str]:
     """Multi-input ffmpeg command builder for a COMP-02 compilation entry:
     opens the source video once per compilation member (own -ss/-i/-t per
@@ -1262,9 +1273,12 @@ def build_compilation_command(
     # relative to its own member's start, not the source file's absolute time.
     input_args: list[str] = []
     for member in members:
+        # hwaccel binds to the NEXT -i only, so it must repeat before each
+        # member's own -i (there is one decode per member, not one shared).
         # -t before this member's -i: trailing it would bind to the NEXT
         # member's input (or the censor sound), shifting every duration by one.
         input_args += [
+            *hwaccel_flags(hwaccel),
             "-ss", str(member["start"]),
             "-t", str(round(member["end"] - member["start"], 3)),
             "-i", input_path,
@@ -1481,6 +1495,7 @@ def render_clip(
     outro_pattern_count: int = 5,
     outro_fps: int = 30,
     queue_index: int = 0,
+    hwaccel: str = "none",
     runner=subprocess.run,
 ) -> list[str]:
     crop_style = plan_entry["crop_style"]
@@ -1648,6 +1663,7 @@ def render_clip(
             preset=preset, crf=crf,
             banner_filter=banner_filter,
             emphasis_filter=emphasis_filter,
+            hwaccel=hwaccel,
         )
     else:
         start, end = clamp_clip_bounds(plan_entry["start"], plan_entry["end"], video_duration)
@@ -1699,6 +1715,7 @@ def render_clip(
                 banner_filter=banner_filter,
                 emphasis_filter=emphasis_filter,
                 boundary_pad_seconds=boundary_pad_seconds,
+                hwaccel=hwaccel,
             )
         else:
             command = build_ffmpeg_command(
@@ -1708,6 +1725,7 @@ def render_clip(
                 denoise_strength, profanity_filter, profanity_sound, video_codec,
                 banner_filter=banner_filter,
                 emphasis_filter=emphasis_filter,
+                hwaccel=hwaccel,
             )
 
     result = runner(command, capture_output=True, text=True)
@@ -1970,6 +1988,19 @@ def main() -> None:
         help="ffmpeg -crf quality/size knob for x264/x265 (lower = better/bigger; default: unset = "
         "encoder default). Leave unset for hardware encoders like h264_nvenc.",
     )
+    parser.add_argument(
+        "--hwaccel", default="none",
+        help="ffmpeg -hwaccel value for the SOURCE input's decode only, e.g. cuda on an NVIDIA "
+        "ffmpeg build (default: none = flag omitted, byte-identical). The filter chain stays "
+        "CPU-side regardless, so this only speeds up decode.",
+    )
+    parser.add_argument(
+        "--render-parallel-clips", type=int, default=1,
+        help="How many clips from this PLAN.json to render concurrently (default: 1 = today's "
+        "plain sequential loop). Raising it overlaps one clip's decode/filters with another's "
+        "encode - bound it under your GPU driver's NVENC session ceiling when using a hardware "
+        "encoder (8 on modern drivers), e.g. min(4, cpu_count // 4).",
+    )
     # --banner-* flags are harmless no-ops for plan entries without banner_text
     # (same convention as --profanity-*).
     parser.add_argument(
@@ -2109,7 +2140,7 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for index, entry in enumerate(plan):
+    def _render_one(index: int, entry: dict) -> str:
         output_path = str(output_dir / entry.get("output_filename", f"clip_{index:04d}.mp4"))
         render_clip(
             args.input_video, output_path, entry,
@@ -2188,8 +2219,25 @@ def main() -> None:
             outro_pattern_count=args.outro_pattern_count,
             outro_fps=args.outro_fps,
             queue_index=index,
+            hwaccel=args.hwaccel,
         )
-        print(output_path)
+        return output_path
+
+    if args.render_parallel_clips <= 1:
+        for index, entry in enumerate(plan):
+            print(_render_one(index, entry))
+    else:
+        # Concurrent renders each write their own output file, so scheduling
+        # order can't corrupt anything - futures are gathered in submission
+        # (plan) order below purely so printed paths stay in a predictable
+        # order for anything scripting off this CLI's stdout, not because
+        # rendering itself needs to happen in order.
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=args.render_parallel_clips) as pool:
+            futures = [pool.submit(_render_one, index, entry) for index, entry in enumerate(plan)]
+            for future in futures:
+                print(future.result())
 
 
 if __name__ == "__main__":

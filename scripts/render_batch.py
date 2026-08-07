@@ -193,6 +193,10 @@ def build_render_args(
         args += ["--preset", config.video.preset]
     if config.video.crf is not None:
         args += ["--crf", str(config.video.crf)]
+    if config.video.hwaccel and config.video.hwaccel != "none":
+        args += ["--hwaccel", config.video.hwaccel]
+    if config.video.parallel_clips > 1:
+        args += ["--render-parallel-clips", str(config.video.parallel_clips)]
 
     if loop_pass:
         loop = config.loop

@@ -499,6 +499,19 @@ class VideoConfig:
     codec: str = "libx264"
     preset: str = ""
     crf: int | None = None
+    # ffmpeg -hwaccel value applied to the SOURCE input's decode only (e.g.
+    # "cuda" on an NVIDIA build of ffmpeg) - "none" (default) omits the flag
+    # entirely, byte-identical to before this knob existed. The filter chain
+    # stays CPU-side regardless (crop/subtitles/effects), so this only ever
+    # speeds up decode, never changes output pixels.
+    hwaccel: str = "none"
+    # How many clips render.py runs concurrently from one PLAN.json. 1
+    # (default) is today's plain sequential loop, byte-identical output
+    # either way since each clip writes its own file - raising it overlaps
+    # one clip's decode/filters with another's encode. Bounded by the
+    # driver's NVENC session ceiling when codec is a hardware encoder (8 on
+    # modern drivers) - stay comfortably under it, e.g. min(4, cores // 4).
+    parallel_clips: int = 1
 
 
 @dataclasses.dataclass
@@ -780,6 +793,10 @@ def _validate(config: Config) -> None:
     if config.profanity.mask_sound_volume <= 0:
         raise ConfigError(
             f"profanity.mask_sound_volume must be > 0, got {config.profanity.mask_sound_volume}"
+        )
+    if config.video.parallel_clips < 1:
+        raise ConfigError(
+            f"video.parallel_clips must be >= 1, got {config.video.parallel_clips}"
         )
     if config.hook_banner.mode not in ("hook", "persistent"):
         raise ConfigError(

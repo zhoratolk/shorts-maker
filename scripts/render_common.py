@@ -37,6 +37,19 @@ def encode_flags(video_codec: str, preset: str | None = None, crf: int | None = 
     return flags
 
 
+def hwaccel_flags(hwaccel: str) -> list[str]:
+    """`-hwaccel <value>` for the SOURCE input's decode, e.g. "cuda" on an
+    NVIDIA ffmpeg build - must precede the `-i` it applies to. "none" (the
+    default everywhere this is threaded through) omits the flag entirely,
+    byte-identical to before this knob existed. The filter chain downstream
+    stays CPU-side regardless (crop/subtitles/effects never run on GPU
+    frames), so this only ever speeds up decode, never changes output
+    pixels - safe to enable independent of video_codec."""
+    if not hwaccel or hwaccel == "none":
+        return []
+    return ["-hwaccel", hwaccel]
+
+
 # Banner fonts: this Windows ffmpeg build ships fontconfig without a config
 # file, so drawtext's font=<name> lookup fails outright ("Fontconfig error:
 # Cannot load default config file") - an explicit fontfile= path is mandatory

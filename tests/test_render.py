@@ -2361,6 +2361,57 @@ def test_encode_flags_crf_zero_is_emitted():
     assert "-crf" in encode_flags("libx264", crf=0)
 
 
+# --- hwaccel_flags / decode acceleration (opt-in, default byte-identical) ---
+
+from scripts.render_common import hwaccel_flags
+
+
+def test_hwaccel_flags_none_is_empty():
+    assert hwaccel_flags("none") == []
+
+
+def test_hwaccel_flags_empty_string_is_empty():
+    assert hwaccel_flags("") == []
+
+
+def test_hwaccel_flags_cuda_emits_flag():
+    assert hwaccel_flags("cuda") == ["-hwaccel", "cuda"]
+
+
+def test_build_ffmpeg_command_hwaccel_default_omitted():
+    cmd = build_ffmpeg_command("in.mp4", "out.mp4", 10.0, 40.0, "scale=1080:1920", None, 0.5, 100.0)
+    assert "-hwaccel" not in cmd
+
+
+def test_build_ffmpeg_command_hwaccel_precedes_input():
+    cmd = build_ffmpeg_command(
+        "in.mp4", "out.mp4", 10.0, 40.0, "scale=1080:1920", None, 0.5, 100.0, hwaccel="cuda",
+    )
+    hwaccel_index = cmd.index("-hwaccel")
+    input_index = cmd.index("-i")
+    assert cmd[hwaccel_index + 1] == "cuda"
+    assert hwaccel_index < input_index
+
+
+def test_build_jumpcut_command_hwaccel_precedes_input():
+    cmd = build_jumpcut_command(
+        "in.mp4", "out.mp4", 10.0, 40.0, [(10.0, 20.0), (25.0, 40.0)],
+        "scale=1080:1920", hwaccel="cuda",
+    )
+    hwaccel_index = cmd.index("-hwaccel")
+    input_index = cmd.index("-i")
+    assert cmd[hwaccel_index + 1] == "cuda"
+    assert hwaccel_index < input_index
+
+
+def test_build_compilation_command_hwaccel_precedes_every_member_input():
+    members = [{"start": 10.0, "end": 20.0}, {"start": 50.0, "end": 60.0}]
+    cmd = build_compilation_command("in.mp4", "out.mp4", members, "scale=1080:1920", hwaccel="cuda")
+    hwaccel_count = sum(1 for token in cmd if token == "-hwaccel")
+    input_count = sum(1 for token in cmd if token == "-i")
+    assert hwaccel_count == len(members) == input_count
+
+
 def test_build_ffmpeg_command_has_no_preset_crf_by_default():
     cmd = build_ffmpeg_command(
         "in.mp4", "out.mp4", 10.0, 40.0, "scale=1080:1920", None,
