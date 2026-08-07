@@ -182,6 +182,48 @@ def test_find_profane_spans_merges_overlapping_padded_spans():
     assert spans == [(0.9, 1.5)]
 
 
+def test_find_profane_spans_end_pad_clamps_to_next_word_start():
+    words = [
+        {"word": "fuck", "start": 1.0, "end": 1.2},
+        {"word": "чисто", "start": 1.28, "end": 1.6},
+    ]
+
+    # pad_seconds=0.2 would push the end to 1.4, well past the next word's
+    # own start (1.28) - the beep must stop at that boundary instead of
+    # eating into "чисто".
+    spans = find_profane_spans(words, _TEST_WORDLIST, pad_seconds=0.2)
+
+    assert spans == [(0.8, 1.28)]
+
+
+def test_find_profane_spans_start_pad_clamps_to_previous_word_end():
+    words = [
+        {"word": "привет", "start": 0.5, "end": 0.9},
+        {"word": "fuck", "start": 0.95, "end": 1.2},
+    ]
+
+    # pad_seconds=0.2 would pull the start back to 0.75, into the previous
+    # word's own span (ends 0.9) - must clamp at 0.9 instead.
+    spans = find_profane_spans(words, _TEST_WORDLIST, pad_seconds=0.2)
+
+    assert spans == [(0.9, 1.4)]
+
+
+def test_find_profane_spans_neighbor_clamp_never_shrinks_below_word_bounds():
+    # Neighbor words sit right against the profane word's own timestamps
+    # (no gap at all) - the clamp must still cover the full word itself,
+    # never crossing below its own start/above its own end.
+    words = [
+        {"word": "привет", "start": 0.5, "end": 1.0},
+        {"word": "fuck", "start": 1.0, "end": 1.2},
+        {"word": "чисто", "start": 1.2, "end": 1.6},
+    ]
+
+    spans = find_profane_spans(words, _TEST_WORDLIST, pad_seconds=0.2)
+
+    assert spans == [(1.0, 1.2)]
+
+
 def test_find_profane_spans_remap_dropped_word_is_absent():
     # Absolute source-file timestamps, one profane word falls entirely
     # inside a cut jump-cut gap (20.0-25.0).

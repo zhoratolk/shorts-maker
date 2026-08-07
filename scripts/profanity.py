@@ -86,18 +86,25 @@ def find_profane_spans(
     than producing an empty/inverted span. onset_seconds == 0 (default)
     reproduces the original pad_seconds-on-both-sides behavior exactly.
 
+    pad_seconds is clamped against the immediate neighbor words: the padded
+    end can never cross into the next word's own start, and (when
+    onset_seconds == 0) the padded start can never cross into the previous
+    word's own end. Without this, a flat pad_seconds tuned to compensate for
+    Whisper's worst-case timestamp drift on one clip (Pitfall 2) overshoots
+    on fast back-to-back speech elsewhere and the beep visibly eats into the
+    next word instead of just covering the drift gap.
+
     Returns merged, padded (pad_seconds each side unless onset_seconds > 0
-    shifts the start), clip-bound-clamped, 3-decimal-rounded (start, end)
-    spans. Padding compensates for Whisper word-timestamp drift (Pitfall 2).
-    If the number of merged spans exceeds max_spans, fails open: warns to
-    stderr and returns [] rather than ever blocking a downstream render
-    (Pitfall 5).
+    shifts the start), neighbor- and clip-bound-clamped, 3-decimal-rounded
+    (start, end) spans. If the number of merged spans exceeds max_spans,
+    fails open: warns to stderr and returns [] rather than ever blocking a
+    downstream render (Pitfall 5).
     """
     normalize_cfg = wordlist.get("normalize") or {}
     patterns = compile_patterns(wordlist)
 
     raw_spans: list[tuple[float, float]] = []
-    for word in words:
+    for index, word in enumerate(words):
         token = normalize_word(word["word"].strip(".,!?:;\"'()"), normalize_cfg)
         if any(pattern.search(token) for pattern in patterns):
             if onset_seconds > 0:
@@ -108,7 +115,11 @@ def find_profane_spans(
                     start = word["start"] + onset_seconds
             else:
                 start = max(0.0, word["start"] - pad_seconds)
+                if index > 0:
+                    start = max(start, min(words[index - 1]["end"], word["start"]))
             end = word["end"] + pad_seconds
+            if index + 1 < len(words):
+                end = max(word["end"], min(end, words[index + 1]["start"]))
             if clip_duration is not None:
                 end = min(end, clip_duration)
             raw_spans.append((round(start, 3), round(end, 3)))
