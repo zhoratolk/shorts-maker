@@ -269,9 +269,11 @@ profanity:
   # entries - fail-open at load time (missing/malformed file -> no masking).
   wordlist_path: data/profanity_wordlist.yaml
   # Pads every detected word span this many seconds on each side before
-  # masking, to absorb Whisper's own word-timestamp alignment drift so the
-  # mask doesn't clip the onset/tail of the actual spoken word.
-  pad_seconds: 0.2
+  # masking. 0 (default) masks exactly the word's own Whisper start/end
+  # timestamps. Nonzero is neighbor-clamped so it never bleeds into an
+  # adjacent word, but still lengthens the beep whenever there's a real
+  # gap around the word.
+  pad_seconds: 0.0
   # Fail-open defensive cap on masked spans per clip - an unrealistically
   # large match count skips masking (warn + continue) instead of growing
   # the ffmpeg filter graph unbounded.

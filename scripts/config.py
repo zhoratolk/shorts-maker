@@ -246,12 +246,13 @@ class ProfanityConfig:
     wordlist_path: str = "data/profanity_wordlist.yaml"
     # Pads every detected word span by this many seconds on each side before
     # masking, to absorb Whisper's inherent word-boundary alignment drift
-    # (measured ~100-400ms in published Whisper-family comparisons) so the
-    # mask doesn't clip the onset/tail of the actual spoken word
-    # (07-RESEARCH.md Pitfall 2). 0.2 sits mid-range of that measured drift -
-    # 0.08 (the original default) undershot it, letting a word's tail leak
-    # past the mask often enough in practice to be a recurring complaint.
-    pad_seconds: float = 0.2
+    # (07-RESEARCH.md Pitfall 2). 0 (default) masks exactly the word's own
+    # start/end timestamps from Whisper, nothing more - any nonzero value
+    # here is neighbor-clamped (find_profane_spans) so it can never bleed
+    # into an adjacent word, but it still lengthens the beep on words with
+    # a genuine gap around them, which read as the beep overrunning the mat
+    # on fast back-to-back speech (recurring complaint at 0.2/0.08).
+    pad_seconds: float = 0.0
     # Fail-open defensive cap on spans masked per clip - an unrealistically
     # large match count (pathological wordlist, normalization bug, or a
     # genuinely very sweary clip) skips masking (warn + continue) instead of

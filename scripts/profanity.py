@@ -65,7 +65,7 @@ def compile_patterns(wordlist: dict) -> list[re.Pattern]:
 def find_profane_spans(
     words: list[dict],
     wordlist: dict,
-    pad_seconds: float = 0.2,
+    pad_seconds: float = 0.0,
     onset_seconds: float = 0.0,
     clip_duration: float | None = None,
     max_spans: int | None = None,
@@ -216,7 +216,7 @@ def main() -> None:
     parser.add_argument(
         "--wordlist", default="data/profanity_wordlist.yaml", help="Path to the profanity wordlist YAML file"
     )
-    parser.add_argument("--pad-seconds", type=float, default=0.2, help="Padding applied to each side of a span")
+    parser.add_argument("--pad-seconds", type=float, default=0.0, help="Padding applied to each side of a span")
     parser.add_argument(
         "--onset-seconds",
         type=float,

@@ -1110,7 +1110,7 @@ def test_load_config_profanity_defaults_when_section_missing(tmp_path):
 
     assert config.profanity.enabled is False
     assert config.profanity.wordlist_path == "data/profanity_wordlist.yaml"
-    assert config.profanity.pad_seconds == 0.2
+    assert config.profanity.pad_seconds == 0.0
     assert config.profanity.max_masked_spans_per_clip == 40
     assert config.profanity.duck_volume == 0.12
     assert config.profanity.garble_freq == 1800.0
