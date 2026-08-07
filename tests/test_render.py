@@ -1405,6 +1405,34 @@ def test_render_clip_runs_outro_finalize_pass_and_rotates_pattern():
     assert OUTRO_PATTERNS[1]["c0"] in graph  # queue_index=1 => preset 1
 
 
+def test_render_clip_suppresses_body_fade_when_outro_card_renders():
+    commands = []
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom"}
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        fade_seconds=0.5,
+        outro_enabled=True, outro_nick="ZhorikP", outro_cta="twitch.tv/zhorikp",
+        outro_icon_path="twitch.png",
+        runner=_overlay_capture_runner(commands),
+    )
+    base_command = commands[0]
+    assert "fade=t=out" not in " ".join(base_command)
+
+
+def test_render_clip_keeps_body_fade_when_no_outro_card():
+    commands = []
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom"}
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        fade_seconds=0.5,
+        runner=_overlay_capture_runner(commands),
+    )
+    base_command = commands[0]
+    assert "fade=t=out" in " ".join(base_command)
+
+
 def test_render_clip_skips_finalize_when_phase10_disabled():
     commands = []
     plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom"}

@@ -1498,6 +1498,15 @@ def render_clip(
     hwaccel: str = "none",
     runner=subprocess.run,
 ) -> list[str]:
+    # An outro card gets appended right after this clip's own render (see the
+    # overlay-pass block below) - if the base clip also fades to black/silence
+    # at its own tail, the last phrase dims/cuts out well before the card
+    # actually appears instead of ending clean into it. Suppress the body fade
+    # whenever a real outro card is about to render (same presence check used
+    # below at the overlay-pass site); the outro card is the transition out.
+    if outro_enabled and (outro_nick or outro_tagline or outro_cta or outro_icon_path):
+        fade_seconds = 0.0
+
     crop_style = plan_entry["crop_style"]
     crop_focus_x = plan_entry.get("crop_focus_x", 50.0)
     crop_filter = compute_crop_filter(crop_style, src_width, src_height, crop_focus_x)
