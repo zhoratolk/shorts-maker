@@ -1754,10 +1754,25 @@ def render_clip(
         tmp_path = final_path.with_name(final_path.stem + "__coldopen" + final_path.suffix)
         try:
             base_duration = probe_video(output_path, runner=runner)["duration"]
-            if at < 0 or teaser_duration <= 0 or at + teaser_duration > base_duration:
+            # Clamp rather than bail: the planned window is computed against
+            # the sum of the keep segments, which drifts from the encoder's
+            # own duration by a few frames. On 2026-08-10 an overshoot of 7ms
+            # ([17.107, 19.107] in a 19.1s clip) cost a clip its whole teaser,
+            # and the run still exited 0 - a silent downgrade nobody sees.
+            requested = (at, teaser_duration)
+            at = min(max(at, 0.0), max(base_duration - 0.05, 0.0))
+            teaser_duration = min(teaser_duration, base_duration - at)
+            if teaser_duration <= 0:
                 raise RenderError(
-                    f"cold_open window [{at}, {at + teaser_duration}] does not fit in the "
-                    f"rendered clip's own duration ({base_duration}s)"
+                    f"cold_open window [{requested[0]}, {requested[0] + requested[1]}] leaves "
+                    f"nothing inside the rendered clip's own duration ({base_duration}s)"
+                )
+            if (at, teaser_duration) != requested:
+                print(
+                    f"[warn] cold_open window [{requested[0]}, {requested[0] + requested[1]}] "
+                    f"overshot the rendered clip ({base_duration}s); clamped to "
+                    f"[{round(at, 3)}, {round(at + teaser_duration, 3)}]",
+                    file=sys.stderr,
                 )
             cold_open_command = build_cold_open_command(
                 output_path, str(tmp_path), at, teaser_duration,

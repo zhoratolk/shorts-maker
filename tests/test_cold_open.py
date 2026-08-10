@@ -1,6 +1,10 @@
 import pytest
 
-from scripts.cold_open import VALID_COLD_OPEN_TRANSITIONS, build_cold_open_command
+from scripts.cold_open import (
+    VALID_COLD_OPEN_TRANSITIONS,
+    build_cold_open_command,
+    cold_open_window,
+)
 from scripts.render_common import RenderError
 
 
@@ -74,3 +78,52 @@ def test_build_cold_open_command_rejects_negative_at():
 def test_build_cold_open_command_rejects_non_positive_duration():
     with pytest.raises(RenderError, match="duration must be > 0"):
         build_cold_open_command("base.mp4", "out.mp4", at=0.0, duration=0.0)
+
+
+def _words(*pairs):
+    return [{"word": w, "start": s, "end": e} for w, s, e in pairs]
+
+
+def test_cold_open_window_ends_on_the_punch_line_not_two_seconds_after_it():
+    # The 2026-08-10 failure: a fixed 2s window teased "меня зовут Джорно
+    # Джованна" and cut "и у меня есть мечта" - the punch itself.
+    words = _words(
+        ("меня", 5.0, 5.3), ("зовут", 5.3, 5.7), ("Джорно", 5.7, 6.2),
+        ("Джованна", 6.2, 6.9), ("и", 7.0, 7.1), ("у", 7.1, 7.2),
+        ("меня", 7.2, 7.5), ("есть", 7.5, 7.8), ("мечта", 7.8, 8.4),
+    )
+
+    window = cold_open_window(words, 5.0, 20.0)
+
+    assert window["at"] == 5.0
+    assert window["at"] + window["duration"] == 8.4
+
+
+def test_cold_open_window_caps_a_run_on_phrase_and_keeps_its_tail():
+    words = _words(*[(f"w{i}", float(i), i + 0.9) for i in range(12)])
+
+    window = cold_open_window(words, 0.0, 30.0)
+
+    assert window["duration"] == 4.0
+    # Capped from the END, so the punch still lands inside the teaser.
+    assert round(window["at"] + window["duration"], 3) == 11.9
+
+
+def test_cold_open_window_stops_at_a_pause_between_phrases():
+    words = _words(("панч", 2.0, 2.6), ("тут", 2.6, 3.0), ("другое", 5.0, 5.6))
+
+    window = cold_open_window(words, 2.0, 20.0)
+
+    assert window["at"] + window["duration"] <= 5.0
+
+
+def test_cold_open_window_never_overshoots_the_clip():
+    words = _words(("панч", 17.0, 19.2))
+
+    window = cold_open_window(words, 17.0, 19.1)
+
+    assert window["at"] + window["duration"] <= 19.1
+
+
+def test_cold_open_window_returns_none_when_the_punch_sits_past_the_clip():
+    assert cold_open_window(_words(("панч", 1.0, 1.5)), 25.0, 20.0) is None

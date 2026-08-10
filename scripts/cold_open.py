@@ -30,6 +30,61 @@ _XFADE_NAMES = {"crossfade": "fade", "whip_pan": "hblur", "mask_wipe": "wipeleft
 VALID_COLD_OPEN_TRANSITIONS = frozenset({"cut", *_XFADE_NAMES})
 
 
+COLD_OPEN_MIN_SECONDS = 1.2
+COLD_OPEN_MAX_SECONDS = 4.0
+_PHRASE_GAP_SECONDS = 0.6
+
+
+def cold_open_window(
+    words: list[dict],
+    punch_at: float,
+    clip_duration: float,
+    *,
+    min_seconds: float = COLD_OPEN_MIN_SECONDS,
+    max_seconds: float = COLD_OPEN_MAX_SECONDS,
+) -> dict | None:
+    """Teaser window for a punch moment: {"at", "duration"}, or None if unusable.
+
+    The window ENDS on the punch line rather than starting at it. A fixed 2s
+    window starting at the punch cut the joke in half on 10 of 18 clips of the
+    2026-08-10 batch - "меня зовут Джорно Джованна" teased without "и у меня
+    есть мечта", "у меня пошло" without "мы сами себя перефигачили". A hook
+    that does not land the punch is not a hook.
+
+    words: the clip's own {"word","start","end"} list, already clip-relative
+    and post-jumpcut-remap (same input subtitles.py takes). punch_at is on that
+    same timeline. The phrase is the run of words from the punch up to the
+    first gap longer than _PHRASE_GAP_SECONDS, capped at max_seconds and
+    floored at min_seconds.
+
+    The returned window always fits inside clip_duration: render.py cuts the
+    teaser out of the already-rendered clip, so an overshoot of even 7ms cost
+    a clip its whole cold open on 2026-08-10 (clip 0010, [17.107, 19.107] in
+    19.1s). Returns None when the clip is too short to hold any teaser.
+    """
+    if clip_duration <= 0 or punch_at < 0 or punch_at >= clip_duration:
+        return None
+
+    phrase: list[dict] = []
+    for word in words:
+        if word["start"] >= punch_at - 0.05:
+            if phrase and word["start"] - phrase[-1]["end"] > _PHRASE_GAP_SECONDS:
+                break
+            phrase.append(word)
+
+    end = min(phrase[-1]["end"] if phrase else punch_at + min_seconds, clip_duration)
+    duration = min(max(end - punch_at, min_seconds), max_seconds)
+    # Anchored to the phrase END, never to the punch's start: when the line runs
+    # past max_seconds the teaser keeps its tail (where the punchline lands),
+    # and when the line is shorter than min_seconds the window simply borrows a
+    # little lead-in before the punch.
+    at = max(0.0, end - duration)
+    duration = min(duration, clip_duration - at)
+    if duration <= 0:
+        return None
+    return {"at": round(at, 3), "duration": round(duration, 3)}
+
+
 def build_cold_open_command(
     base_clip: str,
     output_path: str,

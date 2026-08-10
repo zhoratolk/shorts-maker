@@ -1497,10 +1497,12 @@ def test_render_clip_skips_cold_open_when_plan_entry_has_no_field():
     assert len(commands) == 1
 
 
-def test_render_clip_cold_open_fails_open_when_window_exceeds_clip_duration():
+def test_render_clip_cold_open_clamps_a_window_that_overshoots_the_clip(capsys):
     commands = []
     # _overlay_capture_runner's fake ffprobe always reports duration=30.0;
-    # 25 + 10 = 35 doesn't fit, so this must warn and skip, never crash.
+    # 25 + 10 = 35 overshoots. Dropping the teaser over that used to be a
+    # silent downgrade (2026-08-10, a 7ms overshoot cost a shipped clip its
+    # whole cold open), so the window is clamped into the clip instead.
     plan_entry = {
         "start": 10.0, "end": 40.0, "crop_style": "zoom",
         "cold_open": {"at": 25.0, "duration": 10.0},
@@ -1511,9 +1513,24 @@ def test_render_clip_cold_open_fails_open_when_window_exceeds_clip_duration():
         cold_open_enabled=True,
         runner=_overlay_capture_runner(commands),
     )
-    # base render + the ffprobe duration check - the window-fit guard raises
-    # BEFORE build_cold_open_command is ever called, so no split/trim graph.
+    assert any("teaserbasev" in " ".join(c) for c in commands)
+    assert "clamped to" in capsys.readouterr().err
+
+
+def test_render_clip_cold_open_fails_open_when_nothing_of_the_window_remains(capsys):
+    commands = []
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "cold_open": {"at": 25.0, "duration": 0.0},
+    }
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        cold_open_enabled=True,
+        runner=_overlay_capture_runner(commands),
+    )
     assert not any("teaserbasev" in " ".join(c) for c in commands)
+    assert "keeping base clip" in capsys.readouterr().err
 
 
 def test_render_clip_runs_loop_finalize_pass_when_enabled():
