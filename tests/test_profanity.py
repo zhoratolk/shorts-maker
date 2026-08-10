@@ -154,6 +154,48 @@ def test_find_profane_spans_detects_ru_en_and_obfuscated_stems():
     assert spans == [(0.5, 0.9), (1.0, 1.3)]
 
 
+def test_find_profane_spans_widens_a_zero_length_whisper_word():
+    # faster-whisper emits start == end often enough that it killed a whole
+    # render pass on 2026-08-10 ("блять." at 6.3-6.3): with pad/onset at their
+    # 0 defaults the span stayed empty and render.py rejected it.
+    words = [
+        {"word": "ну", "start": 6.0, "end": 6.3},
+        {"word": "блять.", "start": 6.3, "end": 6.3},
+        {"word": "ладно", "start": 7.0, "end": 7.4},
+    ]
+
+    spans = find_profane_spans(words, _TEST_WORDLIST, pad_seconds=0.0)
+
+    assert len(spans) == 1
+    start, end = spans[0]
+    assert start == 6.3
+    assert end - start >= 0.12
+    assert end <= 7.0
+
+
+def test_find_profane_spans_widens_a_zero_length_word_backwards_when_boxed_in():
+    # Next word starts on the same timestamp, so the only room is behind it.
+    words = [
+        {"word": "бляяя,", "start": 1.0, "end": 1.0},
+        {"word": "дальше", "start": 1.0, "end": 1.4},
+    ]
+
+    spans = find_profane_spans(words, _TEST_WORDLIST, pad_seconds=0.0)
+
+    assert spans == [(0.88, 1.0)]
+
+
+def test_find_profane_spans_skips_a_zero_length_word_with_no_room(capsys):
+    # Boxed in on both sides: previous word ends where the clip does.
+    words = [
+        {"word": "ну", "start": 0.5, "end": 1.0},
+        {"word": "бляяя,", "start": 1.0, "end": 1.0},
+    ]
+
+    assert find_profane_spans(words, _TEST_WORDLIST, pad_seconds=0.0, clip_duration=1.0) == []
+    assert "zero-length span" in capsys.readouterr().err
+
+
 def test_find_profane_spans_no_matches_returns_empty_list():
     words = [{"word": "clean", "start": 0.0, "end": 0.3}]
 

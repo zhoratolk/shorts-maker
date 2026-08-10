@@ -62,6 +62,45 @@ def compile_patterns(wordlist: dict) -> list[re.Pattern]:
     return [re.compile(rf"\b{re.escape(root)}\w*", re.IGNORECASE) for root in roots]
 
 
+MIN_SPAN_SECONDS = 0.12
+
+
+def _widen_degenerate(
+    start: float,
+    end: float,
+    *,
+    previous_end: float,
+    next_start: float | None,
+    clip_duration: float | None,
+) -> tuple[float, float] | None:
+    """Gives an empty span an audible length, or None when there is no room.
+
+    faster-whisper regularly emits words with start == end (seen live on
+    2026-08-10: "блять." at 6.3-6.3). With pad_seconds and onset_seconds both
+    at their 0 defaults nothing widens such a word, and render.py rejects the
+    empty span outright - one degenerate word used to kill the whole render
+    pass. Grow forward first (never past the next word or the clip end), then
+    backward against the previous word, and give up rather than emit a span
+    render.py cannot use.
+
+    Only empty/inverted spans are touched. A short-but-real span (a fast word,
+    or onset_seconds trimming a 0.1s one) is already renderable and is returned
+    untouched - widening it would beep over speech nobody asked to mask.
+    """
+    if end > start:
+        return start, end
+    ceiling = next_start if next_start is not None else clip_duration
+    if clip_duration is not None:
+        ceiling = clip_duration if ceiling is None else min(ceiling, clip_duration)
+    if ceiling is not None:
+        end = min(max(end, start + MIN_SPAN_SECONDS), ceiling)
+    else:
+        end = max(end, start + MIN_SPAN_SECONDS)
+    if end - start < MIN_SPAN_SECONDS:
+        start = max(previous_end, end - MIN_SPAN_SECONDS, 0.0)
+    return (start, end) if end > start else None
+
+
 def find_profane_spans(
     words: list[dict],
     wordlist: dict,
@@ -122,7 +161,21 @@ def find_profane_spans(
                 end = max(word["end"], min(end, words[index + 1]["start"]))
             if clip_duration is not None:
                 end = min(end, clip_duration)
-            raw_spans.append((round(start, 3), round(end, 3)))
+            span = _widen_degenerate(
+                start,
+                end,
+                previous_end=words[index - 1]["end"] if index > 0 else 0.0,
+                next_start=words[index + 1]["start"] if index + 1 < len(words) else None,
+                clip_duration=clip_duration,
+            )
+            if span is None:
+                print(
+                    f"[warn] profanity: skipping zero-length span for {word['word'].strip()!r} "
+                    f"at {word['start']} - no room to widen it",
+                    file=sys.stderr,
+                )
+                continue
+            raw_spans.append((round(span[0], 3), round(span[1], 3)))
 
     if not raw_spans:
         return []
