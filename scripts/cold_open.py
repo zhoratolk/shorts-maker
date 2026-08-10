@@ -45,19 +45,24 @@ def cold_open_window(
 ) -> dict | None:
     """Teaser window for a punch moment: {"at", "duration"}, or None if unusable.
 
-    The window ENDS on the punch line rather than starting at it. A fixed 2s
-    window starting at the punch cut the joke in half on 10 of 18 clips of the
-    2026-08-10 batch - "меня зовут Джорно Джованна" teased without "и у меня
-    есть мечта", "у меня пошло" without "мы сами себя перефигачили". A hook
-    that does not land the punch is not a hook.
+    The window opens ON the punch and runs to the end of its line, so the
+    teaser carries the whole joke instead of a fixed slice of it. A flat 2s
+    duration cut the line in half on 10 of 18 clips of the 2026-08-10 batch -
+    "меня зовут Джорно Джованна" teased without "и у меня есть мечта", "у меня
+    пошло" without "мы сами себя перефигачили".
+
+    Deliberately NOT anchored to the end of the line: group voice chat runs
+    sentences together with sub-0.6s gaps, so the detected "phrase" often
+    swallows the next thought, and ending on it threw the punch out of the
+    teaser entirely ("нас трахают" -> "мы сейчас отбиваемся"). Starting on the
+    punch and taking as much of the line as fits keeps the payoff in frame
+    whether or not the phrase boundary was found correctly.
 
     words: the clip's own {"word","start","end"} list, already clip-relative
     and post-jumpcut-remap (same input subtitles.py takes). punch_at is on that
-    same timeline. The phrase is the run of words from the punch up to the
-    first gap longer than _PHRASE_GAP_SECONDS, capped at max_seconds and
-    floored at min_seconds.
-
-    The returned window always fits inside clip_duration: render.py cuts the
+    same timeline. The line ends at the first gap longer than
+    _PHRASE_GAP_SECONDS, and the window is capped at max_seconds, floored at
+    min_seconds, and always fits inside clip_duration: render.py cuts the
     teaser out of the already-rendered clip, so an overshoot of even 7ms cost
     a clip its whole cold open on 2026-08-10 (clip 0010, [17.107, 19.107] in
     19.1s). Returns None when the clip is too short to hold any teaser.
@@ -74,11 +79,9 @@ def cold_open_window(
 
     end = min(phrase[-1]["end"] if phrase else punch_at + min_seconds, clip_duration)
     duration = min(max(end - punch_at, min_seconds), max_seconds)
-    # Anchored to the phrase END, never to the punch's start: when the line runs
-    # past max_seconds the teaser keeps its tail (where the punchline lands),
-    # and when the line is shorter than min_seconds the window simply borrows a
-    # little lead-in before the punch.
-    at = max(0.0, end - duration)
+    # Only when the punch sits too close to the clip's end does the window slide
+    # backwards, and only far enough to keep min_seconds of teaser.
+    at = min(punch_at, max(0.0, clip_duration - duration))
     duration = min(duration, clip_duration - at)
     if duration <= 0:
         return None

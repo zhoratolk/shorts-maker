@@ -84,7 +84,7 @@ def _words(*pairs):
     return [{"word": w, "start": s, "end": e} for w, s, e in pairs]
 
 
-def test_cold_open_window_ends_on_the_punch_line_not_two_seconds_after_it():
+def test_cold_open_window_covers_the_whole_punch_line_not_a_flat_two_seconds():
     # The 2026-08-10 failure: a fixed 2s window teased "меня зовут Джорно
     # Джованна" and cut "и у меня есть мечта" - the punch itself.
     words = _words(
@@ -99,14 +99,24 @@ def test_cold_open_window_ends_on_the_punch_line_not_two_seconds_after_it():
     assert window["at"] + window["duration"] == 8.4
 
 
-def test_cold_open_window_caps_a_run_on_phrase_and_keeps_its_tail():
+def test_cold_open_window_caps_a_run_on_phrase_but_keeps_the_punch_at_its_front():
+    # Group voice chat runs sentences together, so the detected phrase can be
+    # far longer than the joke. Capping from the end used to push the punch out
+    # of the teaser ("нас трахают" -> "мы сейчас отбиваемся").
     words = _words(*[(f"w{i}", float(i), i + 0.9) for i in range(12)])
 
     window = cold_open_window(words, 0.0, 30.0)
 
-    assert window["duration"] == 4.0
-    # Capped from the END, so the punch still lands inside the teaser.
-    assert round(window["at"] + window["duration"], 3) == 11.9
+    assert window == {"at": 0.0, "duration": 4.0}
+
+
+def test_cold_open_window_slides_back_only_when_the_punch_is_near_the_end():
+    words = _words(("панч", 18.6, 19.0))
+
+    window = cold_open_window(words, 18.6, 19.1)
+
+    assert window["at"] < 18.6
+    assert round(window["at"] + window["duration"], 3) <= 19.1
 
 
 def test_cold_open_window_stops_at_a_pause_between_phrases():
