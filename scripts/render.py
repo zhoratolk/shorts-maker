@@ -191,8 +191,44 @@ def clamp_clip_bounds(start: float, end: float, video_duration: float) -> tuple[
     return clamped_start, clamped_end
 
 
+def build_crop_pan_expr(keyframes: list[tuple[float, float]], max_offset: int) -> str:
+    """Builds an ffmpeg `x` expression that linearly interpolates the crop
+    window's pixel offset between focus_x percentage keyframes over time,
+    holding the first/last value outside the keyframed range (same "hold"
+    convention as punch_zoom_at/emphasis_moves elsewhere in this module).
+
+    keyframes: (clip-relative seconds, focus_x_pct 0-100) pairs, any order -
+    sorted here. A single keyframe degenerates to a plain constant (no `t`
+    reference at all), matching the static crop_focus_x path exactly.
+    """
+    if not keyframes:
+        raise RenderError("build_crop_pan_expr requires at least one keyframe")
+
+    points = sorted(
+        (t, round(max_offset * max(0.0, min(100.0, pct)) / 100.0)) for t, pct in keyframes
+    )
+    for (t_a, _), (t_b, _) in zip(points, points[1:]):
+        if t_b <= t_a:
+            raise RenderError(
+                f"crop_focus_keyframes timestamps must be strictly increasing, got {t_a} then {t_b}"
+            )
+
+    if len(points) == 1:
+        return str(points[0][1])
+
+    expr = str(points[-1][1])
+    for i in range(len(points) - 1, 0, -1):
+        t_a, x_a = points[i - 1]
+        t_b, x_b = points[i]
+        lerp = f"({x_a}+({x_b}-{x_a})*(t-{t_a})/{t_b - t_a})"
+        expr = f"if(lt(t,{t_b}),{lerp},{expr})"
+    t0, x0 = points[0]
+    return f"if(lt(t,{t0}),{x0},{expr})"
+
+
 def compute_crop_filter(
-    crop_style: str, src_width: int, src_height: int, focus_x_pct: float = 50.0
+    crop_style: str, src_width: int, src_height: int, focus_x_pct: float = 50.0,
+    focus_keyframes: list[tuple[float, float]] | None = None,
 ) -> str:
     if crop_style == "zoom":
         crop_width = min(round(src_height * TARGET_WIDTH / TARGET_HEIGHT), src_width)
@@ -200,6 +236,12 @@ def compute_crop_filter(
         # focus_x_pct=50 (default) reproduces the old dead-center crop; a clip
         # whose important content (action, HUD element) sits off-center can
         # shift the window toward it instead of always cropping the middle.
+        if focus_keyframes:
+            x_expr = build_crop_pan_expr(focus_keyframes, max_offset)
+            # crop's x/y expressions are only evaluated once at init unless
+            # eval=frame is set explicitly - without it the pan would freeze
+            # on the first frame's value for the whole clip.
+            return f"crop={crop_width}:{src_height}:{x_expr}:0:eval=frame,scale={TARGET_WIDTH}:{TARGET_HEIGHT}"
         x_offset = round(max_offset * max(0.0, min(100.0, focus_x_pct)) / 100.0)
         return f"crop={crop_width}:{src_height}:{x_offset}:0,scale={TARGET_WIDTH}:{TARGET_HEIGHT}"
 
@@ -1509,7 +1551,15 @@ def render_clip(
 
     crop_style = plan_entry["crop_style"]
     crop_focus_x = plan_entry.get("crop_focus_x", 50.0)
-    crop_filter = compute_crop_filter(crop_style, src_width, src_height, crop_focus_x)
+    crop_focus_keyframes_raw = plan_entry.get("crop_focus_keyframes")
+    crop_focus_keyframes = (
+        [(float(at), float(pct)) for at, pct in crop_focus_keyframes_raw]
+        if crop_focus_keyframes_raw
+        else None
+    )
+    crop_filter = compute_crop_filter(
+        crop_style, src_width, src_height, crop_focus_x, crop_focus_keyframes
+    )
     punch_zoom_at = plan_entry.get("punch_zoom_at")
     if punch_zoom_at is not None and crop_style != "zoom":
         # pad/original-16:9 scale the source to fill TARGET_WIDTH with no

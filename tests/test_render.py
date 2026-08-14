@@ -31,6 +31,7 @@ from scripts.render import (
     build_ass_content,
     build_audio_filter_chain,
     build_compilation_command,
+    build_crop_pan_expr,
     build_emphasis_filter,
     build_ffmpeg_command,
     build_hook_banner_filter,
@@ -105,6 +106,49 @@ def test_compute_crop_filter_zoom_focus_right():
 def test_compute_crop_filter_zoom_focus_clamped():
     result = compute_crop_filter("zoom", src_width=1920, src_height=1080, focus_x_pct=250.0)
     assert result == "crop=608:1080:1312:0,scale=1080:1920"
+
+
+def test_compute_crop_filter_zoom_pans_between_focus_keyframes():
+    result = compute_crop_filter(
+        "zoom", src_width=1920, src_height=1080,
+        focus_keyframes=[(0.0, 0.0), (5.0, 100.0)],
+    )
+    assert result == (
+        "crop=608:1080:if(lt(t,0.0),0,if(lt(t,5.0),(0+(1312-0)*(t-0.0)/5.0),1312)):0:eval=frame,"
+        "scale=1080:1920"
+    )
+
+
+def test_compute_crop_filter_zoom_single_keyframe_is_a_plain_constant():
+    result = compute_crop_filter(
+        "zoom", src_width=1920, src_height=1080, focus_keyframes=[(2.0, 100.0)],
+    )
+    assert result == "crop=608:1080:1312:0:eval=frame,scale=1080:1920"
+
+
+def test_build_crop_pan_expr_holds_before_first_and_after_last_keyframe():
+    expr = build_crop_pan_expr([(1.0, 0.0), (3.0, 100.0)], max_offset=1000)
+
+    # Before t=1: constant 0. After t=3: constant 1000. In between: linear.
+    assert expr.startswith("if(lt(t,1.0),0,")
+    assert expr.endswith(",1000))")
+    assert "(0+(1000-0)*(t-1.0)/2.0)" in expr
+
+
+def test_build_crop_pan_expr_sorts_out_of_order_keyframes():
+    in_order = build_crop_pan_expr([(0.0, 0.0), (5.0, 100.0)], max_offset=1000)
+    reversed_input = build_crop_pan_expr([(5.0, 100.0), (0.0, 0.0)], max_offset=1000)
+    assert in_order == reversed_input
+
+
+def test_build_crop_pan_expr_rejects_duplicate_timestamps():
+    with pytest.raises(RenderError, match="strictly increasing"):
+        build_crop_pan_expr([(1.0, 0.0), (1.0, 100.0)], max_offset=1000)
+
+
+def test_build_crop_pan_expr_rejects_empty_keyframes():
+    with pytest.raises(RenderError, match="at least one keyframe"):
+        build_crop_pan_expr([], max_offset=1000)
 
 
 def test_compute_subtitle_margin_v_top_and_center_passthrough():
@@ -1231,6 +1275,28 @@ def test_render_clip_builds_and_runs_command():
     assert command == captured["command"]
     assert command[-1] == "out.mp4"
     assert "crop=608:1080:656:0,scale=1080:1920" in command
+
+
+def test_render_clip_reads_crop_focus_keyframes_from_plan_entry():
+    class FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "crop_focus_keyframes": [[0.0, 0.0], [5.0, 100.0]],
+    }
+
+    command = render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        runner=lambda command, capture_output, text: FakeResult(),
+    )
+
+    video_filter = command[command.index("-vf") + 1]
+    assert "eval=frame" in video_filter
+    assert "if(lt(t,0.0)" in video_filter
 
 
 def test_render_clip_reads_punch_zoom_at_from_plan_entry():
