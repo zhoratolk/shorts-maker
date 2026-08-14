@@ -27,7 +27,7 @@ publish = [
     "requests>=2.32",
 ]
 all = ["shorts-maker[diarization,transitions,publish]"]
-dev = ["pytest>=7.4.0"]
+dev = ["pytest>=7.4.0", "pytest-cov>=5.0.0", "pyflakes>=3.0.0"]
 
 [tool.setuptools]
 packages = ["scripts"]
@@ -39,3 +39,6 @@ addopts = "--basetemp=.pytest_tmp"
 markers = [
     "integration: real-ffmpeg smoke tests, no mocked subprocess - slower, needs ffmpeg on PATH",
 ]
+
+[tool.coverage.run]
+source = ["scripts"]
