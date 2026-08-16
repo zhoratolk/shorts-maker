@@ -77,11 +77,50 @@ def cold_open_window(
                 break
             phrase.append(word)
 
-    end = min(phrase[-1]["end"] if phrase else punch_at + min_seconds, clip_duration)
-    duration = min(max(end - punch_at, min_seconds), max_seconds)
+    # Both edges snap to whole words. punch_at comes from a transcript SEGMENT
+    # start, which routinely lands a few hundredths INSIDE the first word, and
+    # the max_seconds cap below chops wherever it falls - on the 2026-08-12
+    # batch that clipped a word off 11 of 16 teasers ("Я как дал" teased as
+    # "как дал", "Жаль союзников" as "Жаль").
+    start = phrase[0]["start"] if phrase else punch_at
+    # Sub-0.6s gaps run separate sentences together, so the phrase scan above
+    # keeps going into the next thought and the cap then chops it mid-clause
+    # ("а это нахуй натрий, блядь. Когда ты себя в карман"). Stop on the first
+    # sentence-ending word that still leaves a usable teaser.
+    for index, word in enumerate(phrase):
+        if word["word"].strip().endswith((".", "!", "?", "…")) and \
+                word["end"] - start >= min_seconds:
+            phrase = phrase[:index + 1]
+            break
+    end = phrase[-1]["end"] if phrase else start + min_seconds
+    if end - start > max_seconds:
+        fitting = [w for w in phrase if w["end"] - start <= max_seconds]
+        end = fitting[-1]["end"] if fitting else start + max_seconds
+    if end - start < min_seconds:
+        # Floor the teaser by taking whole following words, not a bare +1.2s -
+        # but never across a phrase gap, or the teaser swallows the next
+        # thought the phrase scan deliberately stopped before.
+        cursor = end
+        for word in words:
+            if word["start"] < cursor:
+                continue
+            if word["start"] - cursor > _PHRASE_GAP_SECONDS:
+                break
+            cursor = word["end"]
+            if cursor - start >= min_seconds:
+                break
+        end = cursor if cursor - start >= min_seconds else start + min_seconds
+    end = min(end, clip_duration)
+    duration = max(end - start, 0.0)
     # Only when the punch sits too close to the clip's end does the window slide
-    # backwards, and only far enough to keep min_seconds of teaser.
-    at = min(punch_at, max(0.0, clip_duration - duration))
+    # backwards, and only far enough to keep min_seconds of teaser. The slide
+    # snaps back to a word start too, for the same reason the head does.
+    if start + min_seconds > clip_duration:
+        earliest = max(0.0, clip_duration - min_seconds)
+        heads = [w["start"] for w in words if w["start"] <= earliest]
+        start = heads[-1] if heads else earliest
+        duration = clip_duration - start
+    at = min(start, max(0.0, clip_duration - duration))
     duration = min(duration, clip_duration - at)
     if duration <= 0:
         return None

@@ -107,7 +107,20 @@ def test_cold_open_window_caps_a_run_on_phrase_but_keeps_the_punch_at_its_front(
 
     window = cold_open_window(words, 0.0, 30.0)
 
-    assert window == {"at": 0.0, "duration": 4.0}
+    # The cap now lands on the last word that fully fits (w3 ends at 3.9)
+    # instead of slicing at a flat 4.0s wherever that falls inside a word.
+    assert window == {"at": 0.0, "duration": 3.9}
+
+
+def test_cold_open_window_snaps_a_mid_word_punch_back_to_the_word_start():
+    # punch_at comes from a transcript SEGMENT start, which lands a few
+    # hundredths inside the first word often enough that 11 of 16 teasers in
+    # the 2026-08-12 batch opened on a half-spoken word ("Я как дал" -> "как дал").
+    words = _words(("Я", 23.10, 23.30), ("как", 23.30, 23.60), ("дал", 23.60, 24.10))
+
+    window = cold_open_window(words, 23.15, 30.0)
+
+    assert window["at"] == 23.10
 
 
 def test_cold_open_window_slides_back_only_when_the_punch_is_near_the_end():

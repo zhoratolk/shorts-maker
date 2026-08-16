@@ -49,6 +49,7 @@ def load_credentials(client_secret_path: str, token_path: str, scopes: list[str]
     only interactive on the very first run (or after a revoke/expiry the
     refresh token itself can't recover from).
     """
+    from google.auth.exceptions import RefreshError
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import InstalledAppFlow
@@ -59,9 +60,18 @@ def load_credentials(client_secret_path: str, token_path: str, scopes: list[str]
         credentials = Credentials.from_authorized_user_file(str(token_file), scopes)
 
     if not credentials or not credentials.valid:
+        refreshed = False
         if credentials and credentials.expired and credentials.refresh_token:
-            credentials.refresh(Request())
-        else:
+            try:
+                credentials.refresh(Request())
+                refreshed = True
+            except RefreshError:
+                # A revoked refresh token ("invalid_grant") used to dead-end
+                # the whole publish run with a traceback; a cached token that
+                # can't be recovered is exactly the case a fresh consent
+                # handles, so fall through to it instead of raising.
+                credentials = None
+        if not refreshed:
             flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, scopes)
             credentials = flow.run_local_server(port=0)
         token_file.write_text(credentials.to_json(), encoding="utf-8")
