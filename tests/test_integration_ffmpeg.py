@@ -516,3 +516,37 @@ def test_hook_banner_changes_pixels_in_banner_region(test_video, tmp_path):
         return result.stdout
 
     assert banner_region_signature(plain_path) != banner_region_signature(banner_path)
+
+
+def test_crop_pan_renders_and_actually_moves_the_window(test_video, tmp_path):
+    """A multi-keyframe crop pan has to survive ffmpeg's own filter parser and
+    then visibly move. The unit tests can only check the string we build, and
+    they happily locked in an unquoted expression ffmpeg rejects outright
+    ("No option name near 'frame'") because the nested if(...) commas read as
+    option separators - it took a real render to catch it."""
+    entry = {
+        "start": 0.0, "end": 2.0, "crop_style": "zoom",
+        "crop_focus_keyframes": [[0.0, 0.0], [2.0, 100.0]],
+    }
+    out_path = tmp_path / "pan.mp4"
+    render_clip(
+        str(test_video), str(out_path), entry,
+        video_duration=SRC_DURATION, src_width=SRC_WIDTH, src_height=SRC_HEIGHT,
+    )
+    assert out_path.exists()
+
+    def frame_signature(at):
+        result = subprocess.run(
+            [
+                "ffmpeg", "-v", "error", "-ss", str(at), "-i", str(out_path),
+                "-frames:v", "1", "-vf", "scale=32:57,format=gray",
+                "-f", "rawvideo", "-",
+            ],
+            capture_output=True,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    # the window starts at the left edge and ends at the right one, so the
+    # first and last frames cannot be showing the same part of the source
+    assert frame_signature(0.1) != frame_signature(1.9)

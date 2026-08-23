@@ -244,10 +244,18 @@ def compute_crop_filter(
         # shift the window toward it instead of always cropping the middle.
         if focus_keyframes:
             x_expr = build_crop_pan_expr(focus_keyframes, max_offset)
-            # crop's x/y expressions are only evaluated once at init unless
-            # eval=frame is set explicitly - without it the pan would freeze
-            # on the first frame's value for the whole clip.
-            return f"crop={crop_width}:{src_height}:{x_expr}:0:eval=frame,scale={TARGET_WIDTH}:{TARGET_HEIGHT}"
+            # Two things this line has to get right, both found by rendering
+            # rather than by reading (tests/test_integration_ffmpeg.py):
+            # the expression MUST be named and quoted, because a pan across
+            # two or more keyframes nests if(...) calls whose commas would
+            # otherwise be read as option separators; and it must NOT carry
+            # eval=frame - ffmpeg 8 dropped that option from crop and now
+            # re-evaluates x/y every frame on its own (the punch-zoom crop
+            # below relies on the same behaviour).
+            return (
+                f"crop=w={crop_width}:h={src_height}:x='{x_expr}':y=0,"
+                f"scale={TARGET_WIDTH}:{TARGET_HEIGHT}"
+            )
         x_offset = round(max_offset * max(0.0, min(100.0, focus_x_pct)) / 100.0)
         return f"crop={crop_width}:{src_height}:{x_offset}:0,scale={TARGET_WIDTH}:{TARGET_HEIGHT}"
 

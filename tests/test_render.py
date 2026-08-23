@@ -116,8 +116,8 @@ def test_compute_crop_filter_zoom_pans_between_focus_keyframes():
         focus_keyframes=[(0.0, 0.0), (5.0, 100.0)],
     )
     assert result == (
-        "crop=608:1080:if(lt(t,0.0),0,if(lt(t,5.0),(0+(1312-0)*(t-0.0)/5.0),1312)):0:eval=frame,"
-        "scale=1080:1920"
+        "crop=w=608:h=1080:x='if(lt(t,0.0),0,if(lt(t,5.0),(0+(1312-0)*(t-0.0)/5.0),1312))':"
+        "y=0,scale=1080:1920"
     )
 
 
@@ -125,7 +125,7 @@ def test_compute_crop_filter_zoom_single_keyframe_is_a_plain_constant():
     result = compute_crop_filter(
         "zoom", src_width=1920, src_height=1080, focus_keyframes=[(2.0, 100.0)],
     )
-    assert result == "crop=608:1080:1312:0:eval=frame,scale=1080:1920"
+    assert result == "crop=w=608:h=1080:x='1312':y=0,scale=1080:1920"
 
 
 def test_build_crop_pan_expr_holds_before_first_and_after_last_keyframe():
@@ -1297,7 +1297,7 @@ def test_render_clip_reads_crop_focus_keyframes_from_plan_entry():
     )
 
     video_filter = command[command.index("-vf") + 1]
-    assert "eval=frame" in video_filter
+    assert "crop=w=608:h=1080:x='if(lt(t," in video_filter
     assert "if(lt(t,0.0)" in video_filter
 
 
