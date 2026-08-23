@@ -1605,7 +1605,8 @@ def test_render_clip_runs_loop_finalize_pass_when_enabled():
     render_clip(
         "in.mp4", "out.mp4", plan_entry,
         video_duration=100.0, src_width=1920, src_height=1080,
-        loop_enabled=True, loop_transition="crossfade", loop_transition_duration=0.4,
+        loop_enabled=True, loop_mode="seam",
+        loop_transition="crossfade", loop_transition_duration=0.4,
         runner=_overlay_capture_runner(commands),
     )
     finalize = [c for c in commands if "-filter_complex" in c and "loopbasev" in
@@ -1615,6 +1616,45 @@ def test_render_clip_runs_loop_finalize_pass_when_enabled():
     # _overlay_capture_runner's fake ffprobe always reports duration=30.0
     assert "trim=start=0:end=0.4" in graph
     assert "xfade=transition=fade:duration=0.4:offset=29.6" in graph
+
+
+def test_render_clip_rotates_around_the_punch_in_rotate_mode():
+    commands = []
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "loop": True, "loop_rotate_at": 22.0,
+    }
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        loop_enabled=True, loop_mode="rotate",
+        runner=_overlay_capture_runner(commands),
+    )
+    finalize = [c for c in commands if "-filter_complex" in c and "punchbasev" in
+                c[c.index("-filter_complex") + 1]]
+    assert len(finalize) == 1
+    graph = finalize[0][finalize[0].index("-filter_complex") + 1]
+    # _overlay_capture_runner's fake ffprobe always reports duration=30.0, so
+    # the punch half is [22, 30) and the setup half [0, 22).
+    assert "trim=start=0:end=22.0" in graph
+    assert "trim=start=22.0" in graph
+    # punch first, setup second - the whole point of the shape
+    assert "[punchv][puncha][setupv][setupa]concat=n=2:v=1:a=1" in graph
+    # nothing is duplicated: the opening replay of the seam mode is absent
+    assert "loopbasev" not in graph
+
+
+def test_render_clip_rotate_mode_without_rotate_point_fails_open(capsys):
+    commands = []
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom", "loop": True}
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        loop_enabled=True, loop_mode="rotate",
+        runner=_overlay_capture_runner(commands),
+    )
+    assert not any("punchbasev" in " ".join(c) for c in commands)
+    assert "loop_rotate_at" in capsys.readouterr().err
 
 
 def test_render_clip_skips_loop_when_flag_disabled():

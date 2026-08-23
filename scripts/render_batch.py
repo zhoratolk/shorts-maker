@@ -202,6 +202,8 @@ def build_render_args(
         loop = config.loop
         args += [
             "--loop-enabled",
+            "--loop-mode", loop.mode,
+            "--loop-rotate-transition", loop.rotate_transition,
             "--loop-transition", loop.transition,
             "--loop-transition-duration", str(loop.transition_duration),
         ]

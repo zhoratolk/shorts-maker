@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+import time
 from pathlib import Path
 
 # The retention curve is a single Analytics query per video: the
@@ -40,8 +41,24 @@ DEFAULT_CLIFF_THRESHOLD = 0.05
 # If viewers are still mostly present at the end of the clip, the clip could
 # likely have run longer (there was appetite left); if they've mostly left
 # well before the end, it dragged. These bound the "length signal" verdict.
-LONGER_OK_END_RATIO = 0.7
-TOO_LONG_END_RATIO = 0.35
+# Verdict bands for length_signal, re-derived 2026-08-23 from the channel's
+# own 141 published curves instead of guessed absolutes. The old pair (0.7 /
+# 0.35) was calibrated for nothing in particular and flagged 97.9% of clips
+# "too_long" - a verdict every clip shares distinguishes none of them, and the
+# step-4 learning loop reading it was getting a constant.
+#
+# Measured end-retention distribution: q25 0.053, median 0.088, q75 0.134,
+# q90 0.203. The bands are set to those quartiles, so "too_long" now means
+# "in the worst quarter of this channel's own endings" and "could_be_longer"
+# means "in the best quarter". Re-derive both when the channel's baseline
+# moves - they are descriptive of this channel, not universal constants.
+LONGER_OK_END_RATIO = 0.134
+TOO_LONG_END_RATIO = 0.053
+
+
+RETRY_STATUSES = {500, 503}
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 2
 
 
 def fetch_retention_curve(
@@ -57,15 +74,32 @@ def fetch_retention_curve(
     for YouTube to compute a curve) - callers treat that as "skip", not an
     error.
     """
-    response = analytics_service.reports().query(
-        ids=f"channel=={channel_id}",
-        startDate=start_date,
-        endDate=end_date,
-        metrics=CURVE_METRIC,
-        dimensions=CURVE_DIMENSION,
-        filters=f"video=={video_id}",
-        maxResults=200,
-    ).execute()
+    from googleapiclient.errors import HttpError
+
+    # A single flaky video must never abort a whole-channel run: the Analytics
+    # backend returns a 500 for some videos (usually ones with too little data
+    # to compute a curve at all), so retry the transient statuses and fall back
+    # to the documented "no data" empty list instead of raising.
+    response = None
+    for attempt in range(RETRY_ATTEMPTS):
+        try:
+            response = analytics_service.reports().query(
+                ids=f"channel=={channel_id}",
+                startDate=start_date,
+                endDate=end_date,
+                metrics=CURVE_METRIC,
+                dimensions=CURVE_DIMENSION,
+                filters=f"video=={video_id}",
+                maxResults=200,
+            ).execute()
+            break
+        except HttpError as error:
+            if error.resp.status not in RETRY_STATUSES or attempt == RETRY_ATTEMPTS - 1:
+                return []
+            time.sleep(RETRY_BACKOFF_SECONDS * (attempt + 1))
+
+    if response is None:
+        return []
 
     curve = [(float(row[0]), float(row[1])) for row in response.get("rows", [])]
     curve.sort(key=lambda point: point[0])

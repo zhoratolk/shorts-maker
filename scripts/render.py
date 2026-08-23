@@ -33,7 +33,11 @@ from scripts.overlay_pass import (
 )
 
 from scripts.cold_open import VALID_COLD_OPEN_TRANSITIONS, build_cold_open_command
-from scripts.loop import VALID_LOOP_TRANSITIONS, build_loop_outro_command
+from scripts.loop import (
+    VALID_LOOP_TRANSITIONS,
+    build_loop_outro_command,
+    build_punch_rotate_command,
+)
 
 NAMED_ASS_COLORS = {
     "white": "&H00FFFFFF",
@@ -1511,6 +1515,8 @@ def render_clip(
     cold_open_transition: str = "whip_pan",
     cold_open_transition_duration: float = 0.25,
     loop_enabled: bool = False,
+    loop_mode: str = "rotate",
+    loop_rotate_transition: str = "cut",
     loop_transition: str = "crossfade",
     loop_transition_duration: float = 0.4,
     social_enabled: bool = False,
@@ -1845,22 +1851,53 @@ def render_clip(
                 file=sys.stderr,
             )
 
-    # Loop-seam finalize pass (2026-07-27): crossfade a replay of the clip's
-    # own opening onto its tail so a platform's auto-repeat blends instead of
-    # hard-cutting. Runs after cold-open (so a cold-open'd clip loops into
-    # its now-current front) and before the overlay pass below (so social/
-    # outro timing is computed against the loop's own adjusted duration).
-    # Fail-open: any error keeps the clip without the loop seam.
+    # Loop finalize pass. Two shapes, see scripts/loop.py's module docstring:
+    # "rotate" (default) moves the punch half to the front and cuts it from
+    # the tail, so the wrap seam is exact and the hook opens the clip;
+    # "seam" is the older cosmetic crossfade that leaves clip order alone.
+    # Runs after cold-open and before the overlay pass below (so social/outro
+    # timing is computed against the loop's own adjusted duration).
+    # Fail-open: any error keeps the clip without the loop treatment.
     if loop_enabled and plan_entry.get("loop"):
         final_path = Path(output_path)
         tmp_path = final_path.with_name(final_path.stem + "__loop" + final_path.suffix)
         try:
             base_duration = probe_video(output_path, runner=runner)["duration"]
-            loop_command = build_loop_outro_command(
-                output_path, str(tmp_path), base_duration,
-                transition=loop_transition, transition_duration=loop_transition_duration,
-                video_codec=video_codec, preset=preset, crf=crf,
-            )
+            rotate_at = plan_entry.get("loop_rotate_at")
+            if loop_mode == "rotate" and rotate_at is None:
+                raise RenderError(
+                    "loop_mode=rotate needs a loop_rotate_at on the plan entry "
+                    "(the punch's clip-relative start); pass --loop-mode seam "
+                    "for the old crossfade-the-tail behaviour"
+                )
+            if loop_mode == "rotate" and banner_mode == "hook" and plan_entry.get("banner_text"):
+                # A "hook" banner is burned into the clip's first
+                # banner_duration_seconds. Rotating moves those frames into the
+                # middle of the output, so the plate would appear mid-clip out
+                # of nowhere. "persistent" (the locked default) is unaffected -
+                # it's on screen throughout, wherever the frames end up.
+                print(
+                    f"[warn] {output_path}: banner_mode=hook on a rotated loop clip puts the "
+                    "plate in the middle of the output; use the persistent banner or drop it",
+                    file=sys.stderr,
+                )
+            if loop_mode == "rotate":
+                # Same clamp rationale as the cold-open pass above: the plan's
+                # timeline is the sum of the keep segments, which drifts from
+                # the encoder's own duration by a few frames.
+                rotate_at = min(max(float(rotate_at), 0.05), max(base_duration - 0.05, 0.05))
+                loop_command = build_punch_rotate_command(
+                    output_path, str(tmp_path), rotate_at, base_duration,
+                    transition=loop_rotate_transition,
+                    transition_duration=loop_transition_duration,
+                    video_codec=video_codec, preset=preset, crf=crf,
+                )
+            else:
+                loop_command = build_loop_outro_command(
+                    output_path, str(tmp_path), base_duration,
+                    transition=loop_transition, transition_duration=loop_transition_duration,
+                    video_codec=video_codec, preset=preset, crf=crf,
+                )
             loop_result = runner(loop_command, capture_output=True, text=True)
             if loop_result.returncode != 0:
                 raise RenderError(loop_result.stderr)
@@ -1872,7 +1909,7 @@ def render_clip(
                 except OSError:
                     pass
             print(
-                f"[warn] loop-seam finalize pass failed for {output_path}, keeping clip without it: {error}",
+                f"[warn] loop finalize pass ({loop_mode}) failed for {output_path}, keeping clip without it: {error}",
                 file=sys.stderr,
             )
 
@@ -2126,17 +2163,28 @@ def main() -> None:
         help="Transition style joining the teaser into the clip's real start",
     )
     parser.add_argument("--cold-open-transition-duration", type=float, default=0.25)
-    # --loop-* gate the loop-seam finalize pass. Harmless no-op unless
+    # --loop-* gate the loop finalize pass. Harmless no-op unless
     # --loop-enabled is set AND the plan entry itself carries a truthy
     # `loop` field (same two-key convention as --cold-open-enabled).
     parser.add_argument(
         "--loop-enabled", action="store_true",
-        help="Crossfade a replay of each clip's own opening onto its tail (plan entry's loop field)",
+        help="Give each loop-flagged clip (plan entry's loop field) its loop treatment",
+    )
+    parser.add_argument(
+        "--loop-mode", default="rotate", choices=["rotate", "seam"],
+        help="rotate: move the punch half to the front and cut it from the tail, so the wrap "
+             "seam is exact (needs loop_rotate_at on the plan entry). seam: the older cosmetic "
+             "crossfade of the opening onto the tail, clip order untouched",
+    )
+    parser.add_argument(
+        "--loop-rotate-transition", default="cut",
+        choices=sorted(VALID_LOOP_TRANSITIONS),
+        help="Transition at the rotate junction (punch -> setup); rotate mode only",
     )
     parser.add_argument(
         "--loop-transition", default="crossfade",
         choices=sorted(VALID_LOOP_TRANSITIONS),
-        help="Transition style joining the tail back into the replayed opening",
+        help="Transition style joining the tail back into the replayed opening; seam mode only",
     )
     parser.add_argument("--loop-transition-duration", type=float, default=0.4)
     # --social-* / --outro-* drive the Phase 10 overlay finalize pass. All are
@@ -2267,6 +2315,8 @@ def main() -> None:
             cold_open_transition=args.cold_open_transition,
             cold_open_transition_duration=args.cold_open_transition_duration,
             loop_enabled=args.loop_enabled,
+            loop_mode=args.loop_mode,
+            loop_rotate_transition=args.loop_rotate_transition,
             loop_transition=args.loop_transition,
             loop_transition_duration=args.loop_transition_duration,
             social_enabled=args.social_enabled,

@@ -392,9 +392,19 @@ class LoopConfig:
     # loop. When off, PLAN.json's `loop` field is ignored and rendering is
     # byte-identical to today.
     enabled: bool = False
+    # rotate | seam. rotate (2026-08-23, default) MOVES the punch half to the
+    # front and cuts it from the tail, so the clip opens on the hook and the
+    # wrap seam is exact by construction. seam is the original cosmetic
+    # crossfade that leaves clip order alone - measured over the first 7
+    # published loop clips it moved tail retention from 14.7% to a median
+    # 16.2%, inside the noise, because the hook still sat at the end.
+    mode: str = "rotate"
+    # Transition at the rotate junction (punch -> setup). "cut" reads as a
+    # deliberate snap away from the payoff; rotate mode only.
+    rotate_transition: str = "cut"
     # cut | crossfade. See scripts.loop for the full enum (deliberately
     # narrower than cold_open's - whip_pan/mask_wipe don't read as a smooth
-    # loop seam).
+    # loop seam). seam mode only.
     transition: str = "crossfade"
     transition_duration: float = 0.4
 

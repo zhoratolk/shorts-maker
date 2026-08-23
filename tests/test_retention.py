@@ -1,6 +1,8 @@
 import json
 
 from scripts.retention import (
+    LONGER_OK_END_RATIO,
+    TOO_LONG_END_RATIO,
     analyze_curve,
     build_records,
     fetch_retention_curve,
@@ -50,17 +52,21 @@ def test_analyze_curve_detects_biggest_drop_and_cliff():
 
 
 def test_analyze_curve_length_signal_could_be_longer_when_end_high():
-    # Flat at 0.8 -> end retention 0.8 >= 0.7 -> could_be_longer.
-    assert analyze_curve(_flat_curve(0.8))["length_signal"] == "could_be_longer"
+    # Bands are channel-derived quartiles, so anchor to the constants rather
+    # than to literals - re-deriving them must not silently rot these tests.
+    high = LONGER_OK_END_RATIO + 0.05
+    assert analyze_curve(_flat_curve(high))["length_signal"] == "could_be_longer"
 
 
 def test_analyze_curve_length_signal_too_long_when_end_low():
-    curve = [(0.0, 1.0), (0.5, 0.6), (1.0, 0.2)]  # end 0.2 <= 0.35
+    low = TOO_LONG_END_RATIO / 2
+    curve = [(0.0, 1.0), (0.5, 0.6), (1.0, low)]
     assert analyze_curve(curve)["length_signal"] == "too_long"
 
 
 def test_analyze_curve_length_signal_ok_in_middle_band():
-    curve = [(0.0, 1.0), (0.5, 0.7), (1.0, 0.5)]  # end 0.5 in (0.35, 0.7)
+    middle = (TOO_LONG_END_RATIO + LONGER_OK_END_RATIO) / 2
+    curve = [(0.0, 1.0), (0.5, 0.7), (1.0, middle)]
     assert analyze_curve(curve)["length_signal"] == "ok"
 
 
@@ -90,8 +96,8 @@ def test_summarize_skips_unknown_curves():
 
 def test_summarize_counts_length_signals_and_means():
     records = [
-        _record("a", _flat_curve(0.8)),  # could_be_longer
-        _record("b", [(0.0, 1.0), (0.5, 0.6), (1.0, 0.2)]),  # too_long
+        _record("a", _flat_curve(LONGER_OK_END_RATIO + 0.05)),  # could_be_longer
+        _record("b", [(0.0, 1.0), (0.5, 0.6), (1.0, TOO_LONG_END_RATIO / 2)]),  # too_long
     ]
     summary = summarize_retention(records)
     assert summary["clips_analyzed"] == 2
