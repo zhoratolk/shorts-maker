@@ -158,6 +158,40 @@ def main() -> None:
     print(f"\n{len(added)} clips enqueued, {queued} now waiting for a slot")
     if not config.publish.enabled:
         print("publish.enabled is false - nothing will upload until it is turned on")
+        return
+
+    if args.local_only:
+        print("--local-only: left in the local queue, nothing uploaded")
+        return
+
+    # "On the grid" means on YouTube, not in a JSON file (owner's call,
+    # 2026-08-23). Uploading is the second half of this command, not a
+    # separate chore to remember afterwards - with no scheduled task to
+    # pick the queue up later, a clip left in `queued` is a clip nobody
+    # will ever publish.
+    upload_queued_batch(config, args.client_secret, args.token)
+
+
+def upload_queued_batch(config: Config, client_secret: str, token: str) -> list[dict]:
+    """Upload every clip now waiting in the queue, one grid slot each.
+
+    Imported lazily so the enqueue half keeps working - and keeps its tests
+    offline - on a machine with no Google client libraries and no OAuth token.
+    """
+    from googleapiclient.discovery import build
+
+    from scripts.publish_queue import UPLOAD_SCOPE, upload_batch
+    from scripts.youtube_analytics import load_credentials
+
+    def service_factory():
+        return build(
+            "youtube", "v3",
+            credentials=load_credentials(client_secret, token, [UPLOAD_SCOPE]),
+        )
+
+    uploaded = upload_batch(service_factory, config.publish, config.thumbnail.upload)
+    print(f"{len(uploaded)} clips uploaded to YouTube and scheduled")
+    return uploaded
 
 
 if __name__ == "__main__":

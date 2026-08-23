@@ -8,6 +8,7 @@ silent: the poster, the moment tag, the duration, and the publish order.
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 
@@ -167,3 +168,72 @@ def test_load_youtube_metadata_rejects_a_file_without_a_youtube_block(tmp_path):
 
     with pytest.raises(EnqueueBatchError, match="no 'youtube' block"):
         load_youtube_metadata(plan, {"output_filename": "clip-a.mp4"})
+
+
+class _FakePublish:
+    def __init__(self, tmp_path, enabled):
+        self.enabled = enabled
+        self.queue_path = str(tmp_path / "queue.json")
+        self.notifications_path = str(tmp_path / "log.txt")
+
+
+class _FakeThumbnail:
+    upload = True
+
+
+def _config(tmp_path, enabled=True):
+    class _Config:
+        output_dir = str(tmp_path)
+        publish = _FakePublish(tmp_path, enabled)
+        thumbnail = _FakeThumbnail()
+    return _Config()
+
+
+
+# --- the CLI's second half: enqueue means upload (2026-08-23) --------------
+
+
+def test_main_uploads_after_enqueuing(monkeypatch, tmp_path):
+    """The regression this guards: --local-only was wired into argparse while
+    the upload call itself never made it into main(), so every invocation
+    behaved as if --local-only had been passed. Nothing failed - the batch
+    simply sat in the queue looking enqueued."""
+    import scripts.enqueue_batch as module
+
+    calls = []
+    monkeypatch.setattr(module, "enqueue_batch", lambda *a, **k: [])
+    monkeypatch.setattr(module, "load_queue", lambda path: {"entries": []})
+    monkeypatch.setattr(module, "load_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr(module, "upload_queued_batch",
+                        lambda config, secret, token: calls.append((secret, token)))
+    monkeypatch.setattr(sys, "argv", ["enqueue_batch.py", "PLAN.json"])
+
+    module.main()
+
+    assert calls == [("client_secret.json", "upload_token.json")]
+
+
+def test_main_skips_the_upload_when_told_to_stay_local(monkeypatch, tmp_path):
+    import scripts.enqueue_batch as module
+
+    monkeypatch.setattr(module, "enqueue_batch", lambda *a, **k: [])
+    monkeypatch.setattr(module, "load_queue", lambda path: {"entries": []})
+    monkeypatch.setattr(module, "load_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr(module, "upload_queued_batch", lambda *a: (_ for _ in ()).throw(
+        AssertionError("--local-only must not upload")))
+    monkeypatch.setattr(sys, "argv", ["enqueue_batch.py", "PLAN.json", "--local-only"])
+
+    module.main()
+
+
+def test_main_uploads_nothing_while_publishing_is_disabled(monkeypatch, tmp_path):
+    import scripts.enqueue_batch as module
+
+    monkeypatch.setattr(module, "enqueue_batch", lambda *a, **k: [])
+    monkeypatch.setattr(module, "load_queue", lambda path: {"entries": []})
+    monkeypatch.setattr(module, "load_config", lambda path: _config(tmp_path, enabled=False))
+    monkeypatch.setattr(module, "upload_queued_batch", lambda *a: (_ for _ in ()).throw(
+        AssertionError("publish.enabled is false - nothing may upload")))
+    monkeypatch.setattr(sys, "argv", ["enqueue_batch.py", "PLAN.json"])
+
+    module.main()
