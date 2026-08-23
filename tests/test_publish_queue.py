@@ -39,6 +39,7 @@ from scripts.publish_queue import (
     select_next_due,
     set_thumbnail,
     upload_and_schedule,
+    fetch_privacy_status,
     verify_killed,
     _try_set_thumbnail,
 )
@@ -568,10 +569,12 @@ class FakeVideosUpdateService:
     pre-configured status for the post-kill verify re-fetch. House style per
     tests/test_youtube_analytics.py's FakeVideosService."""
 
-    def __init__(self, list_privacy_status="private"):
+    def __init__(self, list_privacy_status="private", missing=False, update_error=None):
         self.update_calls = []
         self.list_calls = []
         self._list_privacy_status = list_privacy_status
+        self._missing = missing
+        self._update_error = update_error
         self._mode = None
 
     def videos(self):
@@ -589,7 +592,11 @@ class FakeVideosUpdateService:
 
     def execute(self):
         if self._mode == "update":
+            if self._update_error is not None:
+                raise self._update_error
             return {"id": "vid_fake", "status": {"privacyStatus": self._list_privacy_status}}
+        if self._missing:
+            return {"items": []}
         return {
             "items": [
                 {"id": "vid_fake", "status": {"privacyStatus": self._list_privacy_status}}
@@ -728,6 +735,66 @@ def test_kill_item_scheduled_calls_revert_then_verify_then_marks_killed():
     assert len(service.update_calls) == 1
     assert len(service.list_calls) == 1
     assert queue["entries"][0]["status"] == KILLED
+
+
+class _FakeApiError(Exception):
+    """Stands in for googleapiclient.errors.HttpError: only the resp.status
+    is read, so the fake needs nothing more than that."""
+
+    def __init__(self, status):
+        super().__init__(f"api error {status}")
+        self.resp = type("Resp", (), {"status": status})()
+
+
+def test_fetch_privacy_status_returns_none_when_the_video_is_gone():
+    service = FakeVideosUpdateService(missing=True)
+
+    assert fetch_privacy_status(service, "vid_fake") is None
+    assert verify_killed(service, "vid_fake") is False
+
+
+def test_kill_item_marks_killed_when_the_video_no_longer_exists():
+    # A video deleted outside this tool leaves a SCHEDULED entry that the
+    # strict verify could never clear - the schedule cannot fire either way.
+    queue = {
+        "entries": [
+            make_entry(clip_id="clip-1", status=SCHEDULED, video_id="vid_fake")
+        ]
+    }
+    service = FakeVideosUpdateService(missing=True)
+
+    kill_item(queue, "clip-1", lambda: service)
+
+    assert queue["entries"][0]["status"] == KILLED
+    assert queue["entries"][0]["kill_note"] == "video already absent from YouTube"
+
+
+def test_kill_item_marks_killed_when_the_revert_itself_404s():
+    queue = {
+        "entries": [
+            make_entry(clip_id="clip-1", status=SCHEDULED, video_id="vid_fake")
+        ]
+    }
+    service = FakeVideosUpdateService(update_error=_FakeApiError(404))
+
+    kill_item(queue, "clip-1", lambda: service)
+
+    assert queue["entries"][0]["status"] == KILLED
+    assert service.list_calls == []
+
+
+def test_kill_item_reraises_an_api_error_that_is_not_a_missing_video():
+    queue = {
+        "entries": [
+            make_entry(clip_id="clip-1", status=SCHEDULED, video_id="vid_fake")
+        ]
+    }
+    service = FakeVideosUpdateService(update_error=_FakeApiError(500))
+
+    with pytest.raises(_FakeApiError):
+        kill_item(queue, "clip-1", lambda: service)
+
+    assert queue["entries"][0]["status"] != KILLED
 
 
 def test_kill_item_scheduled_failed_verify_blocks_killed_mark_and_raises():

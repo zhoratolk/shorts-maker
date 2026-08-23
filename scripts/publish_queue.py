@@ -499,17 +499,36 @@ def cancel_scheduled_release(service, video_id: str) -> None:
     ).execute()
 
 
+def fetch_privacy_status(service, video_id: str) -> str | None:
+    """Current privacyStatus of a video, or None when YouTube doesn't return
+    it at all - the video was deleted (here or from the YouTube UI) and there
+    is nothing left to revert. The two cases have to stay distinguishable:
+    "still public" means the kill failed, "gone" means it already succeeded by
+    other means, and collapsing both into a bare False strands the entry.
+    """
+    response = service.videos().list(part="status", id=video_id).execute()
+    items = response.get("items", [])
+    if not items:
+        return None
+    return items[0]["status"]["privacyStatus"]
+
+
 def verify_killed(service, video_id: str) -> bool:
     """Re-fetches videos().list(part="status", id=video_id) and returns True
     only if privacyStatus == "private". This is the mandatory post-kill
     check (Pitfall 2 / Assumption A1) - a kill that didn't take must be
     caught here, not trusted from the update() call alone.
     """
-    response = service.videos().list(part="status", id=video_id).execute()
-    items = response.get("items", [])
-    if not items:
-        return False
-    return items[0]["status"]["privacyStatus"] == "private"
+    return fetch_privacy_status(service, video_id) == "private"
+
+
+def _video_is_gone(error: Exception) -> bool:
+    """True for the API error raised when the video id no longer exists.
+    Matched on the response status rather than the message so a localized or
+    reworded body still reads correctly; anything else is a real failure.
+    """
+    status = getattr(getattr(error, "resp", None), "status", None)
+    return status in (403, 404)
 
 
 def kill_item(queue: dict[str, Any], clip_id: str, service_factory) -> dict[str, Any]:
@@ -533,11 +552,27 @@ def kill_item(queue: dict[str, Any], clip_id: str, service_factory) -> dict[str,
         return entry
 
     service = service_factory()
-    cancel_scheduled_release(service, entry["video_id"])
+    try:
+        cancel_scheduled_release(service, entry["video_id"])
+    except Exception as error:  # noqa: BLE001 - re-raised below unless the video is gone
+        if not _video_is_gone(error):
+            raise
+        entry["status"] = KILLED
+        entry["kill_note"] = "video already absent from YouTube"
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return entry
 
-    if not verify_killed(service, entry["video_id"]):
+    status = fetch_privacy_status(service, entry["video_id"])
+    if status is None:
+        # Deleted between the update above and this check, or deleted earlier
+        # and the update was a no-op: either way the schedule cannot fire.
+        entry["status"] = KILLED
+        entry["kill_note"] = "video already absent from YouTube"
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return entry
+    if status != "private":
         raise RuntimeError(
-            f"kill_item: verify_killed returned False for clip_id={clip_id!r} "
+            f"kill_item: video is still {status!r} for clip_id={clip_id!r} "
             f"video_id={entry['video_id']!r} - the revert did not take, refusing "
             "to mark KILLED (Pitfall 2 / Assumption A1)"
         )
