@@ -660,6 +660,7 @@ def build_hook_banner_filter(
     position: str = "top",
     duration_seconds: float = 3.0,
     fade_seconds: float = 0.4,
+    start_seconds: float = 0.0,
     max_lines: int = 2,
     line_gap: int = 20,
 ) -> str | None:
@@ -674,6 +675,12 @@ def build_hook_banner_filter(
     mode="persistent" (the ROADMAP 2026-07-12 locked default): no gating,
     the plate shows for the whole clip.
 
+    start_seconds shifts that hook window later in the SOURCE timeline. It
+    exists for rotated loop clips: the plate is burned in before the rotation
+    runs, so to land on the output's first seconds it has to be drawn over the
+    frames the rotation will move to the front (i.e. starting at the rotate
+    point). 0 (the default) keeps the plate on the clip's own opening.
+
     Returns None for empty/whitespace text (fail-open, HOOK-03) - the caller
     omits the filter entirely, keeping the command byte-identical to today.
     """
@@ -687,6 +694,8 @@ def build_hook_banner_filter(
         raise RenderError(f"banner font sizes must be > 0, got size={size}, cta_size={cta_size}")
     if not 0.0 <= box_opacity <= 1.0:
         raise RenderError(f"banner box_opacity must be within [0, 1], got {box_opacity}")
+    if start_seconds < 0:
+        raise RenderError(f"banner start_seconds must be >= 0, got {start_seconds}")
     if mode == "hook":
         if duration_seconds <= 0:
             raise RenderError(f"banner duration_seconds must be > 0 in hook mode, got {duration_seconds}")
@@ -730,9 +739,14 @@ def build_hook_banner_filter(
         )
 
     if mode == "hook":
-        suffix = f":enable='between(t,0,{duration_seconds})'"
+        window_start = round(float(start_seconds), 3)
+        # Keep the un-shifted command byte-identical to what it has always
+        # been: an int 0 formats as "0", where round(0.0, 3) would emit "0.0".
+        window_start = 0 if window_start <= 0 else window_start
+        window_end = duration_seconds if window_start == 0 else round(window_start + duration_seconds, 3)
+        suffix = f":enable='between(t,{window_start},{window_end})'"
         if fade_seconds > 0:
-            fade_start = round(duration_seconds - fade_seconds, 3)
+            fade_start = round(window_end - fade_seconds, 3)
             suffix += f":alpha='if(lt(t,{fade_start}),1,max(0,1-(t-{fade_start})/{fade_seconds}))'"
         clauses = [f"{clause}{suffix}" for clause in clauses]
 
@@ -1463,6 +1477,24 @@ def probe_video(video_path: str, runner=subprocess.run) -> dict:
     }
 
 
+def plan_timeline_duration(plan_entry: dict) -> float | None:
+    """Length of the clip about to be rendered, read off the plan alone.
+
+    Needed before the file exists (the hook banner is burned in during the
+    base pass, but its window depends on the rotate point). Jump cuts make the
+    rendered length the sum of the kept segments rather than end - start.
+    Returns None for shapes the plan can't answer for - a compilation entry,
+    say - so the caller falls back to probing the rendered file instead.
+    """
+    keep_segments = plan_entry.get("keep_segments")
+    if keep_segments:
+        return round(sum(float(segment[1]) - float(segment[0]) for segment in keep_segments), 3)
+    start, end = plan_entry.get("start"), plan_entry.get("end")
+    if start is None or end is None:
+        return None
+    return round(float(end) - float(start), 3)
+
+
 def derive_loop_rotate_at(plan_entry: dict, clip_duration: float) -> float | None:
     """Rotate point for a loop entry that didn't spell one out, or None.
 
@@ -1640,10 +1672,38 @@ def render_clip(
             f"{subtitle_style['position']!r}; set config.hook_banner.position and "
             "config.subtitles.position to different zones"
         )
+    # Rotate point, resolved once so the hook banner window below and the loop
+    # finalize pass at the end of this function agree on the same number. Stays
+    # None when the plan can't answer yet (a compilation entry) - the loop pass
+    # falls back to deriving it from the rendered file's own duration.
+    loop_rotate_at: float | None = None
+    if loop_enabled and plan_entry.get("loop") and loop_mode == "rotate":
+        loop_rotate_at = plan_entry.get("loop_rotate_at")
+        if loop_rotate_at is None:
+            planned_duration = plan_timeline_duration(plan_entry)
+            if planned_duration is not None:
+                loop_rotate_at = derive_loop_rotate_at(plan_entry, planned_duration)
+
+    # A "hook" banner shows for the first banner_duration_seconds. On a rotated
+    # loop clip those opening frames end up mid-output, so the plate is drawn
+    # over the punch instead - the half the rotation moves to the front - and
+    # lands on the output's opening after all. "persistent" (the locked
+    # default) is unaffected: it is on screen wherever the frames go.
+    banner_start_seconds = 0.0
+    if banner_text and banner_mode == "hook" and loop_mode == "rotate"             and loop_enabled and plan_entry.get("loop"):
+        if loop_rotate_at is None:
+            print(
+                f"[warn] {output_path}: banner_mode=hook on a rotated loop clip whose rotate "
+                "point is unknown at banner time; the plate will land mid-output",
+                file=sys.stderr,
+            )
+        else:
+            banner_start_seconds = float(loop_rotate_at)
+
     banner_filter = None
     if banner_text:
         banner_filter = build_hook_banner_filter(
-            banner_text, banner_mode,
+            banner_text, banner_mode, start_seconds=banner_start_seconds,
             cta_text=banner_cta_text, font=banner_font, cta_font=banner_cta_font,
             size=banner_size, cta_size=banner_cta_size, color=banner_color,
             cta_color=banner_cta_color, box_color=banner_box_color,
@@ -1893,7 +1953,7 @@ def render_clip(
         tmp_path = final_path.with_name(final_path.stem + "__loop" + final_path.suffix)
         try:
             base_duration = probe_video(output_path, runner=runner)["duration"]
-            rotate_at = plan_entry.get("loop_rotate_at")
+            rotate_at = loop_rotate_at
             if loop_mode == "rotate" and rotate_at is None:
                 # Not an error worth failing a clip over: the point is
                 # derivable from the clip's own words, and a plan that omits
@@ -1905,17 +1965,6 @@ def render_clip(
                     "derive one from the clip's words (missing subtitles_path/_words.json, or "
                     "the punch leaves too little setup or too little punch to lead with); set "
                     "loop_rotate_at explicitly or pass --loop-mode seam"
-                )
-            if loop_mode == "rotate" and banner_mode == "hook" and plan_entry.get("banner_text"):
-                # A "hook" banner is burned into the clip's first
-                # banner_duration_seconds. Rotating moves those frames into the
-                # middle of the output, so the plate would appear mid-clip out
-                # of nowhere. "persistent" (the locked default) is unaffected -
-                # it's on screen throughout, wherever the frames end up.
-                print(
-                    f"[warn] {output_path}: banner_mode=hook on a rotated loop clip puts the "
-                    "plate in the middle of the output; use the persistent banner or drop it",
-                    file=sys.stderr,
                 )
             if loop_mode == "rotate":
                 # Same clamp rationale as the cold-open pass above: the plan's

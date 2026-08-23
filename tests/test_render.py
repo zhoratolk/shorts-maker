@@ -24,6 +24,7 @@ from scripts.overlay_pass import (
 )
 from scripts.render import (
     derive_loop_rotate_at,
+    plan_timeline_duration,
     RenderError,
     VALID_TRANSITIONS,
     _escape_drawtext_text,
@@ -2319,6 +2320,20 @@ def test_build_hook_banner_filter_hook_mode_hard_cut_when_fade_zero():
     assert "alpha=" not in result
 
 
+def test_build_hook_banner_filter_hook_mode_shifts_window_by_start_seconds():
+    result = build_hook_banner_filter("ХУК", mode="hook", cta_text="@nick", start_seconds=22.0)
+    assert result.count("enable='between(t,22.0,25.0)'") == 2
+    assert result.count("alpha='if(lt(t,24.6),1,max(0,1-(t-24.6)/0.4))'") == 2
+
+
+def test_build_hook_banner_filter_zero_start_seconds_keeps_the_old_clause():
+    assert build_hook_banner_filter("ХУК", mode="hook", start_seconds=0.0) ==         build_hook_banner_filter("ХУК", mode="hook")
+
+
+def test_build_hook_banner_filter_persistent_ignores_start_seconds():
+    assert build_hook_banner_filter("ХУК", mode="persistent", start_seconds=22.0) ==         build_hook_banner_filter("ХУК", mode="persistent")
+
+
 def test_build_hook_banner_filter_multi_line_wrap_stacks_clauses():
     result = build_hook_banner_filter(
         "МУЖИКИ ВЫ ЧЁ ТВОРИТЕ ПАРНИ СЕРЬЁЗНО", mode="persistent"
@@ -2353,6 +2368,8 @@ def test_build_hook_banner_filter_rejects_bad_args():
         build_hook_banner_filter("ХУК", mode="hook", duration_seconds=0)
     with pytest.raises(RenderError, match="fade_seconds"):
         build_hook_banner_filter("ХУК", mode="hook", duration_seconds=2.0, fade_seconds=2.0)
+    with pytest.raises(RenderError, match="start_seconds"):
+        build_hook_banner_filter("ХУК", mode="hook", start_seconds=-1.0)
 
 
 def _banner_fake_runner(captured):
@@ -2641,3 +2658,76 @@ def test_render_clip_derives_the_rotate_point_when_the_plan_omits_it(tmp_path):
                 c[c.index("-filter_complex") + 1]]
     assert len(finalize) == 1
     assert "trim=start=22.0" in finalize[0][finalize[0].index("-filter_complex") + 1]
+
+
+def test_plan_timeline_duration_prefers_the_kept_segments(tmp_path):
+    assert plan_timeline_duration({"start": 10.0, "end": 40.0}) == 30.0
+    assert plan_timeline_duration(
+        {"start": 10.0, "end": 40.0, "keep_segments": [[10.0, 20.0], [30.0, 40.0]]}
+    ) == 20.0
+    assert plan_timeline_duration({"segments": [{"start": 1.0, "end": 2.0}]}) is None
+
+
+def test_render_clip_moves_the_hook_banner_onto_the_rotated_opening(tmp_path):
+    commands = []
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "loop": True, "loop_rotate_at": 22.0, "banner_text": "ХУК",
+    }
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        loop_enabled=True, loop_mode="rotate", banner_mode="hook",
+        runner=_overlay_capture_runner(commands),
+    )
+    base = " ".join(commands[0])
+    # the plate rides the punch half, which the rotation moves to the front
+    assert "enable='between(t,22.0,25.0)'" in base
+    assert "enable='between(t,0,3.0)'" not in base
+
+
+def test_render_clip_derives_the_banner_shift_from_the_plans_own_words(tmp_path):
+    words = tmp_path / "clip_words.json"
+    words.write_text(json.dumps([
+        {"word": "a", "start": 1.0, "end": 1.5},
+        {"word": "b", "start": 22.0, "end": 22.6},
+    ]), encoding="utf-8")
+    commands = []
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom", "loop": True,
+        "banner_text": "ХУК", "subtitles_path": str(tmp_path / "clip.srt"),
+    }
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        loop_enabled=True, loop_mode="rotate", banner_mode="hook",
+        runner=_overlay_capture_runner(commands),
+    )
+    assert "enable='between(t,22.0,25.0)'" in " ".join(commands[0])
+
+
+def test_render_clip_leaves_the_persistent_banner_alone_on_a_rotated_loop():
+    commands = []
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "loop": True, "loop_rotate_at": 22.0, "banner_text": "ХУК",
+    }
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        loop_enabled=True, loop_mode="rotate", banner_mode="persistent",
+        runner=_overlay_capture_runner(commands),
+    )
+    assert "enable=" not in " ".join(commands[0])
+
+
+def test_render_clip_leaves_the_hook_banner_alone_without_rotation():
+    commands = []
+    plan_entry = {"start": 10.0, "end": 40.0, "crop_style": "zoom", "banner_text": "ХУК"}
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        banner_mode="hook",
+        runner=_overlay_capture_runner(commands),
+    )
+    assert "enable='between(t,0,3.0)'" in " ".join(commands[0])
