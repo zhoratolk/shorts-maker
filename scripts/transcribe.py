@@ -75,6 +75,43 @@ def split_segments_on_gaps(segments: list[dict], max_gap_seconds: float = 0.8) -
     return out
 
 
+MIN_REPETITION_RUN = 12
+
+
+def detect_repetition_loops(
+    segments: list[dict], min_run: int = MIN_REPETITION_RUN
+) -> list[dict]:
+    """Runs of `min_run`+ consecutive segments carrying the same text.
+
+    A Whisper repetition loop is the one transcription failure that looks
+    exactly like success downstream: the file parses, the timestamps advance,
+    every later step runs happily - and the moment search reads an hour of
+    "Вечный файт" and honestly reports that nothing happened there. Nothing
+    else in the pipeline can tell that apart from a genuinely quiet stream,
+    so it has to be caught here, at the only point that knows better.
+    """
+    loops: list[dict] = []
+    run_start = 0
+    for index in range(1, len(segments) + 1):
+        same = (
+            index < len(segments)
+            and segments[index]["text"].strip() == segments[run_start]["text"].strip()
+        )
+        if same:
+            continue
+        count = index - run_start
+        text = segments[run_start]["text"].strip()
+        if count >= min_run and text:
+            loops.append({
+                "start": segments[run_start]["start"],
+                "end": segments[index - 1]["end"],
+                "text": text,
+                "count": count,
+            })
+        run_start = index
+    return loops
+
+
 def transcribe_video(
     video_path: str,
     transcripts_dir: str,
@@ -83,6 +120,7 @@ def transcribe_video(
     beam_size: int = 5,
     vad_filter: bool = False,
     batch_size: int = 0,
+    condition_on_previous_text: bool = False,
 ) -> dict:
     cache_path = Path(transcript_cache_path(video_path, transcripts_dir))
     if cache_path.exists():
@@ -103,6 +141,15 @@ def transcribe_video(
         # interjections, which on this channel are often the punchline. Turn it on with
         # --vad --batch-size N when throughput matters more than completeness.
         "vad_filter": vad_filter,
+        # Off, unlike faster-whisper's default. Conditioning each window on the
+        # model's own previous output is what turns a stretch of silence, music
+        # or game noise into a loop: it emits a phrase, feeds that phrase back
+        # as context, and emits it again until the file ends. Eight of the 29
+        # November chunks came out that way (2026-08-23) - one whole recording
+        # was 93 consecutive "надо было его взорвать", another 482 "с" - and
+        # nothing flagged it, so those hours simply looked contentless.
+        # The cost is slightly worse punctuation across sentence boundaries.
+        "condition_on_previous_text": condition_on_previous_text,
     }
     if vad_filter:
         # Softer than Silero's defaults: the stock threshold of 0.5 drops ~24% of the
@@ -131,11 +178,21 @@ def transcribe_video(
     ]
     if batch_size > 0:
         segments = split_segments_on_gaps(segments)
+    loops = detect_repetition_loops(segments)
+    for loop in loops:
+        print(
+            f"[warn] {Path(video_path).name}: transcript repeats "
+            f"{loop['text']!r} {loop['count']} times from "
+            f"{loop['start'] / 60:.0f}:{loop['start'] % 60:02.0f} - that stretch "
+            "did not transcribe, re-run it before searching it for moments",
+            file=sys.stderr,
+        )
     result = {
         "video_path": video_path,
         "language": info.language,
         "duration": info.duration,
         "segments": segments,
+        "repetition_loops": loops,
     }
     cache_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     return result
@@ -202,6 +259,11 @@ def main() -> None:
         "--batch-size", type=int, default=0, help="0 disables batched inference; needs --vad"
     )
     parser.add_argument("--vad", dest="vad_filter", action="store_true", default=False)
+    parser.add_argument(
+        "--condition-on-previous-text", action="store_true", default=False,
+        help="Restore Whisper's default context carry-over (better punctuation, "
+             "but silence/music can send it into a repetition loop)",
+    )
     args = parser.parse_args()
 
     if is_cached(args.video_path, args.transcripts_dir):
@@ -216,6 +278,7 @@ def main() -> None:
         args.language,
         beam_size=args.beam_size,
         vad_filter=args.vad_filter,
+        condition_on_previous_text=args.condition_on_previous_text,
         batch_size=args.batch_size,
     )
     print(transcript_cache_path(args.video_path, args.transcripts_dir))

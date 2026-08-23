@@ -74,6 +74,7 @@ def test_transcribe_video_writes_cache(tmp_path):
     assert model.kwargs["beam_size"] == 5
     # VAD and batching are opt-in: both cost word recall, see transcribe_video's comment
     assert model.kwargs["vad_filter"] is False
+    assert model.kwargs["condition_on_previous_text"] is False
     assert "vad_parameters" not in model.kwargs
     assert "batch_size" not in model.kwargs
     assert result == {
@@ -90,6 +91,7 @@ def test_transcribe_video_writes_cache(tmp_path):
                 "words": [{"word": "world", "start": 2.0, "end": 4.0}],
             },
         ],
+        "repetition_loops": [],
     }
     cache_file = Path(transcripts_dir) / "video.json"
     assert json.loads(cache_file.read_text(encoding="utf-8")) == result
@@ -328,3 +330,51 @@ def test_register_nvidia_dll_dirs_registers_each_bin_dir(monkeypatch, tmp_path):
     assert sorted(calls) == sorted(
         [str(tmp_path / "cublas" / "bin"), str(tmp_path / "cudnn" / "bin")]
     )
+
+
+# --- repetition loops: the failure that looks like success -----------------
+
+
+def _seg(start, text):
+    return {"start": float(start), "end": float(start) + 1.0, "text": text, "words": []}
+
+
+def test_detect_repetition_loops_finds_a_collapsed_stretch():
+    from scripts.transcribe import detect_repetition_loops
+
+    segments = [_seg(0, "нормальная речь"), _seg(1, "и ещё одна")]
+    segments += [_seg(2 + i, " надо было его взорвать") for i in range(20)]
+
+    loops = detect_repetition_loops(segments)
+
+    assert len(loops) == 1
+    assert loops[0]["count"] == 20
+    assert loops[0]["text"] == "надо было его взорвать"
+    assert loops[0]["start"] == 2.0
+
+
+def test_detect_repetition_loops_ignores_an_ordinary_repeated_line():
+    from scripts.transcribe import detect_repetition_loops
+
+    # a streamer really does say the same short thing a few times in a row
+    segments = [_seg(i, "Убейте его!") for i in range(4)]
+
+    assert detect_repetition_loops(segments) == []
+
+
+def test_detect_repetition_loops_reports_every_separate_run():
+    from scripts.transcribe import detect_repetition_loops
+
+    segments = [_seg(i, "а") for i in range(15)]
+    segments += [_seg(100 + i, "речь") for i in range(3)]
+    segments += [_seg(200 + i, "Вечный файт") for i in range(14)]
+
+    loops = detect_repetition_loops(segments)
+
+    assert [loop["text"] for loop in loops] == ["а", "Вечный файт"]
+
+
+def test_detect_repetition_loops_ignores_a_run_of_empty_text():
+    from scripts.transcribe import detect_repetition_loops
+
+    assert detect_repetition_loops([_seg(i, "   ") for i in range(30)]) == []
