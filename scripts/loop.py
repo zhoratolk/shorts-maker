@@ -80,29 +80,58 @@ ROTATE_MIN_SETUP_SECONDS = 4.0
 LAST_PHRASE_GAP_SECONDS = 0.6
 
 
+def phrase_starts(
+    words: list[dict],
+    *,
+    gap_seconds: float = LAST_PHRASE_GAP_SECONDS,
+    splice_points: list[float] | None = None,
+) -> list[float]:
+    """Every phrase boundary in the clip, ascending - the first word of each.
+
+    Two things separate one phrase from the next:
+
+      * a gap of at least `gap_seconds` between words. Group voice chat runs
+        sentences together with sub-0.6s gaps, so anything tighter splits
+        mid-sentence (same threshold cold_open_window uses).
+      * a JUMP CUT. `splice_points` are the cut boundaries on this clip's own
+        timeline, and a cut is the strongest phrase boundary there is: the
+        pause was long enough that it got deleted outright. Without this the
+        removal of a pause also removes the evidence that it was ever there,
+        and a heavily cut clip reads as one continuous phrase from its first
+        word - which is exactly what happened to two of three loop clips on
+        2026-08-23, both of which then rendered unrotated.
+    """
+    usable = [w for w in words if w.get("start") is not None and w.get("end") is not None]
+    if not usable:
+        return []
+
+    usable.sort(key=lambda w: w["start"])
+    cuts = sorted(splice_points or [])
+    starts = [round(usable[0]["start"], 3)]
+    for previous, word in zip(usable, usable[1:]):
+        gap = word["start"] - previous["end"]
+        # A splice sits at a single instant; a word may start a hair before
+        # or after it once timestamps are rounded, so allow a small tolerance.
+        spliced = any(previous["end"] - 0.05 <= cut <= word["start"] + 0.05 for cut in cuts)
+        if gap >= gap_seconds or spliced:
+            starts.append(round(word["start"], 3))
+    return starts
+
+
 def last_phrase_start(
     words: list[dict],
     *,
     gap_seconds: float = LAST_PHRASE_GAP_SECONDS,
+    splice_points: list[float] | None = None,
 ) -> float | None:
     """Start of the clip's final spoken phrase, or None for no usable words.
 
     Strategy 3 is defined as "the hook is the clip's final spoken beat", so
     that beat's own start IS the rotate point - no separate hand-set field
-    needed. Walks back from the last word while the gap to the previous word
-    stays under gap_seconds, the same phrase-boundary threshold
-    cold_open_window uses (group voice chat runs sentences together with
-    sub-0.6s gaps, so anything tighter splits mid-sentence).
+    needed.
     """
-    usable = [w for w in words if w.get("start") is not None and w.get("end") is not None]
-    if not usable:
-        return None
-
-    usable.sort(key=lambda w: w["start"])
-    start_index = len(usable) - 1
-    while start_index > 0 and usable[start_index]["start"] - usable[start_index - 1]["end"] <= gap_seconds:
-        start_index -= 1
-    return round(usable[start_index]["start"], 3)
+    starts = phrase_starts(words, gap_seconds=gap_seconds, splice_points=splice_points)
+    return starts[-1] if starts else None
 
 
 def punch_rotate_at(

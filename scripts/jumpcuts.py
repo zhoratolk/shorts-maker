@@ -151,6 +151,24 @@ def compute_boundary_windows(keep_segments: list[tuple[float, float]]) -> list[t
     ]
 
 
+def splice_points(keep_segments: list[tuple[float, float]]) -> list[float]:
+    """The jump cuts' positions on the RENDERED timeline, in seconds.
+
+    compute_boundary_gaps/-windows both answer in absolute source seconds,
+    which is what a transition overlap needs. This answers where the same
+    boundaries land *after* the splice - the timeline subtitles, punch zooms
+    and the loop rotation all live on - which is simply the running total of
+    the kept durations, minus the final one (the clip's own end is not a
+    boundary between two segments).
+    """
+    points: list[float] = []
+    elapsed = 0.0
+    for start, end in keep_segments[:-1]:
+        elapsed += float(end) - float(start)
+        points.append(round(elapsed, 3))
+    return points
+
+
 def drop_boundary(keep_segments: list[tuple[float, float]], boundary_index: int) -> list[tuple[float, float]]:
     """Reverses one jump cut: merges the two segments straddling
     keep_segments' boundary_index-th gap back into a single segment, keeping

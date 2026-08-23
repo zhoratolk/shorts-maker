@@ -72,3 +72,88 @@ def test_the_transition_is_clamped_to_the_punch_half_it_has_to_fit_inside():
     # overrun it, or the setup would start before the punch has played.
     filtergraph = graph(rotate("whip_pan", duration=5.0, rotate_at=18.0, base_duration=20.0))
     assert "duration=2.0" in filtergraph or "duration=2" in filtergraph
+
+
+# --- a jump cut is a phrase boundary too (2026-08-23) ----------------------
+
+import json
+
+from scripts.jumpcuts import splice_points
+from scripts.loop import last_phrase_start, phrase_starts
+
+
+def _w(*pairs):
+    return [{"word": f"w{i}", "start": a, "end": b} for i, (a, b) in enumerate(pairs)]
+
+
+def test_splice_points_are_the_cuts_on_the_rendered_timeline():
+    # 10s kept, 90s of source skipped, 5s kept -> one boundary, at 10s out
+    assert splice_points([(0.0, 10.0), (100.0, 105.0)]) == [10.0]
+    assert splice_points([(0.0, 4.0), (9.0, 12.0), (20.0, 21.0)]) == [4.0, 7.0]
+    assert splice_points([(0.0, 10.0)]) == []
+    assert splice_points([]) == []
+
+
+def test_a_splice_starts_a_new_phrase_even_when_the_words_nearly_touch():
+    # 0.2s apart: nowhere near the 0.6s pause threshold, but a 10s pause was
+    # cut out right between them, so they are not one phrase.
+    words = _w((0.0, 0.4), (0.5, 0.9), (1.1, 1.5))
+
+    assert phrase_starts(words) == [0.0]
+    assert phrase_starts(words, splice_points=[1.0]) == [0.0, 1.1]
+    assert last_phrase_start(words, splice_points=[1.0]) == 1.1
+
+
+def test_a_splice_a_hair_off_a_word_boundary_still_counts():
+    words = _w((0.0, 0.4), (0.52, 0.9))
+
+    # rounding can put the cut just inside either word
+    assert phrase_starts(words, splice_points=[0.38]) == [0.0, 0.52]
+    assert phrase_starts(words, splice_points=[0.55]) == [0.0, 0.52]
+
+
+def test_phrase_starts_still_splits_on_a_plain_pause_with_no_cuts():
+    words = _w((0.0, 0.4), (5.0, 5.4), (5.5, 5.9))
+
+    assert phrase_starts(words) == [0.0, 5.0]
+
+
+def _entry(tmp_path, words, keep_segments=None):
+    subtitles = tmp_path / "clip.srt"
+    subtitles.write_text("", encoding="utf-8")
+    (tmp_path / "clip_words.json").write_text(json.dumps(words), encoding="utf-8")
+    entry = {"subtitles_path": str(subtitles)}
+    if keep_segments:
+        entry["keep_segments"] = keep_segments
+    return entry
+
+
+def test_derive_falls_back_past_a_trailing_line_too_short_to_lead_with(tmp_path):
+    from scripts.render import derive_loop_rotate_at
+
+    # payoff at 16.0, then a stray "Ну." at 20.2 - the last phrase, but it
+    # leaves 0.7s of punch against the 1.5s floor. Trying only that one used
+    # to fail the whole rotation.
+    words = _w((2.0, 2.5), (8.0, 8.5), (16.0, 16.4), (16.5, 17.0), (20.2, 20.5))
+
+    assert derive_loop_rotate_at(_entry(tmp_path, words), 20.9) == 16.0
+
+
+def test_derive_reads_the_clips_own_cuts_when_it_has_them(tmp_path):
+    from scripts.render import derive_loop_rotate_at
+
+    # words run continuously by their timestamps; only keep_segments knows a
+    # 90-second pause was removed at the 12s mark.
+    words = _w((1.0, 1.4), (6.0, 6.4), (11.6, 12.0), (12.1, 12.5), (12.6, 13.0))
+    keep = [[0.0, 12.0], [102.0, 116.0]]
+
+    assert derive_loop_rotate_at(_entry(tmp_path, words, keep), 26.0) == 12.1
+
+
+def test_derive_still_returns_none_when_no_candidate_fits(tmp_path):
+    from scripts.render import derive_loop_rotate_at
+
+    # every phrase start sits inside the 4s setup floor
+    words = _w((0.2, 0.6), (1.5, 1.9), (3.0, 3.4))
+
+    assert derive_loop_rotate_at(_entry(tmp_path, words), 20.0) is None

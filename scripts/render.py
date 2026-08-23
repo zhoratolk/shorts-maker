@@ -36,11 +36,13 @@ from scripts.overlay_pass import (
 )
 
 from scripts.cold_open import VALID_COLD_OPEN_TRANSITIONS, build_cold_open_command
+from scripts.jumpcuts import splice_points
 from scripts.loop import (
     VALID_LOOP_TRANSITIONS,
     build_loop_outro_command,
     build_punch_rotate_command,
     last_phrase_start,
+    phrase_starts,
     punch_rotate_at,
 )
 
@@ -1476,10 +1478,22 @@ def derive_loop_rotate_at(plan_entry: dict, clip_duration: float) -> float | Non
     except (OSError, ValueError):
         return None
 
-    punch_at = last_phrase_start(words)
-    if punch_at is None:
-        return None
-    return punch_rotate_at(words, punch_at, clip_duration)
+    # A jump cut is a phrase boundary too - and one this clip has already
+    # erased the evidence of, since the pause it replaced is gone from the
+    # word list. Feed the cuts back in, on the same timeline the words are on.
+    keep_segments = plan_entry.get("keep_segments")
+    cuts = splice_points([(float(a), float(b)) for a, b in keep_segments]) if keep_segments else None
+
+    # Latest phrase first, falling back to earlier ones. The last spoken beat
+    # is the hook by definition, but a throwaway line after the payoff
+    # ("Ну.", "ладно") is also a phrase, and one too short to lead with -
+    # trying only that one makes the whole rotation fail rather than settling
+    # for the real punch a beat earlier (2026-08-23).
+    for punch_at in reversed(phrase_starts(words, splice_points=cuts)):
+        rotate_at = punch_rotate_at(words, punch_at, clip_duration)
+        if rotate_at is not None:
+            return rotate_at
+    return None
 
 
 def render_clip(
