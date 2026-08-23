@@ -138,6 +138,12 @@ def main() -> None:
         "--strict", action="store_true",
         help="Fail on a plan entry whose rendered clip is missing instead of skipping it",
     )
+    parser.add_argument(
+        "--local-only", action="store_true",
+        help="Stop after writing the local queue instead of uploading the batch to YouTube",
+    )
+    parser.add_argument("--client-secret", default="client_secret.json", help="OAuth client secret JSON path")
+    parser.add_argument("--token", default="upload_token.json", help="Cached upload-scoped OAuth token JSON path")
     args = parser.parse_args()
 
     config = load_config(args.config)

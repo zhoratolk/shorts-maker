@@ -547,7 +547,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--enqueue", action="store_true",
-        help="Put the batch on the publish grid once it has rendered (scripts/enqueue_batch.py)",
+        help="Put the batch on the publish grid once it has rendered - enqueue AND upload "
+             "to YouTube (scripts/enqueue_batch.py)",
+    )
+    parser.add_argument(
+        "--enqueue-local-only", action="store_true",
+        help="With --enqueue: write the local queue but do not upload to YouTube",
     )
     args = parser.parse_args()
 
@@ -610,9 +615,11 @@ def main() -> None:
         # Imported here, not at module scope: enqueue_batch imports this module
         # back for is_loop_entry, and rendering must not depend on the publish
         # half being importable.
-        from scripts.enqueue_batch import enqueue_batch
+        from scripts.enqueue_batch import enqueue_batch, upload_queued_batch
 
         enqueue_batch(config, args.plan_json, output_dir)
+        if config.publish.enabled and not args.enqueue_local_only:
+            upload_queued_batch(config, "client_secret.json", "upload_token.json")
 
 
 if __name__ == "__main__":

@@ -40,6 +40,10 @@ DEFAULT_NOTIFICATIONS_PATH = "work/_publish/notifications.log"
 # Without videos.update, the pause/kill safety mechanism cannot function, so
 # the scope was deliberately widened to cover it.
 UPLOAD_SCOPE = "https://www.googleapis.com/auth/youtube"
+# How far back to walk the uploads playlist when reading the channel's own
+# pending schedule. Anything still scheduled sits at the very top of that
+# playlist, so this only has to cover a plausible backlog, not the archive.
+CHANNEL_SCAN_LIMIT = 150
 
 # YouTube's own field-length limits (V5 input validation, 03-RESEARCH
 # Security Domain) - a violation fails this one queue item, not the whole
@@ -232,6 +236,54 @@ def collect_scheduled_slots(queue: dict[str, Any]) -> list[str]:
     ]
 
 
+def fetch_channel_scheduled_slots(service) -> list[str]:
+    """Every publishAt currently pending on the channel itself, read from
+    YouTube rather than from this file.
+
+    collect_scheduled_slots only knows what this queue wrote. Anything
+    scheduled another way - moved by hand in Studio, uploaded from the phone,
+    left over from an older run - is invisible to it, and next_free_slot then
+    hands out a slot that is already taken. Reading the channel closes that
+    gap for good.
+
+    Fails open: on any API problem the caller keeps the local-only set, which
+    is what it used to have anyway.
+    """
+    try:
+        channels = service.channels().list(part="contentDetails", mine=True).execute()
+        uploads = channels["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
+    except Exception as error:  # noqa: BLE001 - advisory read, never fatal
+        print(f"[warn] could not read the channel's own schedule: {error}", file=sys.stderr)
+        return []
+
+    from scripts.youtube_analytics import chunk_video_ids
+
+    video_ids: list[str] = []
+    page_token = None
+    try:
+        while len(video_ids) < CHANNEL_SCAN_LIMIT:
+            response = service.playlistItems().list(
+                part="contentDetails", playlistId=uploads,
+                maxResults=50, pageToken=page_token,
+            ).execute()
+            video_ids += [item["contentDetails"]["videoId"] for item in response.get("items", [])]
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
+
+        slots = []
+        for chunk in chunk_video_ids(video_ids):
+            listed = service.videos().list(part="status", id=",".join(chunk)).execute()
+            for video in listed.get("items", []):
+                status = video.get("status", {})
+                if status.get("privacyStatus") == "private" and status.get("publishAt"):
+                    slots.append(status["publishAt"])
+        return slots
+    except Exception as error:  # noqa: BLE001 - advisory read, never fatal
+        print(f"[warn] could not read the channel's own schedule: {error}", file=sys.stderr)
+        return []
+
+
 def next_free_slot(
     daily_slots_utc: list[str],
     already_scheduled: list[str],
@@ -319,6 +371,7 @@ def upload_and_schedule(
     now: datetime | None = None,
     queue_path: str = DEFAULT_QUEUE_PATH,
     thumbnail_upload: bool = True,
+    extra_scheduled: list[str] | None = None,
 ) -> dict[str, Any] | str:
     """Orchestrates the dry-run gate -> write-ahead uploading -> insert ->
     record scheduled flow for one queue entry.
@@ -355,7 +408,7 @@ def upload_and_schedule(
     # reached once we're committed to a live upload.
     from googleapiclient.http import MediaFileUpload
 
-    already_scheduled = collect_scheduled_slots(queue)
+    already_scheduled = collect_scheduled_slots(queue) + list(extra_scheduled or [])
     publish_at = next_free_slot(config.daily_slots_utc, already_scheduled, now=now)
 
     # Write-ahead: persist UPLOADING before any network call, so a crash
@@ -730,19 +783,26 @@ def reconcile_all_scheduled(
     publish_at (what we originally asked YouTube to schedule) - comparing the
     two is how a delayed/mis-scheduled publish gets caught after the fact.
 
-    Fail-open: an entry whose video_id no longer resolves (deleted, revoked
-    access, transient API gap) is left SCHEDULED rather than guessed at -
-    same convention as diarization/audio-energy elsewhere in this project.
+    Checks EVERY scheduled entry, not only the past-due ones: publish_at is
+    what we asked for, not what happened. A video can go public ahead of its
+    local timestamp (rescheduled or released by hand in Studio), and such an
+    entry used to sit SCHEDULED while already being public - the same drift
+    this function exists to prevent, just in the other direction. The lookup
+    is batched 50 ids to a call either way, so widening it costs nothing.
+
+    An entry whose video_id no longer resolves is resolved as KILLED rather
+    than left SCHEDULED forever: YouTube returning nothing for an id means
+    the video is gone, so the pending release can never fire and there is
+    nothing left to wait for (found 2026-08-23 on seq 215, deleted outside
+    this tool a day after its slot passed). Genuinely transient failures do
+    not reach here - an API error raises out of the call instead of coming
+    back as an empty item list.
     """
     now = now or datetime.now(timezone.utc)
-    now_iso = now.isoformat().replace("+00:00", "Z")
     due = [
         entry
         for entry in queue["entries"]
-        if entry["status"] == SCHEDULED
-        and entry.get("video_id")
-        and entry.get("publish_at")
-        and entry["publish_at"] <= now_iso
+        if entry["status"] == SCHEDULED and entry.get("video_id")
     ]
     if not due:
         return
@@ -754,15 +814,34 @@ def reconcile_all_scheduled(
 
     for chunk in chunk_video_ids(list(by_video_id.keys())):
         response = service.videos().list(part="status,snippet", id=",".join(chunk)).execute()
+        seen = set()
         for video in response.get("items", []):
             entry = by_video_id.get(video["id"])
             if entry is None:
                 continue
-            privacy_status = video.get("status", {}).get("privacyStatus")
+            seen.add(video["id"])
+            status = video.get("status", {})
+            # The channel owner reschedules by hand in Studio, so publish_at
+            # in this file is a request, not a fact - adopt what YouTube
+            # actually holds, or the next batch picks its slots against a
+            # schedule that moved (2026-08-23: every pending clip had been
+            # shifted a slot earlier and the queue never noticed).
+            actual_publish_at = status.get("publishAt")
+            if actual_publish_at and actual_publish_at != entry.get("publish_at"):
+                entry["publish_at"] = actual_publish_at
+                entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+            privacy_status = status.get("privacyStatus")
             if privacy_status == "public":
                 entry["status"] = PUBLISHED
                 entry["published_at"] = video.get("snippet", {}).get("publishedAt")
                 entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+        for video_id in chunk:
+            if video_id in seen:
+                continue
+            entry = by_video_id[video_id]
+            entry["status"] = KILLED
+            entry["kill_note"] = "video already absent from YouTube"
+            entry["updated_at"] = datetime.now(timezone.utc).isoformat()
 
 
 # --- CLI (D-05: --check / --now / --pause / --kill / --resume / --list) ----
@@ -779,12 +858,60 @@ def _error_notification_text(entry: dict[str, Any], reason: str) -> str:
     return f"[error] {entry['seq']}: {reason}"
 
 
+def upload_batch(
+    service_factory,
+    config,
+    thumbnail_upload: bool = True,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Reconcile once, then upload every due item (or the first `limit` of
+    them), and return the entries that actually went up.
+
+    --check deliberately uploads at most one item per invocation, because it
+    was written for an unattended timer where "one per tick" IS the pacing.
+    Enqueuing a finished batch is the opposite situation: the operator is
+    sitting right there and means "put these on YouTube", so making them run
+    --check once per clip is busywork that gets forgotten halfway, which is
+    exactly how ten clips sat in the local queue for two days looking
+    enqueued while YouTube had never heard of them (2026-08-23).
+
+    Each item still goes through the identical _upload_one/upload_and_schedule
+    path, and each still lands in its own grid slot - this loops the same
+    single-item step, it is not a second, batch-shaped upload path.
+    """
+    queue = load_queue(config.queue_path)
+    reconcile_all_uploading(queue, service_factory)
+    save_queue(queue, config.queue_path)
+    reconcile_all_scheduled(queue, service_factory)
+    save_queue(queue, config.queue_path)
+
+    uploaded: list[dict[str, Any]] = []
+    if not config.enabled:
+        print("dry-run: skipped (opt-in disabled)")
+        return uploaded
+
+    # Read the channel's real pending schedule once for the whole batch: each
+    # upload adds its own slot to the local queue as it goes, so only the
+    # slots this queue never knew about need carrying across iterations.
+    extra_scheduled = fetch_channel_scheduled_slots(service_factory())
+
+    while limit is None or len(uploaded) < limit:
+        queue = load_queue(config.queue_path)
+        entry = select_next_due(queue)
+        if entry is None:
+            break
+        _upload_one(entry, queue, service_factory, config, thumbnail_upload, extra_scheduled)
+        uploaded.append(entry)
+    return uploaded
+
+
 def _upload_one(
     entry: dict[str, Any],
     queue: dict[str, Any],
     service_factory,
     config,
     thumbnail_upload: bool = True,
+    extra_scheduled: list[str] | None = None,
 ) -> None:
     """Shared upload step for both --check and --now: calls the exact same
     upload_and_schedule() (Plan 02) and appends the matching notification
@@ -796,6 +923,7 @@ def _upload_one(
         result = upload_and_schedule(
             queue, entry, service_factory, config,
             queue_path=config.queue_path, thumbnail_upload=thumbnail_upload,
+            extra_scheduled=extra_scheduled,
         )
     except Exception as error:
         append_notification(
@@ -934,7 +1062,10 @@ def run_command(
 
         # --check uploads AT MOST ONE item per invocation (D-05 "one at a
         # time") - this is also the natural quota debounce (Pitfall 4).
-        _upload_one(entry, queue, service_factory, config, thumbnail_upload)
+        _upload_one(
+            entry, queue, service_factory, config, thumbnail_upload,
+            fetch_channel_scheduled_slots(service_factory()),
+        )
         return
 
     print("no action given - use --check/--now/--pause/--kill/--resume/--list")

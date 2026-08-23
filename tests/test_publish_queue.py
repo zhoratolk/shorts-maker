@@ -1079,7 +1079,7 @@ def test_reconcile_all_scheduled_leaves_still_private_entry_scheduled():
     assert "published_at" not in entry
 
 
-def test_reconcile_all_scheduled_ignores_not_yet_due_entries():
+def test_reconcile_all_scheduled_leaves_a_not_yet_due_entry_youtube_still_calls_private():
     queue = {
         "entries": [
             make_entry(
@@ -1088,21 +1088,44 @@ def test_reconcile_all_scheduled_ignores_not_yet_due_entries():
             )
         ]
     }
-    calls = []
+    service = FakeVideosListService({
+        "vid1": {"id": "vid1", "status": {"privacyStatus": "private"}, "snippet": {}}
+    })
 
-    def service_factory():
-        calls.append(1)
-        raise AssertionError("must not call service_factory when nothing is due")
+    reconcile_all_scheduled(queue, lambda: service, now=datetime(2026, 7, 28, 18, 0, tzinfo=timezone.utc))
 
-    reconcile_all_scheduled(queue, service_factory, now=datetime(2026, 7, 28, 18, 0, tzinfo=timezone.utc))
-
-    assert calls == []
     assert queue["entries"][0]["status"] == SCHEDULED
 
 
-def test_reconcile_all_scheduled_leaves_entry_untouched_when_video_missing_from_response():
-    # Fail-open: a video_id that no longer resolves (deleted, transient API
-    # gap) must not be guessed at - leave the entry SCHEDULED.
+def test_reconcile_all_scheduled_flips_an_entry_that_went_public_ahead_of_its_slot():
+    # publish_at is what we asked for, not what happened: a video released by
+    # hand in Studio is public well before its local timestamp comes round.
+    queue = {
+        "entries": [
+            make_entry(
+                clip_id="clip-early", seq=1, status=SCHEDULED, video_id="vid1",
+                publish_at="2026-07-30T11:00:00Z",
+            )
+        ]
+    }
+    service = FakeVideosListService({
+        "vid1": {
+            "id": "vid1",
+            "status": {"privacyStatus": "public"},
+            "snippet": {"publishedAt": "2026-07-28T09:12:00Z"},
+        }
+    })
+
+    reconcile_all_scheduled(queue, lambda: service, now=datetime(2026, 7, 28, 18, 0, tzinfo=timezone.utc))
+
+    assert queue["entries"][0]["status"] == PUBLISHED
+    assert queue["entries"][0]["published_at"] == "2026-07-28T09:12:00Z"
+
+
+def test_reconcile_all_scheduled_kills_an_entry_whose_video_is_gone():
+    # A video_id YouTube no longer resolves is a video that no longer exists,
+    # so its pending release can never fire - leaving it SCHEDULED means
+    # waiting forever for something that cannot happen.
     queue = {
         "entries": [
             make_entry(
@@ -1113,12 +1136,10 @@ def test_reconcile_all_scheduled_leaves_entry_untouched_when_video_missing_from_
     }
     service = FakeVideosListService({})
 
-    def service_factory():
-        return service
+    reconcile_all_scheduled(queue, lambda: service, now=datetime(2026, 7, 28, 18, 0, tzinfo=timezone.utc))
 
-    reconcile_all_scheduled(queue, service_factory, now=datetime(2026, 7, 28, 18, 0, tzinfo=timezone.utc))
-
-    assert queue["entries"][0]["status"] == SCHEDULED
+    assert queue["entries"][0]["status"] == KILLED
+    assert queue["entries"][0]["kill_note"] == "video already absent from YouTube"
 
 
 # --- Task 1: notification log - append + read-unread with a marker (D-06) --
@@ -1570,3 +1591,215 @@ def test_cli_list_prints_titles_a_cp1251_console_cannot_encode(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert "Слабоумие и отвага" in result.stdout
+
+
+# --- upload_batch: "on the grid" means on YouTube (2026-08-23) -------------
+
+
+def _batch_config(tmp_path, enabled=True):
+    return FakeCliPublishConfig(
+        enabled=enabled,
+        queue_path=str(tmp_path / "queue.json"),
+        notifications_path=str(tmp_path / "notifications.log"),
+    )
+
+
+def _batch_queue(tmp_path, count):
+    """`count` queued entries, each with a real (empty) file to upload."""
+    from scripts.publish_queue import upload_batch  # noqa: F401 - import guard
+
+    entries = []
+    for index in range(count):
+        video_path = tmp_path / f"clip{index}.mp4"
+        video_path.write_bytes(b"")
+        entries.append(
+            make_entry(
+                clip_id=f"clip-{index}", seq=index + 1, status=QUEUED,
+                title=f"Title {index}", video_path=str(video_path),
+            )
+        )
+    save_queue({"entries": entries}, str(tmp_path / "queue.json"))
+
+
+def test_upload_batch_uploads_every_queued_clip_not_just_the_first(tmp_path):
+    from scripts.publish_queue import upload_batch
+
+    _batch_queue(tmp_path, 3)
+    config = _batch_config(tmp_path)
+    service = FakeVideosInsertService(video_id="vid")
+
+    uploaded = upload_batch(lambda: service, config)
+
+    assert len(uploaded) == 3
+    persisted = load_queue(config.queue_path)["entries"]
+    assert [entry["status"] for entry in persisted] == [SCHEDULED] * 3
+    # each still lands in its own slot - this loops the single-item path
+    assert len({entry["publish_at"] for entry in persisted}) == 3
+
+
+def test_upload_batch_honours_a_limit(tmp_path):
+    from scripts.publish_queue import upload_batch
+
+    _batch_queue(tmp_path, 3)
+    config = _batch_config(tmp_path)
+
+    uploaded = upload_batch(lambda: FakeVideosInsertService(video_id="vid"), config, limit=2)
+
+    assert len(uploaded) == 2
+    statuses = [entry["status"] for entry in load_queue(config.queue_path)["entries"]]
+    assert statuses == [SCHEDULED, SCHEDULED, QUEUED]
+
+
+def test_upload_batch_uploads_nothing_when_publishing_is_disabled(tmp_path):
+    from scripts.publish_queue import upload_batch
+
+    _batch_queue(tmp_path, 2)
+    config = _batch_config(tmp_path, enabled=False)
+
+    def service_factory():
+        return FakeVideosInsertService(video_id="vid")
+
+    assert upload_batch(service_factory, config) == []
+    statuses = [entry["status"] for entry in load_queue(config.queue_path)["entries"]]
+    assert statuses == [QUEUED, QUEUED]
+
+
+def test_upload_batch_stops_cleanly_on_an_empty_queue(tmp_path):
+    from scripts.publish_queue import upload_batch
+
+    save_queue({"entries": []}, str(tmp_path / "queue.json"))
+
+    assert upload_batch(lambda: FakeVideosInsertService(video_id="vid"), _batch_config(tmp_path)) == []
+
+
+# --- the channel's own schedule beats this file's idea of it (2026-08-23) --
+
+
+class FakeChannelService:
+    """channels().list + playlistItems().list + videos().list, enough for
+    fetch_channel_scheduled_slots. `videos` maps id -> (privacyStatus, publishAt).
+    """
+
+    def __init__(self, videos, pages=None, fail_on=None):
+        self._videos = videos
+        self._pages = pages or [list(videos.keys())]
+        self._fail_on = fail_on
+        self._call = None
+
+    def channels(self):
+        self._call = "channels"
+        return self
+
+    def playlistItems(self):
+        self._call = "playlistItems"
+        return self
+
+    def videos(self):
+        self._call = "videos"
+        return self
+
+    def list(self, **kwargs):
+        self._kwargs = kwargs
+        return self
+
+    def execute(self):
+        if self._fail_on == self._call:
+            raise RuntimeError("boom")
+        if self._call == "channels":
+            return {"items": [{"contentDetails": {"relatedPlaylists": {"uploads": "UU_x"}}}]}
+        if self._call == "playlistItems":
+            index = 0 if self._kwargs.get("pageToken") is None else int(self._kwargs["pageToken"])
+            page = self._pages[index]
+            result = {"items": [{"contentDetails": {"videoId": v}} for v in page]}
+            if index + 1 < len(self._pages):
+                result["nextPageToken"] = str(index + 1)
+            return result
+        items = []
+        for video_id in self._kwargs["id"].split(","):
+            privacy, publish_at = self._videos[video_id]
+            status = {"privacyStatus": privacy}
+            if publish_at:
+                status["publishAt"] = publish_at
+            items.append({"id": video_id, "status": status})
+        return {"items": items}
+
+
+def test_fetch_channel_scheduled_slots_returns_only_pending_private_videos():
+    from scripts.publish_queue import fetch_channel_scheduled_slots
+
+    service = FakeChannelService({
+        "a": ("private", "2026-08-25T01:00:00Z"),
+        "b": ("public", None),
+        "c": ("private", None),  # a plain draft, not scheduled
+    })
+
+    assert fetch_channel_scheduled_slots(service) == ["2026-08-25T01:00:00Z"]
+
+
+def test_fetch_channel_scheduled_slots_walks_every_page():
+    from scripts.publish_queue import fetch_channel_scheduled_slots
+
+    service = FakeChannelService(
+        {"a": ("private", "2026-08-25T01:00:00Z"), "b": ("private", "2026-08-25T05:00:00Z")},
+        pages=[["a"], ["b"]],
+    )
+
+    assert sorted(fetch_channel_scheduled_slots(service)) == [
+        "2026-08-25T01:00:00Z", "2026-08-25T05:00:00Z",
+    ]
+
+
+def test_fetch_channel_scheduled_slots_fails_open_on_an_api_error(capsys):
+    from scripts.publish_queue import fetch_channel_scheduled_slots
+
+    service = FakeChannelService({"a": ("private", "2026-08-25T01:00:00Z")}, fail_on="videos")
+
+    assert fetch_channel_scheduled_slots(service) == []
+    assert "channel's own schedule" in capsys.readouterr().err
+
+
+def test_extra_scheduled_keeps_a_slot_taken_outside_this_queue_from_being_reused(tmp_path):
+    queue_path = str(tmp_path / "queue.json")
+    video_path = tmp_path / "clip1.mp4"
+    video_path.write_bytes(b"")
+    queue = load_queue(queue_path)
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(video_path), metadata_path="clip1.txt",
+        title="Title 1", description="Desc 1", tags=[],
+    )
+    fake_service = FakeVideosInsertService(video_id="vid")
+    now = datetime(2026, 8, 23, 8, 0, tzinfo=timezone.utc)
+
+    upload_and_schedule(
+        queue, entry, lambda: fake_service, FakePublishConfig(enabled=True),
+        now=now, queue_path=queue_path,
+        # the first free slot as far as this queue knows is already taken on
+        # the channel, so the upload has to move on to the one after it.
+        extra_scheduled=[f"2026-08-23T{DAILY_SLOTS_UTC[0]}:00Z"],
+    )
+
+    assert entry["publish_at"] == f"2026-08-23T{DAILY_SLOTS_UTC[1]}:00Z"
+
+
+def test_reconcile_all_scheduled_adopts_youtubes_publish_at_when_it_was_moved():
+    queue = {
+        "entries": [
+            make_entry(
+                clip_id="clip-1", seq=1, status=SCHEDULED, video_id="vid1",
+                publish_at="2026-08-25T05:00:00Z",
+            )
+        ]
+    }
+    service = FakeVideosListService({
+        "vid1": {
+            "id": "vid1",
+            "status": {"privacyStatus": "private", "publishAt": "2026-08-25T01:00:00Z"},
+            "snippet": {},
+        }
+    })
+
+    reconcile_all_scheduled(queue, lambda: service, now=datetime(2026, 8, 23, 8, 0, tzinfo=timezone.utc))
+
+    entry = queue["entries"][0]
+    assert entry["status"] == SCHEDULED
+    assert entry["publish_at"] == "2026-08-25T01:00:00Z"

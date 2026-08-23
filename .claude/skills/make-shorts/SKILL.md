@@ -446,21 +446,31 @@ Or fold it into the render so the batch goes out in one command:
 python scripts/render_batch.py "<video>" work/<video_stem>/PLAN.json --enqueue
 ```
 
+**"On the grid" means on YouTube, not in a JSON file.** Either command above
+enqueues *and* uploads: the batch ends up in YouTube's scheduled list, one clip
+per free grid slot, before the command returns. Rendered, enqueued, uploaded —
+one step, nothing left to remember. Add `--local-only` (or `--enqueue-local-only`
+on `render_batch.py`) only when the batch deliberately must wait in the local
+queue; the owner's default is that it does not (2026-08-23, after ten clips sat
+"enqueued" for two days while YouTube had never heard of them).
+
 This reads what the pipeline already wrote — title/description/tags from `metadata_data/<clip>.json`, `moment_tag` and the duration from the plan entry, the poster from `<clip>.thumb.png` — and enqueues the batch in publish order, with the loop clips spread evenly through the regular ones rather than back to back (they render in their own pass, so they arrive grouped, and a run of looping clips on the grid reads as a tic rather than a variation).
 
 **Don't hand-write an enqueue script.** `enqueue()` takes seven optional arguments and none of them error when missing — a forgotten `thumbnail_path` publishes with YouTube's auto-frame, a forgotten `moment_tag`/`source_duration` silently drops that clip out of the retention learning loop, and a forgotten interleave stacks the loops. That is what this script exists to prevent.
 
 Safe to re-run: `enqueue` is idempotent on `clip_id`, so a second pass over the same plan adds nothing and renumbers nothing. A plan entry whose clip didn't render is skipped with a warning (`--strict` makes it an error instead); missing metadata is always a hard error rather than a blank title.
 
-**Enqueuing is local — it does not upload anything.** A queued entry sits in `work/_publish/queue.json` until `--check` picks it up:
+The upload half is `publish_queue.py`, and it is worth knowing directly — the enqueue commands above just call it for you:
 
 ```bash
 python scripts/publish_queue.py --check
 ```
 
-That uploads at most one due item per invocation and schedules it for the next free grid slot. `--now <clip_id>` forces one out of band, `--list` shows the queue with a `+thumb` marker for entries carrying a poster. Nothing uploads at all while `config.publish.enabled` is `false`.
+`--check` uploads at most **one** due item per invocation and schedules it for the next free grid slot; it was written for an unattended timer, where one-per-tick *is* the pacing. `--now <clip_id>` forces one clip out of band, `--list` shows the queue with a `+thumb` marker for entries carrying a poster. Nothing uploads at all while `config.publish.enabled` is `false`.
 
-There is no scheduled task driving this any more (removed 2026-08-06 at the channel owner's request — uploads are triggered deliberately, not on a timer), so after enqueuing a batch, run `--check` once per clip you want live, or tell the user the batch is queued and waiting. Clips already in `scheduled` status are a different matter: they are uploaded and YouTube releases them at their `publish_at` on its own, with or without anything running locally.
+There is no scheduled task driving this and there must not be one (removed 2026-08-06 at the channel owner's request — uploads are triggered deliberately, not on a timer). That is exactly why enqueuing uploads on the spot: with no timer to pick the queue up later, a clip left in `queued` is a clip nobody will ever publish. Do not offer to re-create the task.
+
+Whenever you are asked why a clip is not in YouTube's scheduled list, check its queue status first: `queued` means it was never uploaded (`video_id` is `null`), and no amount of waiting will change that. Clips in `scheduled` status are the opposite case — already on YouTube, released by YouTube itself at their `publish_at`, with or without anything running locally. A `scheduled` entry whose `publish_at` is in the past has usually already gone live; only `--check` (or the enqueue commands, which run the same reconcile) flips it to `published` locally.
 
 ## Library-wide search
 
