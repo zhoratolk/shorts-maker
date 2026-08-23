@@ -23,6 +23,7 @@ from scripts.overlay_pass import (
     plan_popup_times,
 )
 from scripts.render import (
+    derive_loop_rotate_at,
     RenderError,
     VALID_TRANSITIONS,
     _escape_drawtext_text,
@@ -2588,3 +2589,55 @@ def test_build_overlay_pass_command_emits_preset_crf_when_set():
     )
     assert cmd[cmd.index("-preset") + 1] == "fast"
     assert cmd[cmd.index("-crf") + 1] == "18"
+
+
+def test_derive_loop_rotate_at_reads_the_clips_own_words(tmp_path):
+    words = tmp_path / "clip_words.json"
+    words.write_text(json.dumps([
+        {"word": "a", "start": 1.0, "end": 1.5},
+        {"word": "b", "start": 2.0, "end": 2.5},
+        {"word": "c", "start": 18.0, "end": 18.4},
+        {"word": "d", "start": 18.5, "end": 19.0},
+    ]), encoding="utf-8")
+    entry = {"subtitles_path": str(tmp_path / "clip.srt")}
+    # last phrase opens at 18.0; 18s of setup and 12s of punch both clear
+    assert derive_loop_rotate_at(entry, 30.0) == 18.0
+
+
+def test_derive_loop_rotate_at_returns_none_without_a_words_file(tmp_path):
+    entry = {"subtitles_path": str(tmp_path / "missing.srt")}
+    assert derive_loop_rotate_at(entry, 30.0) is None
+
+
+def test_derive_loop_rotate_at_returns_none_when_the_shape_does_not_fit(tmp_path):
+    words = tmp_path / "clip_words.json"
+    # whole clip is one phrase -> rotating there leaves no setup at all
+    words.write_text(json.dumps([
+        {"word": "a", "start": 0.5, "end": 1.0},
+        {"word": "b", "start": 1.1, "end": 1.6},
+    ]), encoding="utf-8")
+    entry = {"subtitles_path": str(tmp_path / "clip.srt")}
+    assert derive_loop_rotate_at(entry, 30.0) is None
+
+
+def test_render_clip_derives_the_rotate_point_when_the_plan_omits_it(tmp_path):
+    words = tmp_path / "clip_words.json"
+    words.write_text(json.dumps([
+        {"word": "a", "start": 1.0, "end": 1.5},
+        {"word": "b", "start": 22.0, "end": 22.6},
+    ]), encoding="utf-8")
+    commands = []
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom", "loop": True,
+        "subtitles_path": str(tmp_path / "clip.srt"),
+    }
+    render_clip(
+        "in.mp4", "out.mp4", plan_entry,
+        video_duration=100.0, src_width=1920, src_height=1080,
+        loop_enabled=True, loop_mode="rotate",
+        runner=_overlay_capture_runner(commands),
+    )
+    finalize = [c for c in commands if "-filter_complex" in c and "punchbasev" in
+                c[c.index("-filter_complex") + 1]]
+    assert len(finalize) == 1
+    assert "trim=start=22.0" in finalize[0][finalize[0].index("-filter_complex") + 1]

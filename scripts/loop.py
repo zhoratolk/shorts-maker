@@ -52,6 +52,34 @@ ROTATE_MIN_PUNCH_SECONDS = 1.5
 ROTATE_MIN_SETUP_SECONDS = 4.0
 
 
+LAST_PHRASE_GAP_SECONDS = 0.6
+
+
+def last_phrase_start(
+    words: list[dict],
+    *,
+    gap_seconds: float = LAST_PHRASE_GAP_SECONDS,
+) -> float | None:
+    """Start of the clip's final spoken phrase, or None for no usable words.
+
+    Strategy 3 is defined as "the hook is the clip's final spoken beat", so
+    that beat's own start IS the rotate point - no separate hand-set field
+    needed. Walks back from the last word while the gap to the previous word
+    stays under gap_seconds, the same phrase-boundary threshold
+    cold_open_window uses (group voice chat runs sentences together with
+    sub-0.6s gaps, so anything tighter splits mid-sentence).
+    """
+    usable = [w for w in words if w.get("start") is not None and w.get("end") is not None]
+    if not usable:
+        return None
+
+    usable.sort(key=lambda w: w["start"])
+    start_index = len(usable) - 1
+    while start_index > 0 and usable[start_index]["start"] - usable[start_index - 1]["end"] <= gap_seconds:
+        start_index -= 1
+    return round(usable[start_index]["start"], 3)
+
+
 def punch_rotate_at(
     words: list[dict],
     punch_at: float,

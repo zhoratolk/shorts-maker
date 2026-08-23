@@ -4,6 +4,7 @@ from scripts.loop import (
     VALID_LOOP_TRANSITIONS,
     build_loop_outro_command,
     build_punch_rotate_command,
+    last_phrase_start,
     punch_rotate_at,
 )
 from scripts.render_common import RenderError
@@ -144,3 +145,22 @@ def test_build_punch_rotate_command_rejects_a_rotate_point_outside_the_clip():
 def test_build_punch_rotate_command_rejects_an_unknown_transition():
     with pytest.raises(RenderError):
         build_punch_rotate_command("in.mp4", "out.mp4", 18.0, 30.0, transition="whip_pan")
+
+
+def test_last_phrase_start_walks_back_over_sub_gap_words():
+    words = _words((1.0, 1.4), (1.5, 2.0), (9.0, 9.4), (9.5, 10.0), (10.1, 10.6))
+    # 9.0 opens the last phrase: the 7s gap before it is the boundary
+    assert last_phrase_start(words) == 9.0
+
+
+def test_last_phrase_start_takes_the_whole_clip_when_speech_is_continuous():
+    assert last_phrase_start(_words((0.5, 1.0), (1.1, 1.6), (1.7, 2.2))) == 0.5
+
+
+def test_last_phrase_start_returns_none_without_words():
+    assert last_phrase_start([]) is None
+
+
+def test_last_phrase_start_sorts_unordered_input():
+    words = _words((9.0, 9.4), (1.0, 1.4))
+    assert last_phrase_start(words) == 9.0

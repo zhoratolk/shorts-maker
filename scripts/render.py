@@ -37,6 +37,8 @@ from scripts.loop import (
     VALID_LOOP_TRANSITIONS,
     build_loop_outro_command,
     build_punch_rotate_command,
+    last_phrase_start,
+    punch_rotate_at,
 )
 
 NAMED_ASS_COLORS = {
@@ -1461,6 +1463,34 @@ def probe_video(video_path: str, runner=subprocess.run) -> dict:
     }
 
 
+def derive_loop_rotate_at(plan_entry: dict, clip_duration: float) -> float | None:
+    """Rotate point for a loop entry that didn't spell one out, or None.
+
+    Strategy 3 defines the loop hook as the clip's FINAL spoken beat, so the
+    point is derivable from the clip's own word list rather than hand-set:
+    the words file sits next to the plan's `subtitles_path` (same stem plus
+    `_words.json`, which is where the subtitles step writes it) and is already
+    on the clip's final, post-jumpcut timeline - the timeline the rotation
+    needs. Returns None whenever anything is missing or the shape doesn't fit,
+    so the caller can fall back rather than guess.
+    """
+    subtitles_path = plan_entry.get("subtitles_path")
+    if not subtitles_path:
+        return None
+    words_path = Path(subtitles_path).with_name(Path(subtitles_path).stem + "_words.json")
+    if not words_path.exists():
+        return None
+    try:
+        words = json.loads(words_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+    punch_at = last_phrase_start(words)
+    if punch_at is None:
+        return None
+    return punch_rotate_at(words, punch_at, clip_duration)
+
+
 def render_clip(
     input_path: str,
     output_path: str,
@@ -1865,10 +1895,16 @@ def render_clip(
             base_duration = probe_video(output_path, runner=runner)["duration"]
             rotate_at = plan_entry.get("loop_rotate_at")
             if loop_mode == "rotate" and rotate_at is None:
+                # Not an error worth failing a clip over: the point is
+                # derivable from the clip's own words, and a plan that omits
+                # it is the normal case rather than a broken one.
+                rotate_at = derive_loop_rotate_at(plan_entry, base_duration)
+            if loop_mode == "rotate" and rotate_at is None:
                 raise RenderError(
-                    "loop_mode=rotate needs a loop_rotate_at on the plan entry "
-                    "(the punch's clip-relative start); pass --loop-mode seam "
-                    "for the old crossfade-the-tail behaviour"
+                    "loop_mode=rotate found no loop_rotate_at on the plan entry and could not "
+                    "derive one from the clip's words (missing subtitles_path/_words.json, or "
+                    "the punch leaves too little setup or too little punch to lead with); set "
+                    "loop_rotate_at explicitly or pass --loop-mode seam"
                 )
             if loop_mode == "rotate" and banner_mode == "hook" and plan_entry.get("banner_text"):
                 # A "hook" banner is burned into the clip's first

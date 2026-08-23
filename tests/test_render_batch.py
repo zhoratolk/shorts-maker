@@ -280,3 +280,54 @@ def test_dry_run_does_not_execute(capsys):
         make_config(), "v.mkv", "p.json", "out", loop_pass=True, dry_run=True, runner=runner
     ) == 0
     assert "scripts.render" in capsys.readouterr().out
+
+
+def test_dead_zone_gap_measures_only_the_8_to_16s_window():
+    from scripts.render_batch import dead_zone_gap
+
+    words = [
+        {"word": "a", "start": 0.0, "end": 1.0},   # silence 1-9s, but only 8-9 counts
+        {"word": "b", "start": 9.0, "end": 9.5},
+        {"word": "c", "start": 13.0, "end": 14.0},  # 3.5s gap inside the zone
+        {"word": "d", "start": 14.1, "end": 20.0},
+    ]
+    assert dead_zone_gap(words) == 3.5
+
+
+def test_dead_zone_gap_counts_a_clip_that_ends_before_the_zone():
+    from scripts.render_batch import dead_zone_gap
+
+    words = [{"word": "a", "start": 1.0, "end": 6.0}]
+    # nothing said from 6s on -> the whole 8-16s zone is silent
+    assert dead_zone_gap(words) == 8.0
+
+
+def test_dead_zone_gap_is_zero_for_continuous_speech():
+    from scripts.render_batch import dead_zone_gap
+
+    words = [{"word": str(i), "start": float(i), "end": float(i) + 0.9} for i in range(20)]
+    assert dead_zone_gap(words) == 0.1
+
+
+def test_dead_zone_warnings_names_the_offending_clip(tmp_path):
+    import json as _json
+
+    from scripts.render_batch import dead_zone_warnings
+
+    (tmp_path / "clip_words.json").write_text(
+        _json.dumps([{"word": "a", "start": 1.0, "end": 6.0}]), encoding="utf-8"
+    )
+    entries = [{
+        "output_filename": "clip.mp4",
+        "subtitles_path": str(tmp_path / "clip.srt"),
+    }]
+    warnings = dead_zone_warnings(entries)
+    assert len(warnings) == 1
+    assert "clip.mp4" in warnings[0]
+
+
+def test_dead_zone_warnings_stays_quiet_without_a_words_file(tmp_path):
+    from scripts.render_batch import dead_zone_warnings
+
+    entries = [{"output_filename": "clip.mp4", "subtitles_path": str(tmp_path / "clip.srt")}]
+    assert dead_zone_warnings(entries) == []

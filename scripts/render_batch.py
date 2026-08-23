@@ -48,6 +48,75 @@ def is_loop_entry(entry: dict) -> bool:
     return bool(entry.get("loop"))
 
 
+DEAD_ZONE_START_SECONDS = 8.0
+DEAD_ZONE_END_SECONDS = 16.0
+DEAD_ZONE_MAX_GAP_SECONDS = 2.5
+
+
+def dead_zone_gap(words: list[dict]) -> float:
+    """Longest wordless stretch overlapping the clip's 8-16s dead zone.
+
+    Measured over 112 published clips (2026-08-23): the retention curve is
+    flat for the first four seconds regardless of cold open, and clips that
+    went on to get >=800 views separate from clips that got <600 only from 8s
+    onward, peaking apart at 12s. Whatever holds a viewer lives in that
+    stretch, so a clip that goes quiet across it is spending its decisive
+    seconds on nothing.
+
+    Only the silence half of the 8-16s rule is mechanical. Whether the talking
+    that fills the zone is an actual second beat or just setup being narrated
+    is a judgment call, and stays with SKILL.md step 5 - this catches the
+    blatant case, it does not certify the rest.
+    """
+    usable = sorted(
+        (w for w in words if w.get("start") is not None and w.get("end") is not None),
+        key=lambda w: w["start"],
+    )
+    if not usable:
+        return 0.0
+
+    edges = [(DEAD_ZONE_START_SECONDS, usable[0]["start"])]
+    edges += [(prev["end"], nxt["start"]) for prev, nxt in zip(usable, usable[1:])]
+    edges.append((usable[-1]["end"], DEAD_ZONE_END_SECONDS))
+
+    longest = 0.0
+    for gap_start, gap_end in edges:
+        overlap = min(gap_end, DEAD_ZONE_END_SECONDS) - max(gap_start, DEAD_ZONE_START_SECONDS)
+        longest = max(longest, overlap)
+    return round(longest, 3)
+
+
+def dead_zone_warnings(entries: list[dict], *, max_gap: float = DEAD_ZONE_MAX_GAP_SECONDS) -> list[str]:
+    """One warning line per plan entry that goes quiet inside the dead zone.
+
+    Warns rather than blocks: the words file is optional, the threshold is a
+    heuristic, and a clip can legitimately carry the zone visually (a long
+    silent fail landing). Blocking on a heuristic would cost more good clips
+    than it saves bad ones.
+    """
+    warnings = []
+    for entry in entries:
+        subtitles_path = entry.get("subtitles_path")
+        if not subtitles_path:
+            continue
+        words_path = Path(subtitles_path).with_name(Path(subtitles_path).stem + "_words.json")
+        if not words_path.exists():
+            continue
+        try:
+            words = json.loads(words_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        gap = dead_zone_gap(words)
+        if gap >= max_gap:
+            name = entry.get("output_filename", "<unnamed clip>")
+            warnings.append(
+                f"[warn] {name}: {gap}s of silence inside the {DEAD_ZONE_START_SECONDS:.0f}-"
+                f"{DEAD_ZONE_END_SECONDS:.0f}s dead zone - that stretch is where clips separate "
+                f"on views; tighten it or drop the clip"
+            )
+    return warnings
+
+
 def split_plan(entries: list[dict]) -> tuple[list[dict], list[dict]]:
     """Splits plan entries into (regular, loop), preserving order within each
     group."""
@@ -414,6 +483,9 @@ def main() -> None:
     config = load_config(args.config)
     output_dir = args.output_dir or config.output_dir
     entries = json.loads(Path(args.plan_json).read_text(encoding="utf-8-sig"))
+    for warning in dead_zone_warnings(entries):
+        print(warning, file=sys.stderr)
+
     regular, loops = split_plan(entries)
     if not entries:
         parser.error(f"{args.plan_json} has no plan entries")
