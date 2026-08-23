@@ -14,9 +14,12 @@ from scripts.render_common import (
     RenderError,
     TARGET_HEIGHT,
     TARGET_WIDTH,
+    VALID_TRANSITIONS,
+    _XFADE_TRANSITION_NAMES,
     _drawtext_color,
     _escape_drawtext_text,
     _wrap_banner_lines,
+    build_transition_filter,
     encode_flags,
     hwaccel_flags,
     resolve_banner_font,
@@ -60,22 +63,11 @@ SUBTITLE_MARGIN_V = {"bottom": 380, "top": 120, "center": 0}
 # here rather than imported so render.py stays importable/runnable as a
 # standalone CLI (`python scripts/render.py`) without a sys.path insert to
 # reach scripts.transitions.
-VALID_TRANSITIONS = frozenset({"cut", "crossfade", "whip_pan", "mask_wipe", "glitch", "match_cut"})
 
 # Hard ceiling on boundary_pad_seconds (see build_jumpcut_command) - a synthetic
 # gap this is meant to be a brief breath, not a stall; too long kills the
 # clip's momentum. 0.3s is a deliberate "still feels tight" upper bound.
 MAX_BOUNDARY_PAD_SECONDS = 0.3
-
-# xfade transition names for the 4 types that map directly onto a single
-# native ffmpeg xfade transition (04-RESEARCH.md Pattern 3). glitch has no
-# single matching xfade name and is built as a small chain (Pattern 4);
-# cut/match_cut render as a plain concat, no xfade node at all.
-_XFADE_TRANSITION_NAMES = {
-    "crossfade": "fade",
-    "whip_pan": "hblur",
-    "mask_wipe": "wipeleft",
-}
 
 
 def ass_color(color: str) -> str:
@@ -482,47 +474,6 @@ def build_emphasis_filter(
         f"x='(in_w-out_w)*({fx_of_t})':y='(in_h-out_h)*({fy_of_t})',"
         f"scale={TARGET_WIDTH}:{TARGET_HEIGHT}"
     )
-
-
-def build_transition_filter(
-    transition_type: str, duration: float, offset: float, in_a: str, in_b: str, out_label: str
-) -> str | None:
-    """Returns the ffmpeg xfade-based video-graph node fragment for a boundary
-    transition, following the build_video_effects_chain/build_punch_zoom_filter
-    shape: validate up front, build the filter string purely from the
-    enum-constrained transition_type plus internally-computed duration/offset
-    floats - never from raw external text (V5 Input Validation).
-
-    cut/match_cut are rendered as a plain concat (no overlap needed), so this
-    returns None for those two; the caller builds the audio side of a non-cut
-    transition separately via acrossfade=d=<duration> (see build_jumpcut_command).
-    in_a/in_b/out_label are plain (unbracketed) filter-graph label names -
-    this function wraps them in brackets itself, matching the trim_stages
-    label convention already used in build_jumpcut_command.
-    """
-    if transition_type not in VALID_TRANSITIONS:
-        raise RenderError(
-            f"transition_type must be one of {sorted(VALID_TRANSITIONS)}, got {transition_type!r}"
-        )
-    if duration <= 0:
-        raise RenderError(f"duration must be > 0, got {duration}")
-    if offset < 0:
-        raise RenderError(f"offset must be >= 0, got {offset}")
-
-    if transition_type in ("cut", "match_cut"):
-        return None
-
-    if transition_type == "glitch":
-        # 04-RESEARCH.md Pattern 4: no single native xfade transition reads as
-        # "glitch" - blend on a pixelize xfade then layer an RGB channel split
-        # and noise on top for the transition's duration.
-        return (
-            f"[{in_a}][{in_b}]xfade=transition=pixelize:duration={duration}:offset={offset},"
-            f"rgbashift=rh=8:bh=-8:edge=smear,noise=alls=25:allf=t+u[{out_label}]"
-        )
-
-    xfade_name = _XFADE_TRANSITION_NAMES[transition_type]
-    return f"[{in_a}][{in_b}]xfade=transition={xfade_name}:duration={duration}:offset={offset}[{out_label}]"
 
 
 def build_profanity_mask_filter(
@@ -1981,7 +1932,9 @@ def render_clip(
                 rotate_at = min(max(float(rotate_at), 0.05), max(base_duration - 0.05, 0.05))
                 loop_command = build_punch_rotate_command(
                     output_path, str(tmp_path), rotate_at, base_duration,
-                    transition=loop_rotate_transition,
+                    # The plan entry wins: autoloop_entries measured THIS
+                    # junction, while the CLI flag is one value for the batch.
+                    transition=plan_entry.get("loop_transition") or loop_rotate_transition,
                     transition_duration=loop_transition_duration,
                     video_codec=video_codec, preset=preset, crf=crf,
                 )

@@ -1,6 +1,7 @@
 import pytest
 
 from scripts.loop import (
+    VALID_SEAM_TRANSITIONS,
     VALID_LOOP_TRANSITIONS,
     build_loop_outro_command,
     build_punch_rotate_command,
@@ -15,10 +16,13 @@ def _command_str(command: list[str]) -> str:
     return command[idx + 1]
 
 
-def test_valid_transitions_is_cut_and_crossfade_only():
-    # Deliberately narrower than cold_open's menu (see module docstring) -
-    # whip_pan/mask_wipe don't read as a smooth loop seam.
-    assert VALID_LOOP_TRANSITIONS == {"cut", "crossfade"}
+def test_the_seam_replay_menu_stays_cut_and_crossfade_only():
+    # `seam` mode appends a replay of the opening and dissolves into it: that
+    # really should slip past unnoticed, so it keeps the narrow menu. The
+    # rotate mode's INTERNAL junction is a different join with the opposite
+    # requirement and gets the full menu - see test_loop_junction_transition.py.
+    assert VALID_SEAM_TRANSITIONS == {"cut", "crossfade"}
+    assert {"whip_pan", "glitch"} <= VALID_LOOP_TRANSITIONS
 
 
 def test_build_loop_outro_command_xfade_path_uses_xfade_and_acrossfade():
@@ -72,7 +76,7 @@ def test_build_loop_outro_command_maps_video_and_audio_outputs():
 
 def test_build_loop_outro_command_rejects_invalid_transition():
     with pytest.raises(RenderError, match="loop transition"):
-        build_loop_outro_command("base.mp4", "out.mp4", base_duration=10.0, transition="whip_pan")
+        build_loop_outro_command("base.mp4", "out.mp4", base_duration=10.0, transition="teleport")
 
 
 def test_build_loop_outro_command_rejects_non_positive_base_duration():
@@ -144,7 +148,7 @@ def test_build_punch_rotate_command_rejects_a_rotate_point_outside_the_clip():
 
 def test_build_punch_rotate_command_rejects_an_unknown_transition():
     with pytest.raises(RenderError):
-        build_punch_rotate_command("in.mp4", "out.mp4", 18.0, 30.0, transition="whip_pan")
+        build_punch_rotate_command("in.mp4", "out.mp4", 18.0, 30.0, transition="teleport")
 
 
 def test_last_phrase_start_walks_back_over_sub_gap_words():

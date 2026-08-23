@@ -441,3 +441,124 @@ def test_autoframe_leaves_the_entry_alone_when_nothing_could_be_measured(monkeyp
 def test_entry_segments_declines_a_compilation_entry():
     assert entry_segments({"segments": [{"start": 1.0, "end": 2.0}]}) is None
     assert entry_segments({"start": 1.0, "end": 2.0}) == [(1.0, 2.0)]
+
+
+# --- autoloop: measure the junction instead of guessing at it --------------
+
+
+def _loop_entry(**overrides):
+    entry = {"start": 100.0, "end": 130.0, "loop": True, "crop_style": "zoom",
+             "output_filename": "clip.mp4"}
+    entry.update(overrides)
+    return entry
+
+
+def test_autoloop_leaves_an_entry_that_named_its_own_transition(monkeypatch):
+    from scripts.render_batch import autoloop_entries
+
+    def must_not_run(*args, **kwargs):  # pragma: no cover - must not be called
+        raise AssertionError("an explicit loop_transition must not be re-measured")
+
+    monkeypatch.setattr("subprocess.run", must_not_run)
+    entries = [_loop_entry(loop_transition="glitch")]
+
+    assert autoloop_entries("in.mp4", entries) == (False, [])
+    assert entries[0]["loop_transition"] == "glitch"
+
+
+def test_autoloop_ignores_entries_that_are_not_loops(monkeypatch):
+    from scripts.render_batch import autoloop_entries
+
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: (_ for _ in ()).throw(AssertionError))
+    entries = [{"start": 1.0, "end": 20.0, "crop_style": "zoom"}]
+
+    assert autoloop_entries("in.mp4", entries) == (False, [])
+    assert "loop_transition" not in entries[0]
+
+
+def _stub_measurement(monkeypatch, similarity, motion):
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: None)
+    monkeypatch.setattr("scripts.transitions.analyze_similarity_at_boundary",
+                        lambda a, b: similarity)
+    monkeypatch.setattr("scripts.transitions.analyze_motion_at_boundary",
+                        lambda a, b: motion)
+
+
+def test_autoloop_keeps_a_cut_when_the_two_frames_already_match(monkeypatch):
+    # Same shot either side: blending would smear a join nobody can see.
+    from scripts.render_batch import autoloop_entries
+
+    _stub_measurement(monkeypatch, similarity=0.97, motion=40.0)
+    entries = [_loop_entry()]
+
+    filled, warnings = autoloop_entries("in.mp4", entries)
+
+    assert filled is True and warnings == []
+    assert entries[0]["loop_transition"] == "match_cut"
+
+
+def test_autoloop_covers_a_scene_jump_with_a_real_transition(monkeypatch):
+    from scripts.render_batch import autoloop_entries
+
+    _stub_measurement(monkeypatch, similarity=0.10, motion=60.0)
+    entries = [_loop_entry()]
+
+    autoloop_entries("in.mp4", entries)
+
+    assert entries[0]["loop_transition"] not in ("cut", "match_cut")
+
+
+def test_autoloop_falls_back_to_cut_when_nothing_could_be_measured(monkeypatch):
+    from scripts.render_batch import autoloop_entries
+
+    _stub_measurement(monkeypatch, similarity=None, motion=None)
+    entries = [_loop_entry()]
+
+    autoloop_entries("in.mp4", entries)
+
+    assert entries[0]["loop_transition"] == "cut"
+
+
+def test_autoloop_reports_a_failed_measurement_without_raising(monkeypatch):
+    from scripts.render_batch import autoloop_entries
+
+    def boom(*args, **kwargs):
+        raise OSError("ffmpeg is not on PATH")
+
+    monkeypatch.setattr("subprocess.run", boom)
+    entries = [_loop_entry()]
+
+    filled, warnings = autoloop_entries("in.mp4", entries)
+
+    assert filled is False
+    assert len(warnings) == 1 and "loop junction not measured" in warnings[0]
+    assert "loop_transition" not in entries[0]
+
+
+def test_classify_loop_junction_reads_visual_continuity_not_motion():
+    from scripts.render_batch import classify_loop_junction
+
+    # the numbers in the comment above the thresholds, as behaviour
+    assert classify_loop_junction(0.997, 5.60) == "match_cut"   # same shot
+    assert classify_loop_junction(1.000, 0.16) == "match_cut"   # two stills, identical
+    assert classify_loop_junction(0.414, 5.75) == "whip_pan"    # unrelated scenes
+    assert classify_loop_junction(0.318, 5.53) == "whip_pan"
+
+
+def test_classify_loop_junction_wipes_rather_than_whips_a_frozen_picture():
+    from scripts.render_batch import classify_loop_junction
+
+    # a motion blur across two still screens reads as a rendering fault
+    assert classify_loop_junction(0.30, 0.2) == "mask_wipe"
+
+
+def test_classify_loop_junction_dissolves_a_related_but_not_identical_join():
+    from scripts.render_batch import classify_loop_junction
+
+    assert classify_loop_junction(0.75, 5.0) == "crossfade"
+
+
+def test_classify_loop_junction_falls_back_to_cut_without_a_similarity_score():
+    from scripts.render_batch import classify_loop_junction
+
+    assert classify_loop_junction(None, 5.0) == "cut"

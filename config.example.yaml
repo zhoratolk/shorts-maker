@@ -422,9 +422,26 @@ loop:
   # a pure trim-choice with no config/field of its own) - this section is
   # only the mechanical video/audio seam.
   enabled: false
-  # cut | crossfade. crossfade (a plain dissolve) reads as an intentional
-  # loop seam; cut appends an exact replay with a hard jump (louder, but
-  # simpler and sometimes reads better on fast-cut content).
+  # rotate | seam.
+  # rotate MOVES the punch to the front and drops it from the tail, so the
+  # clip ends just before the payoff and a replay reads as "setup -> punch".
+  # The wrap is exact by construction: the last frame and the first frame
+  # were adjacent in the source.
+  # seam is the older cosmetic shape - it appends a replay of the opening
+  # and dissolves into it, leaving the running order alone.
+  mode: rotate
+  # rotate mode only. The transition on the INTERNAL junction (punch end ->
+  # setup start), which is a real scene change - not the wrap, which needs
+  # nothing. auto | cut | crossfade | whip_pan | mask_wipe | glitch | match_cut.
+  # auto measures the junction's two frames and picks: matching frames keep
+  # an unblended join (blending would smear something invisible), a scene
+  # jump gets whip_pan, and a frozen picture gets mask_wipe instead (a motion
+  # blur across two stills reads as a rendering fault). A plan entry may
+  # override per clip with a `loop_transition` field.
+  rotate_transition: auto
+  # seam mode only. cut | crossfade. crossfade (a plain dissolve) reads as an
+  # intentional loop seam; cut appends an exact replay with a hard jump
+  # (louder, but simpler and sometimes reads better on fast-cut content).
   transition: crossfade
   transition_duration: 0.4
 

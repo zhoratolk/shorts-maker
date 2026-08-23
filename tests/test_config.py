@@ -1807,6 +1807,8 @@ def test_config_loop_transition_enum_matches_loop_module():
     # Drift guard: config.py duplicates the enum (rather than importing
     # scripts.loop) so config.py stays import-safe with just yaml/stdlib -
     # this test catches the two sets silently diverging.
-    from scripts.loop import VALID_LOOP_TRANSITIONS
+    from scripts.loop import VALID_LOOP_TRANSITIONS, VALID_SEAM_TRANSITIONS
 
-    assert {"cut", "crossfade"} == VALID_LOOP_TRANSITIONS
+    # two different joins, two different menus - see loop.py's constants
+    assert {"cut", "crossfade"} == VALID_SEAM_TRANSITIONS
+    assert {"cut", "crossfade", "whip_pan", "mask_wipe", "glitch", "match_cut"} == VALID_LOOP_TRANSITIONS

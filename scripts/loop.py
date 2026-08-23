@@ -37,15 +37,40 @@ import (render.py imports this module) - same rationale as cold_open.py.
 
 from __future__ import annotations
 
-from scripts.render_common import RenderError, encode_flags
+from scripts.render_common import (
+    VALID_TRANSITIONS,
+    RenderError,
+    build_transition_filter,
+    encode_flags,
+)
 
-# Deliberately narrower than cold_open's transition menu: whip_pan/mask_wipe
-# read as punchy "snap into the moment" reveals, wrong feel for a smooth
-# loop seam. A loop only needs a plain dissolve or a hard "cut" (an exact
-# appended replay, no blend) - it's about the seam being unsurprising, not
-# eye-catching.
-_XFADE_NAMES = {"crossfade": "fade"}
-VALID_LOOP_TRANSITIONS = frozenset({"cut", *_XFADE_NAMES})
+# The full menu, same as every other join in this pipeline.
+#
+# This used to be narrowed to {cut, crossfade}, on the argument that "a loop
+# seam should be unsurprising, not eye-catching". That argument is sound - but
+# it is about the WRAP seam, and this constant does not gate the wrap. Rotate
+# mode has two joins and they are opposites:
+#
+#   * the wrap (last frame -> first frame on replay) is exact by construction,
+#     because those frames were adjacent in the source. Nothing to hide, and
+#     no transition is ever applied there.
+#   * the INTERNAL junction (punch end -> setup start) glues the clip's own
+#     end onto its own beginning. Those are usually different scenes entirely,
+#     and a hard cut there is the one visible flaw of the whole shape.
+#
+# So the junction wants exactly what cold_open wants - a punchy "snap into the
+# moment" - and narrowing it to a dissolve was solving the wrong seam's
+# problem (found 2026-08-23, after a loop was rejected outright for a mismatch
+# that a transition is meant to cover).
+VALID_LOOP_TRANSITIONS = VALID_TRANSITIONS
+
+# `seam` mode is the older, purely cosmetic shape: it appends a replay of the
+# clip's opening and dissolves into it, leaving the running order untouched.
+# THAT is the seam the narrow menu was written for, and there the original
+# argument holds exactly - a replay should slip past unnoticed, so it gets a
+# plain dissolve or an unblended append and nothing louder.
+_SEAM_XFADE_NAMES = {"crossfade": "fade"}
+VALID_SEAM_TRANSITIONS = frozenset({"cut", *_SEAM_XFADE_NAMES})
 
 
 ROTATE_MIN_PUNCH_SECONDS = 1.5
@@ -137,9 +162,11 @@ def build_punch_rotate_command(
     is the one narrative jump the shape introduces). The wrap seam needs no
     transition: those two frames were already adjacent in the source.
 
-    Defaults to "cut" because the internal junction is meant to read as a
-    snap away from the payoff - the same reason cold_open reaches for
-    whip_pan rather than a dissolve. transition_duration is clamped to the
+    Defaults to "cut" so an explicit call keeps its old output byte for byte;
+    the *automatic* choice is made a layer up, by measuring the junction (see
+    render_batch.autoloop_entries). A junction whose two frames already match
+    wants "cut" - blending them would smear a join that is invisible as-is;
+    one that jumps scenes wants a real transition. transition_duration is clamped to the
     punch half's own length, matching the TRANS-03 downgrade-to-concat
     convention used elsewhere in this codebase.
     """
@@ -157,7 +184,7 @@ def build_punch_rotate_command(
     rotate_at = round(rotate_at, 3)
     punch_length = round(base_duration - rotate_at, 3)
     trans_duration = round(min(max(transition_duration, 0.0), punch_length), 3)
-    use_xfade = transition != "cut" and trans_duration > 0
+    use_xfade = transition not in ("cut", "match_cut") and trans_duration > 0
 
     graph = [
         "[0:v]split=2[setupbasev][punchbasev]",
@@ -172,9 +199,8 @@ def build_punch_rotate_command(
         # offset is on the combined [punch][setup] timeline: the overlap eats
         # into the tail of the punch half, never before it.
         offset = round(punch_length - trans_duration, 3)
-        xfade_name = _XFADE_NAMES[transition]
         graph.append(
-            f"[punchv][setupv]xfade=transition={xfade_name}:duration={trans_duration}:offset={offset}[vout]"
+            build_transition_filter(transition, trans_duration, offset, "punchv", "setupv", "vout")
         )
         graph.append(f"[puncha][setupa]acrossfade=d={trans_duration}[aout]")
     else:
@@ -219,9 +245,9 @@ def build_loop_outro_command(
     duration barely changes. The "cut" variant does add transition_duration
     of runtime (a literal appended copy, no blend).
     """
-    if transition not in VALID_LOOP_TRANSITIONS:
+    if transition not in VALID_SEAM_TRANSITIONS:
         raise RenderError(
-            f"loop transition must be one of {sorted(VALID_LOOP_TRANSITIONS)}, got {transition!r}"
+            f"loop transition must be one of {sorted(VALID_SEAM_TRANSITIONS)}, got {transition!r}"
         )
     if base_duration <= 0:
         raise RenderError(f"base_duration must be > 0, got {base_duration}")
@@ -243,7 +269,7 @@ def build_loop_outro_command(
         # the transition begins base_duration - d in, so the overlap eats
         # into the tail, never before it.
         offset = round(base_duration - d, 3)
-        xfade_name = _XFADE_NAMES[transition]
+        xfade_name = _SEAM_XFADE_NAMES[transition]
         graph.append(f"[mainv][loopv]xfade=transition={xfade_name}:duration={d}:offset={offset}[vout]")
         graph.append(f"[maina][loopa]acrossfade=d={d}[aout]")
     else:

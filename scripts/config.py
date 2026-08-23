@@ -401,7 +401,8 @@ class LoopConfig:
     mode: str = "rotate"
     # Transition at the rotate junction (punch -> setup). "cut" reads as a
     # deliberate snap away from the payoff; rotate mode only.
-    rotate_transition: str = "cut"
+    # "auto" = measure the junction (render_batch.autoloop_entries)
+    rotate_transition: str = "auto"
     # cut | crossfade. See scripts.loop for the full enum (deliberately
     # narrower than cold_open's - whip_pan/mask_wipe don't read as a smooth
     # loop seam). seam mode only.
@@ -879,6 +880,18 @@ def _validate(config: Config) -> None:
         )
     # MUST mirror scripts.loop.VALID_LOOP_TRANSITIONS - duplicated rather
     # than imported, same rationale as cold_open above.
+    # rotate_transition gates the INTERNAL junction (punch -> setup), a real
+    # scene change, so it takes the full transition menu plus "auto" - which
+    # means "measure the junction and pick", the same way crop framing is
+    # measured rather than guessed. loop.transition below is the seam-mode
+    # replay dissolve and deliberately stays narrow.
+    if config.loop.rotate_transition not in {
+        "auto", "cut", "crossfade", "whip_pan", "mask_wipe", "glitch", "match_cut",
+    }:
+        raise ConfigError(
+            "loop.rotate_transition must be auto/cut/crossfade/whip_pan/mask_wipe/glitch/"
+            f"match_cut, got {config.loop.rotate_transition!r}"
+        )
     if config.loop.transition not in {"cut", "crossfade"}:
         raise ConfigError(
             f"loop.transition must be one of cut/crossfade, got {config.loop.transition!r}"

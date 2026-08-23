@@ -136,6 +136,109 @@ def entry_segments(entry: dict) -> list[tuple[float, float]] | None:
     return [(float(start), float(end))]
 
 
+def autoloop_entries(video_path: str, entries: list[dict]) -> tuple[bool, list[str]]:
+    """Picks each rotate-loop entry's junction transition by measuring it.
+
+    A rotate loop has two joins with opposite needs. The wrap (last frame ->
+    first frame on replay) is exact by construction and never gets a
+    transition. The INTERNAL junction glues the clip's end onto its own
+    beginning - usually two unrelated scenes - and a hard cut there is the
+    one visible flaw of the shape.
+
+    Which it is cannot be known without looking, so this looks: the frames
+    either side of the junction go through the same similarity/motion
+    analysis the jump-cut boundaries already use. Matching frames keep "cut"
+    (blending them would smear a join that is invisible as-is); a scene jump
+    gets a real transition. An entry that names `loop_transition` itself is
+    left alone. Fail-open: anything unmeasurable stays "cut".
+    """
+    from scripts.transitions import (
+        _BOUNDARY_FRAME_OFFSET, analyze_motion_at_boundary,
+        analyze_similarity_at_boundary,
+    )
+
+    pending = [
+        entry for entry in entries
+        if is_loop_entry(entry) and not entry.get("loop_transition")
+    ]
+    if not pending:
+        return False, []
+
+    import tempfile
+
+    warnings: list[str] = []
+    filled = False
+    for entry in pending:
+        # The junction is the clip's own end meeting its own start, so the
+        # frames to compare are at the clip's boundaries in SOURCE seconds.
+        segments = entry_segments(entry)
+        if not segments:
+            continue
+        clip_start, clip_end = segments[0][0], segments[-1][1]
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                before = str(Path(tmp) / "before.png")
+                after = str(Path(tmp) / "after.png")
+                for path, at in ((before, clip_end - _BOUNDARY_FRAME_OFFSET),
+                                 (after, clip_start + _BOUNDARY_FRAME_OFFSET)):
+                    subprocess.run(
+                        ["ffmpeg", "-v", "error", "-ss", f"{at:.3f}", "-i", video_path,
+                         "-frames:v", "1", "-y", path],
+                        check=True, capture_output=True,
+                    )
+                similarity = analyze_similarity_at_boundary(before, after)
+                motion = analyze_motion_at_boundary(before, after)
+        except Exception as error:  # noqa: BLE001 - fail-open, "cut" is still valid
+            warnings.append(f"[warn] {entry.get('output_filename')}: loop junction not measured ({error})")
+            continue
+
+        entry["loop_transition"] = classify_loop_junction(similarity, motion)
+        filled = True
+    return filled, warnings
+
+
+# Junction thresholds, measured on real material rather than assumed
+# (2026-08-23, four junctions across three November recordings):
+#
+#   two frames 0.05s apart, same shot   similarity 0.997   motion 5.60
+#   two static stats screens            similarity 1.000   motion 0.16
+#   two unrelated scenes                similarity 0.414   motion 5.75
+#   two unrelated scenes                similarity 0.318   motion 5.53
+#
+# Motion is worthless here and the first attempt at this used it anyway:
+# Farneback optical flow between two UNRELATED frames returns noise of the
+# same magnitude as flow between two adjacent frames of one shot (5.75 vs
+# 5.60), so it cannot tell a scene jump from no jump at all. It only
+# separates "frozen picture" from "anything else". Histogram similarity is
+# what actually answers the question being asked.
+LOOP_JUNCTION_MATCH_SIMILARITY = 0.90   # same shot - blending would smear it
+LOOP_JUNCTION_RELATED_SIMILARITY = 0.60  # related enough for a soft dissolve
+LOOP_JUNCTION_STILL_MOTION = 1.0         # below this the picture is frozen
+
+
+def classify_loop_junction(similarity: float | None, motion: float | None) -> str:
+    """The transition for one rotate-loop junction, from visual continuity.
+
+    Deliberately not scripts.transitions.classify_transition: that tree
+    weighs motion and audio because it grades cuts BETWEEN takes, where a
+    loud moment justifies a loud transition. This junction is a splice
+    inside one clip and asks one narrower question - do these two frames
+    belong to the same picture? - which similarity answers on its own.
+    """
+    if similarity is None:
+        return "cut"
+    if similarity >= LOOP_JUNCTION_MATCH_SIMILARITY:
+        return "match_cut"
+    if similarity >= LOOP_JUNCTION_RELATED_SIMILARITY:
+        return "crossfade"
+    # A hard scene jump. whip_pan sells it as a snap when the picture is
+    # alive; on a frozen one (menu -> scoreboard) a motion blur reads as a
+    # rendering fault, so a wipe carries the change deliberately instead.
+    if motion is not None and motion < LOOP_JUNCTION_STILL_MOTION:
+        return "mask_wipe"
+    return "whip_pan"
+
+
 def autoframe_entries(
     video_path: str,
     entries: list[dict],
@@ -343,7 +446,12 @@ def build_render_args(
         args += [
             "--loop-enabled",
             "--loop-mode", loop.mode,
-            "--loop-rotate-transition", loop.rotate_transition,
+            # "auto" is a planning-time instruction to autoloop_entries, not
+            # something render.py knows how to render - by the time the flag
+            # is built every loop entry already carries its measured value,
+            # and the flag is only the fallback for one that could not be.
+            "--loop-rotate-transition",
+            "cut" if loop.rotate_transition == "auto" else loop.rotate_transition,
             "--loop-transition", loop.transition,
             "--loop-transition-duration", str(loop.transition_duration),
         ]
@@ -581,6 +689,15 @@ def main() -> None:
             print(f"[warn] auto crop framing skipped: {error}", file=sys.stderr)
             frame_warnings = []
         for warning in frame_warnings:
+            print(warning, file=sys.stderr)
+
+        try:
+            looped, loop_warnings = autoloop_entries(args.input_video, entries)
+            framed = framed or looped
+        except Exception as error:  # noqa: BLE001 - fail-open, "cut" is still valid
+            print(f"[warn] loop junction selection skipped: {error}", file=sys.stderr)
+            loop_warnings = []
+        for warning in loop_warnings:
             print(warning, file=sys.stderr)
 
     regular, loops = split_plan(entries)
