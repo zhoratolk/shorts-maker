@@ -34,6 +34,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.config import Config, load_config
+from scripts.crop_focus import plan_focus
 
 SOCIAL_PLATFORMS = ("twitch", "kick", "telegram")
 
@@ -115,6 +116,76 @@ def dead_zone_warnings(entries: list[dict], *, max_gap: float = DEAD_ZONE_MAX_GA
                 f"on views; tighten it or drop the clip"
             )
     return warnings
+
+
+def entry_segments(entry: dict) -> list[tuple[float, float]] | None:
+    """The clip's absolute source windows, or None for a shape that has no
+    single source window to sample (a compilation entry).
+
+    Deliberately not entry_source_window above: that one answers "roughly
+    where in the recording is this moment" for the poster frame, so it spans
+    across cut pauses. Sampling has to walk the kept segments themselves, or
+    it measures footage the clip does not contain.
+    """
+    keep_segments = entry.get("keep_segments")
+    if keep_segments:
+        return [(float(a), float(b)) for a, b in keep_segments]
+    start, end = entry.get("start"), entry.get("end")
+    if start is None or end is None:
+        return None
+    return [(float(start), float(end))]
+
+
+def autoframe_entries(
+    video_path: str,
+    entries: list[dict],
+    src_width: int,
+    src_height: int,
+    *,
+    target_width: int,
+    target_height: int,
+) -> tuple[bool, list[str]]:
+    """Fills in the crop framing for every `zoom` entry that didn't spell it
+    out, and warns about clips whose picture never moves.
+
+    This exists because omitting `crop_focus_x` is invisible: the clip renders
+    fine, dead-centre, and nothing complains - so it gets skipped, and on
+    2026-08-23 it was skipped on all twelve clips of a batch, several of which
+    were centred on a black margin or on the boundary between the game view
+    and a HUD panel. An explicit value in the plan always wins; this only
+    answers where the plan said nothing.
+
+    Mutates `entries` in place and returns (changed, warnings).
+    """
+    changed = False
+    warnings: list[str] = []
+    crop_width = min(round(src_height * target_width / target_height), src_width)
+    for entry in entries:
+        if entry.get("crop_style") != "zoom":
+            continue
+        if entry.get("crop_focus_x") is not None or entry.get("crop_focus_keyframes"):
+            continue
+        segments = entry_segments(entry)
+        if not segments:
+            continue
+        framing = plan_focus(
+            video_path, segments, src_width, src_height, crop_width=crop_width
+        )
+        if framing is None:
+            continue
+        name = entry.get("output_filename", "<unnamed clip>")
+        if "focus_keyframes" in framing:
+            entry["crop_focus_keyframes"] = framing["focus_keyframes"]
+        else:
+            entry["crop_focus_x"] = framing["focus_x"]
+        changed = True
+        if framing.get("static"):
+            warnings.append(
+                f"[warn] {name}: the picture barely moves for the whole clip (a scoreboard, "
+                f"a menu, a map screen) - framing cannot fix that, judge whether the moment "
+                f"is worth shipping on audio alone"
+            )
+    return changed, warnings
 
 
 def split_plan(entries: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -483,16 +554,38 @@ def main() -> None:
     config = load_config(args.config)
     output_dir = args.output_dir or config.output_dir
     entries = json.loads(Path(args.plan_json).read_text(encoding="utf-8-sig"))
+    if not entries:
+        parser.error(f"{args.plan_json} has no plan entries")
     for warning in dead_zone_warnings(entries):
         print(warning, file=sys.stderr)
 
+    # Imported here rather than at module scope: render.py pulls in the whole
+    # render stack, and the flag derivation above must stay importable on its
+    # own (that is what makes it unit-testable without ffmpeg).
+    from scripts.render import TARGET_HEIGHT, TARGET_WIDTH, probe_video
+
+    framed = False
+    if not args.dry_run:
+        try:
+            probe = probe_video(args.input_video)
+            framed, frame_warnings = autoframe_entries(
+                args.input_video, entries, probe["width"], probe["height"],
+                target_width=TARGET_WIDTH, target_height=TARGET_HEIGHT,
+            )
+        except Exception as error:  # noqa: BLE001 - fail-open, centre crop is still valid
+            print(f"[warn] auto crop framing skipped: {error}", file=sys.stderr)
+            frame_warnings = []
+        for warning in frame_warnings:
+            print(warning, file=sys.stderr)
+
     regular, loops = split_plan(entries)
-    if not entries:
-        parser.error(f"{args.plan_json} has no plan entries")
 
     passes: list[tuple[list[dict], str, bool]] = []
     if regular:
-        path = write_pass_plan(regular, args.plan_json, "regular") if loops else args.plan_json
+        path = (
+            write_pass_plan(regular, args.plan_json, "regular")
+            if (loops or framed) else args.plan_json
+        )
         passes.append((regular, path, False))
     if loops:
         passes.append((loops, write_pass_plan(loops, args.plan_json, "loop"), True))

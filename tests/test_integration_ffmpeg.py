@@ -550,3 +550,26 @@ def test_crop_pan_renders_and_actually_moves_the_window(test_video, tmp_path):
     # the window starts at the left edge and ends at the right one, so the
     # first and last frames cannot be showing the same part of the source
     assert frame_signature(0.1) != frame_signature(1.9)
+
+
+def test_plan_focus_measures_a_real_file_through_the_rawvideo_pipe(test_video):
+    """The framing measurement reads frames straight off ffmpeg's stdout as
+    raw gray bytes rather than via image files, so the frame size, the pixel
+    format and the pipe all have to agree exactly - a mismatch would silently
+    yield zero whole frames and quietly fall back to a centre crop."""
+    from scripts.crop_focus import SAMPLE_HEIGHT, SAMPLE_WIDTH, plan_focus, sample_frames
+
+    frames = sample_frames(str(test_video), 0.0, 4.0)
+    assert frames, "no whole frames came back off the pipe"
+    assert all(len(frame) == SAMPLE_WIDTH * SAMPLE_HEIGHT for frame in frames)
+
+    result = plan_focus(
+        str(test_video), [(0.0, 4.0)], SRC_WIDTH, SRC_HEIGHT,
+        crop_width=round(SRC_HEIGHT * 1080 / 1920),
+    )
+    assert result is not None
+    assert isinstance(result["static"], bool)
+    pct = result.get("focus_x")
+    if pct is None:
+        pct = result["focus_keyframes"][0][1]
+    assert 0.0 <= pct <= 100.0

@@ -14,7 +14,9 @@ import pytest
 
 from scripts.config import Config
 from scripts.render_batch import (
+    autoframe_entries,
     build_render_args,
+    entry_segments,
     entry_source_window,
     is_loop_entry,
     load_energy_spikes,
@@ -331,3 +333,111 @@ def test_dead_zone_warnings_stays_quiet_without_a_words_file(tmp_path):
 
     entries = [{"output_filename": "clip.mp4", "subtitles_path": str(tmp_path / "clip.srt")}]
     assert dead_zone_warnings(entries) == []
+
+
+def _framing_stub(result):
+    def fake_plan_focus(video_path, segments, src_width, src_height, **kwargs):
+        fake_plan_focus.calls.append((video_path, segments, kwargs["crop_width"]))
+        return result
+    fake_plan_focus.calls = []
+    return fake_plan_focus
+
+
+def test_autoframe_fills_a_zoom_entry_that_left_the_framing_out(monkeypatch):
+    stub = _framing_stub({"focus_x": 28.0, "static": False})
+    monkeypatch.setattr("scripts.render_batch.plan_focus", stub)
+    entries = [{"start": 10.0, "end": 40.0, "crop_style": "zoom"}]
+
+    changed, warnings = autoframe_entries(
+        "in.mp4", entries, 1920, 1080, target_width=1080, target_height=1920
+    )
+
+    assert changed is True
+    assert warnings == []
+    assert entries[0]["crop_focus_x"] == 28.0
+    # 1080 * 1080/1920 = 607.5 -> 608, the same window compute_crop_filter uses
+    assert stub.calls[0][2] == 608
+
+
+def test_autoframe_uses_the_kept_segments_when_the_clip_is_jump_cut(monkeypatch):
+    stub = _framing_stub({"focus_keyframes": [[1.0, 20.0], [9.0, 70.0]], "static": False})
+    monkeypatch.setattr("scripts.render_batch.plan_focus", stub)
+    entries = [{
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "keep_segments": [[10.0, 20.0], [30.0, 40.0]],
+    }]
+
+    autoframe_entries("in.mp4", entries, 1920, 1080, target_width=1080, target_height=1920)
+
+    assert stub.calls[0][1] == [(10.0, 20.0), (30.0, 40.0)]
+    assert entries[0]["crop_focus_keyframes"] == [[1.0, 20.0], [9.0, 70.0]]
+    assert "crop_focus_x" not in entries[0]
+
+
+def test_autoframe_never_overrides_framing_the_plan_already_states(monkeypatch):
+    stub = _framing_stub({"focus_x": 90.0, "static": False})
+    monkeypatch.setattr("scripts.render_batch.plan_focus", stub)
+    entries = [
+        {"start": 0.0, "end": 5.0, "crop_style": "zoom", "crop_focus_x": 12},
+        {"start": 0.0, "end": 5.0, "crop_style": "zoom", "crop_focus_keyframes": [[0.0, 5.0]]},
+    ]
+
+    changed, _ = autoframe_entries(
+        "in.mp4", entries, 1920, 1080, target_width=1080, target_height=1920
+    )
+
+    assert changed is False
+    assert stub.calls == []
+    assert entries[0]["crop_focus_x"] == 12
+
+
+def test_autoframe_skips_styles_that_do_not_crop_horizontally(monkeypatch):
+    stub = _framing_stub({"focus_x": 90.0, "static": False})
+    monkeypatch.setattr("scripts.render_batch.plan_focus", stub)
+    entries = [
+        {"start": 0.0, "end": 5.0, "crop_style": "pad"},
+        {"start": 0.0, "end": 5.0, "crop_style": "original-16:9"},
+    ]
+
+    changed, _ = autoframe_entries(
+        "in.mp4", entries, 1920, 1080, target_width=1080, target_height=1920
+    )
+
+    assert changed is False
+    assert stub.calls == []
+
+
+def test_autoframe_warns_about_a_clip_whose_picture_never_moves(monkeypatch):
+    monkeypatch.setattr(
+        "scripts.render_batch.plan_focus", _framing_stub({"focus_x": 30.0, "static": True})
+    )
+    entries = [{
+        "start": 0.0, "end": 5.0, "crop_style": "zoom",
+        "output_filename": "scoreboard.mp4",
+    }]
+
+    _, warnings = autoframe_entries(
+        "in.mp4", entries, 1920, 1080, target_width=1080, target_height=1920
+    )
+
+    assert len(warnings) == 1
+    assert "scoreboard.mp4" in warnings[0]
+    assert "barely moves" in warnings[0]
+
+
+def test_autoframe_leaves_the_entry_alone_when_nothing_could_be_measured(monkeypatch):
+    monkeypatch.setattr("scripts.render_batch.plan_focus", _framing_stub(None))
+    entries = [{"start": 0.0, "end": 5.0, "crop_style": "zoom"}]
+
+    changed, warnings = autoframe_entries(
+        "in.mp4", entries, 1920, 1080, target_width=1080, target_height=1920
+    )
+
+    assert changed is False
+    assert warnings == []
+    assert entries[0] == {"start": 0.0, "end": 5.0, "crop_style": "zoom"}
+
+
+def test_entry_segments_declines_a_compilation_entry():
+    assert entry_segments({"segments": [{"start": 1.0, "end": 2.0}]}) is None
+    assert entry_segments({"start": 1.0, "end": 2.0}) == [(1.0, 2.0)]
