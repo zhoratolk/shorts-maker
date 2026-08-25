@@ -133,6 +133,30 @@ def write_concat_list(paths: list[str], list_path: str) -> None:
             f.write(f"file '{escaped}'\n")
 
 
+def already_joined(paths: list[str], destination: str) -> bool:
+    """Whether a file left from an earlier run can be trusted.
+
+    Existence is not enough, and assuming it was is how this module could have defeated
+    its own purpose: a join that failed its check is deliberately left on disk to be
+    looked at, and a run that was killed part-way leaves a truncated file behind. Either
+    one, taken on faith by the next pass, is a recording with a piece missing handed on as
+    finished - the exact outcome everything here exists to prevent, made worse by the
+    originals being deleted afterwards.
+    """
+    if not os.path.exists(destination):
+        return False
+    try:
+        problems = totals_agree(
+            probe_duration(destination), os.path.getsize(destination),
+            [probe_duration(path) for path in paths],
+            [os.path.getsize(path) for path in paths],
+        )
+    except SessionError:
+        # Unreadable by ffprobe, which a truncated file usually is. Not trusted.
+        return False
+    return not problems
+
+
 def join(paths: list[str], destination: str) -> str:
     """Concatenates the parts without re-encoding and checks the result.
 
@@ -231,8 +255,12 @@ def main(argv: list[str] | None = None) -> int:
             # A session of one part is used where it lies, so what comes back here is
             # sometimes the joined file and sometimes the original. Whichever it is, it is
             # the path the rest of the pipeline should be given.
-            ready.append(session[0] if len(session) == 1 else
-                         (destination if os.path.exists(destination) else join(session, destination)))
+            if len(session) == 1:
+                ready.append(session[0])
+            elif already_joined(session, destination):
+                ready.append(destination)
+            else:
+                ready.append(join(session, destination))
         except SessionError as e:
             print(f"session starting {os.path.basename(session[0])}: {e}", file=sys.stderr)
 

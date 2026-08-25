@@ -234,10 +234,13 @@ class TestTheManifest:
             "/media/recordings/2026-08-25 14-00-00.mkv"
 
     def test_a_joined_session_is_listed_at_its_joined_path(self, monkeypatch):
+        """A file from an earlier run is reused only after it has been checked against
+        the parts again - existing is not the same as being correct."""
         directory = pathlib.Path(tempfile.mkdtemp())
         manifest = directory / "sessions.txt"
         joined = directory / "2026-08-25 14-00-00-joined-2.mkv"
         joined.write_bytes(b"already here")
+        monkeypatch.setattr(session, "already_joined", lambda parts, destination: True)
         self._fake_parts(monkeypatch, [
             ("/rec/2026-08-25 14-00-00.mkv", dt.datetime(2026, 8, 25, 14, 0), 900.0),
             ("/rec/2026-08-25 14-15-00.mkv", dt.datetime(2026, 8, 25, 14, 15), 900.0),
@@ -246,6 +249,26 @@ class TestTheManifest:
         session.main(["/rec", "--into", str(directory), "--manifest", str(manifest)])
 
         assert manifest.read_text(encoding="utf-8").strip() == str(joined)
+
+    def test_a_rejected_file_from_an_earlier_run_is_joined_again(self, monkeypatch):
+        """The file left on disk by a failed check must not be handed on as finished.
+        Rejoining is the right answer: the parts are still there, and the alternative is
+        publishing a stream with a piece missing and then deleting the only copy."""
+        directory = pathlib.Path(tempfile.mkdtemp())
+        manifest = directory / "sessions.txt"
+        (directory / "2026-08-25 14-00-00-joined-2.mkv").write_bytes(b"half a stream")
+        monkeypatch.setattr(session, "already_joined", lambda parts, destination: False)
+        rejoined = []
+        monkeypatch.setattr(session, "join",
+                            lambda parts, destination: rejoined.append(destination) or destination)
+        self._fake_parts(monkeypatch, [
+            ("/rec/2026-08-25 14-00-00.mkv", dt.datetime(2026, 8, 25, 14, 0), 900.0),
+            ("/rec/2026-08-25 14-15-00.mkv", dt.datetime(2026, 8, 25, 14, 15), 900.0),
+        ])
+
+        session.main(["/rec", "--into", str(directory), "--manifest", str(manifest)])
+
+        assert len(rejoined) == 1
 
     def test_a_session_that_could_not_be_joined_is_left_out(self, monkeypatch):
         """Better to skip it than to hand the next stage a file that does not match its
@@ -272,3 +295,61 @@ class TestTheManifest:
         session.main(["/rec", "--into", str(directory), "--manifest", str(manifest)])
 
         assert manifest.read_text(encoding="utf-8") == ""
+
+
+class TestAFileLeftFromAnEarlierRunIsNotTrusted:
+    """The join deliberately leaves a rejected file on disk so it can be looked at. Taking
+    that file at face value on the next run hands on a recording with a piece missing -
+    which is the exact failure this module exists to prevent, and it is discovered only
+    after the originals have been deleted."""
+
+    def test_a_matching_file_is_reused(self, monkeypatch):
+        directory = tempfile.mkdtemp()
+        parts = [os.path.join(directory, f"p{n}.mkv") for n in (1, 2)]
+        for path in parts:
+            with open(path, "wb") as f:
+                f.write(b"x" * 1000)
+        destination = os.path.join(directory, "joined.mkv")
+        with open(destination, "wb") as f:
+            f.write(b"x" * 2000)
+        monkeypatch.setattr(session, "probe_duration",
+                            lambda path: 20.0 if path == destination else 10.0)
+
+        assert session.already_joined(parts, destination) is True
+
+    def test_a_rejected_file_is_not_reused(self, monkeypatch):
+        """Half the recording, left behind by a failed check or a killed process."""
+        directory = tempfile.mkdtemp()
+        parts = [os.path.join(directory, f"p{n}.mkv") for n in (1, 2)]
+        for path in parts:
+            with open(path, "wb") as f:
+                f.write(b"x" * 1000)
+        destination = os.path.join(directory, "joined.mkv")
+        with open(destination, "wb") as f:
+            f.write(b"x" * 1000)
+        monkeypatch.setattr(session, "probe_duration",
+                            lambda path: 10.0)
+
+        assert session.already_joined(parts, destination) is False
+
+    def test_an_unreadable_file_is_not_reused(self, monkeypatch):
+        directory = tempfile.mkdtemp()
+        parts = [os.path.join(directory, "p1.mkv")]
+        with open(parts[0], "wb") as f:
+            f.write(b"x" * 1000)
+        destination = os.path.join(directory, "joined.mkv")
+        with open(destination, "wb") as f:
+            f.write(b"")
+
+        def refuses(path):
+            if path == destination:
+                raise session.SessionError("moov atom not found")
+            return 10.0
+
+        monkeypatch.setattr(session, "probe_duration", refuses)
+
+        assert session.already_joined(parts, destination) is False
+
+    def test_a_missing_file_is_not_reused(self):
+        directory = tempfile.mkdtemp()
+        assert session.already_joined([], os.path.join(directory, "nope.mkv")) is False
