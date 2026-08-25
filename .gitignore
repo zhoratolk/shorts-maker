@@ -41,3 +41,9 @@ comments_token.json
 # at this repo-local scratch dir instead. Runtime output only, never tracked.
 .pytest-tmp/
 .pytest_tmp/
+
+# Coverage database - a local build artefact, and a binary one, so every run of the
+# test suite showed up as a diff nobody could read.
+.coverage
+.coverage.*
+htmlcov/
