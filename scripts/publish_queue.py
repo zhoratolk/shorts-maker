@@ -104,9 +104,15 @@ def save_queue(queue: dict[str, Any], path: str = DEFAULT_QUEUE_PATH) -> None:
     queue_file = Path(path)
     queue_file.parent.mkdir(parents=True, exist_ok=True)
     temporary = queue_file.with_name(queue_file.name + ".tmp")
-    temporary.write_text(
-        json.dumps(queue, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    # Flushed all the way to the platter before the rename, because os.replace only buys
+    # atomicity, not durability: on a filesystem with delayed allocation the rename can
+    # be on disk while the bytes it points at are not, and a power cut in that window
+    # leaves an empty queue.json - which load_queue then refuses to parse, which is the
+    # standstill this whole function exists to prevent.
+    with open(temporary, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(queue, ensure_ascii=False, indent=2))
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(temporary, queue_file)
 
 
@@ -520,7 +526,13 @@ def _try_set_thumbnail(service, video_id: str, image_path: str) -> bool:
 # Statuses a kill treats as "not yet uploaded" - no video exists on YouTube
 # yet (or, for UPLOADING, no video_id has been recorded yet either), so a
 # kill of these is purely local: no API call, just flip the manifest.
-_NOT_YET_UPLOADED_STATUSES = frozenset({QUEUED, PAUSED, UPLOADING})
+#
+# BLOCKED belongs here for the same reason and was missed when it was added: an entry
+# that failed three times before the insert has no video_id, so killing it opened a real
+# OAuth session and then asked YouTube to update the video with id None - the operator
+# got a traceback instead of a killed entry, and the entry stayed BLOCKED. The video_id
+# check below is what actually decides; the set only says which statuses may reach it.
+_NOT_YET_UPLOADED_STATUSES = frozenset({QUEUED, PAUSED, UPLOADING, BLOCKED})
 
 
 def _find_entry(queue: dict[str, Any], clip_id: str) -> dict[str, Any]:
@@ -642,6 +654,34 @@ def _error_reason(error: Exception) -> str:
 # unscheduled. Everything else the API answers 403 to - an exhausted daily quota, a token
 # without videos.update, a rate limit - is a live video and a real failure.
 GONE_403_REASONS = frozenset({"forbidden", "videoNotFound"})
+
+
+# Failures that say "not now" rather than "not ever". The daily quota resets at midnight
+# Pacific, a rate limit clears in seconds, and a 5xx is the API's own problem - none of
+# them are a property of the clip, and none of them get better by giving up on it.
+#
+# They must not spend an attempt. Counting them did the opposite of what the attempt
+# counter is for: an hourly check against an exhausted quota failed identically every
+# tick, so three ticks blocked the first entry, three more blocked the second, and by the
+# time the quota came back the whole queue was BLOCKED and waiting on somebody to type
+# --resume for each clip. Before the counter existed, that same night fixed itself.
+RETRYABLE_REASONS = frozenset({
+    "quotaExceeded",
+    "userRateLimitExceeded",
+    "rateLimitExceeded",
+    "backendError",
+    "internalError",
+    "uploadLimitExceeded",
+})
+
+
+def _is_retryable(error: Exception) -> bool:
+    if _error_reason(error) in RETRYABLE_REASONS:
+        return True
+    # No machine-readable reason on a bare 5xx or a 429, and those are the two shapes a
+    # transport-level hiccup arrives in.
+    status = getattr(getattr(error, "resp", None), "status", None)
+    return status == 429 or (isinstance(status, int) and 500 <= status < 600)
 
 
 def _video_is_gone(error: Exception) -> bool:
@@ -1029,10 +1069,14 @@ def _upload_one(
         # opposite: select_next_due picks the lowest seq every tick, so an entry that
         # fails the same way each time is chosen forever and nothing behind it is ever
         # published. Ten clips once sat in this queue for two days looking enqueued.
-        entry["attempts"] = entry.get("attempts", 0) + 1
+        # A quota or a rate limit is not the clip's fault and does not become the clip's
+        # fault by repeating - see RETRYABLE_REASONS. It is recorded but not counted, so
+        # the entry is still waiting when the quota comes back.
+        if not _is_retryable(error):
+            entry["attempts"] = entry.get("attempts", 0) + 1
         entry["last_error"] = str(error)[:500]
         entry["updated_at"] = datetime.now(timezone.utc).isoformat()
-        if entry["attempts"] >= MAX_UPLOAD_ATTEMPTS:
+        if entry.get("attempts", 0) >= MAX_UPLOAD_ATTEMPTS:
             entry["status"] = BLOCKED
             append_notification(
                 f"[{entry['clip_id']}] отложен после {entry['attempts']} неудач: "

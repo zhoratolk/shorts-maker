@@ -69,7 +69,23 @@ PUBLISHED = "published"
 KILLED = "killed"
 PAUSED = "paused"
 
-VALID_STATUSES = frozenset({QUEUED, UPLOADING, PUBLISHED, KILLED, PAUSED})
+# An entry that has failed the same way three times running. Kept out of select_next_due
+# so the queue behind it moves, rather than being tried first on every tick forever.
+#
+# This is publish_queue.py's mechanism, mirrored late. The atomic manifest write was
+# copied over to these two modules when it was written; the stall fix was not, so the
+# incident it was written for was still live here: one entry that fails deterministically
+# - a caption over the limit, a file that has been moved - is chosen by select_next_due
+# every tick, raises out of _upload_one, and nothing behind it is ever published. Neither
+# of these modules even has publish_queue.py's catch-all in main(), so the whole --check
+# run dies with it.
+BLOCKED = "blocked"
+
+MAX_UPLOAD_ATTEMPTS = 3
+
+VALID_STATUSES = frozenset(
+    {QUEUED, UPLOADING, PUBLISHED, KILLED, PAUSED, BLOCKED}
+)
 
 # Queue manifest + notification-log locations (paths only - no file is
 # created by importing this module).
@@ -170,9 +186,15 @@ def save_queue(queue: dict[str, Any], path: str = DEFAULT_QUEUE_PATH) -> None:
     queue_file = Path(path)
     queue_file.parent.mkdir(parents=True, exist_ok=True)
     temporary = queue_file.with_name(queue_file.name + ".tmp")
-    temporary.write_text(
-        json.dumps(queue, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    # Flushed all the way to the platter before the rename, because os.replace only buys
+    # atomicity, not durability: on a filesystem with delayed allocation the rename can
+    # be on disk while the bytes it points at are not, and a power cut in that window
+    # leaves an empty queue.json - which load_queue then refuses to parse, which is the
+    # standstill this whole function exists to prevent.
+    with open(temporary, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(queue, ensure_ascii=False, indent=2))
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(temporary, queue_file)
 
 
@@ -245,9 +267,16 @@ def pause_item(queue: dict[str, Any], clip_id: str) -> dict[str, Any]:
 
 
 def resume_item(queue: dict[str, Any], clip_id: str) -> dict[str, Any]:
-    """Flips a PAUSED entry back to QUEUED so it becomes eligible again."""
+    """Flips a PAUSED or BLOCKED entry back to QUEUED so it becomes eligible again.
+
+    The attempt count goes with it. Resuming a blocked entry without clearing it would
+    put the entry back in line already out of attempts, so the next failure - or the next
+    tick, if whatever was wrong is now fixed - blocks it again immediately.
+    """
     entry = _find_entry(queue, clip_id)
     entry["status"] = QUEUED
+    entry["attempts"] = 0
+    entry.pop("last_error", None)
     entry["updated_at"] = datetime.now(timezone.utc).isoformat()
     return entry
 
@@ -261,7 +290,9 @@ def resume_item(queue: dict[str, Any], clip_id: str) -> dict[str, Any]:
 # container_id has been recorded (write-ahead #2), since a created-but-not-
 # yet-published container has nothing public on Instagram (06-RESEARCH.md
 # Pitfall 4).
-_NOT_YET_UPLOADED_STATUSES = frozenset({QUEUED, PAUSED, UPLOADING})
+# BLOCKED belongs here too: an entry that failed before anything went live has
+# nothing on the platform to take down, so killing it is local like the rest.
+_NOT_YET_UPLOADED_STATUSES = frozenset({QUEUED, PAUSED, UPLOADING, BLOCKED})
 
 
 def kill_item(queue: dict[str, Any], clip_id: str) -> dict[str, Any]:
@@ -713,6 +744,23 @@ def _error_notification_text(entry: dict[str, Any], reason: str) -> str:
     return f"[error] Instagram {entry['seq']}: {reason}"
 
 
+def _is_retryable(error: Exception) -> bool:
+    """Whether a failure says "not now" rather than "not ever".
+
+    A rate limit or a 5xx is not a property of the clip and does not become one by
+    repeating, so it must not spend an attempt: counting it would let one busy afternoon
+    block the whole queue and leave it blocked after the limit lifted.
+
+    Read off the HTTP status, which is what a non-permission error arrives as here, plus
+    the codes Instagram uses for its own publishing limits.
+    """
+    status = getattr(getattr(error, "response", None), "status_code", None)
+    if status == 429 or (isinstance(status, int) and 500 <= status < 600):
+        return True
+    text = str(error).lower()
+    return "rate limit" in text or "request limit reached" in text or "too many requests" in text
+
+
 def _upload_one(
     entry: dict[str, Any],
     queue: dict[str, Any],
@@ -743,7 +791,23 @@ def _upload_one(
         append_notification(
             _error_notification_text(entry, str(error)), config.notifications_path
         )
-        raise
+        # Recorded and set aside rather than re-raised. Still loud - the notification is
+        # written either way - but the tick survives it, and after three identical
+        # failures the entry stops being the one select_next_due picks first.
+        if not _is_retryable(error):
+            entry["attempts"] = entry.get("attempts", 0) + 1
+        entry["last_error"] = str(error)[:500]
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+        if entry.get("attempts", 0) >= MAX_UPLOAD_ATTEMPTS:
+            entry["status"] = BLOCKED
+            append_notification(
+                f"[{entry['clip_id']}] отложен после {entry['attempts']} неудач: "
+                f"{entry['last_error']}. Очередь идёт дальше; вернуть — "
+                f"--resume {entry['clip_id']}",
+                config.notifications_path,
+            )
+        save_queue(queue, config.instagram_queue_path)
+        return
 
     if isinstance(result, dict) and result.get("dry_run"):
         print("dry-run: skipped (instagram_enabled disabled)")

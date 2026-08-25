@@ -168,12 +168,20 @@ def join(paths: list[str], destination: str) -> str:
         return paths[0]
 
     os.makedirs(os.path.dirname(destination), exist_ok=True)
+    # Built beside the destination and moved onto it only once it has passed, because
+    # ffmpeg's -y truncates its output before it reads a single byte of input. Writing
+    # straight to the destination meant a rebuild destroyed whatever was already there
+    # before finding out whether it could produce a replacement - so one part being
+    # briefly unreadable (a backup holding it open, an antivirus scan) turned yesterday's
+    # good joined file into a stub, and the "kept for inspection" copy this raises about
+    # was overwritten by the next run before anybody could look at it.
+    partial = destination + ".part"
     list_path = destination + ".txt"
     write_concat_list(paths, list_path)
     try:
         result = subprocess.run(
             ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-             "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", destination],
+             "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", partial],
             capture_output=True, text=True, check=False,
         )
         if result.returncode != 0:
@@ -185,7 +193,7 @@ def join(paths: list[str], destination: str) -> str:
             pass
 
     problems = totals_agree(
-        probe_duration(destination), os.path.getsize(destination),
+        probe_duration(partial), os.path.getsize(partial),
         [probe_duration(path) for path in paths],
         [os.path.getsize(path) for path in paths],
     )
@@ -194,8 +202,9 @@ def join(paths: list[str], destination: str) -> str:
         # about. The sources are untouched either way, so nothing has been lost yet.
         raise SessionError(
             "the joined file does not match its parts, so it is not being used: "
-            + "; ".join(problems) + f" (kept at {destination} for inspection)"
+            + "; ".join(problems) + f" (kept at {partial} for inspection)"
         )
+    os.replace(partial, destination)
     return destination
 
 

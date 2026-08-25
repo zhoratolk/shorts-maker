@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import subprocess
@@ -1811,6 +1812,147 @@ def test_reconcile_all_scheduled_adopts_youtubes_publish_at_when_it_was_moved():
     assert entry["publish_at"] == "2026-08-25T01:00:00Z"
 
 
+class TestAQuotaIsNotTheClipsFault:
+    """The attempt counter exists to stop one broken clip holding the queue. A daily quota
+    is not a broken clip: it fails identically every tick until midnight Pacific and then
+    stops. Counting it turned an evening of quota exhaustion into a queue where every
+    entry was BLOCKED by morning - after the quota had already come back - and each one
+    needed --resume by hand. Before the counter existed, that same night fixed itself.
+    """
+
+    def _config(self, tmp_path):
+        class _Config:
+            queue_path = str(tmp_path / "queue.json")
+            notifications_path = str(tmp_path / "notifications.log")
+            enabled = True
+
+        return _Config()
+
+    def _queue_with(self, config, count=2):
+        queue = {"entries": []}
+        for n in range(count):
+            enqueue(queue, f"clip{n}", f"/v/{n}.mp4", f"/m/{n}.json",
+                    f"Заголовок {n}", "описание", ["тег"])
+        save_queue(queue, config.queue_path)
+        return queue
+
+    def _quota_error(self):
+        error = RuntimeError("quota exceeded")
+        error.error_details = [{"reason": "quotaExceeded"}]
+        return error
+
+    def test_it_does_not_spend_an_attempt(self, tmp_path, monkeypatch):
+        config = self._config(tmp_path)
+        queue = self._queue_with(config, 1)
+        error = self._quota_error()
+        monkeypatch.setattr(publish_queue, "upload_and_schedule",
+                            lambda *a, **kw: (_ for _ in ()).throw(error))
+
+        for _ in range(5):
+            publish_queue._upload_one(queue["entries"][0], queue, lambda: None, config)
+
+        assert queue["entries"][0].get("attempts", 0) == 0
+        assert queue["entries"][0]["status"] == "queued"
+
+    def test_the_clip_publishes_when_the_quota_comes_back(self, tmp_path, monkeypatch):
+        config = self._config(tmp_path)
+        queue = self._queue_with(config, 1)
+        error = self._quota_error()
+        calls = []
+
+        def sometimes(queue_arg, entry, *args, **kwargs):
+            calls.append(1)
+            if len(calls) <= 4:
+                raise error
+            entry["publish_at"] = "2026-08-27T09:00:00Z"
+            return {"video_id": "vid-1"}
+
+        monkeypatch.setattr(publish_queue, "upload_and_schedule", sometimes)
+
+        moved = False
+        for _ in range(5):
+            # Four ticks against an exhausted quota, then the reset. The entry has to
+            # still be the one the selector hands over on that fifth tick.
+            entry = publish_queue.select_next_due(queue)
+            assert entry is not None
+            moved = publish_queue._upload_one(entry, queue, lambda: None, config)
+
+        assert moved is True
+        assert len(calls) == 5
+
+    def test_a_rate_limit_is_treated_the_same_way(self, tmp_path, monkeypatch):
+        config = self._config(tmp_path)
+        queue = self._queue_with(config, 1)
+        error = RuntimeError("slow down")
+        error.resp = type("R", (), {"status": 429})()
+        monkeypatch.setattr(publish_queue, "upload_and_schedule",
+                            lambda *a, **kw: (_ for _ in ()).throw(error))
+
+        for _ in range(4):
+            publish_queue._upload_one(queue["entries"][0], queue, lambda: None, config)
+
+        assert queue["entries"][0]["status"] != "blocked"
+
+    def test_a_real_fault_still_blocks(self, tmp_path, monkeypatch):
+        """The counter still has to do its job: a title over the limit is the clip's
+        fault and will be until somebody edits it."""
+        config = self._config(tmp_path)
+        queue = self._queue_with(config, 1)
+        monkeypatch.setattr(publish_queue, "upload_and_schedule",
+                            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("title too long")))
+
+        for _ in range(3):
+            publish_queue._upload_one(queue["entries"][0], queue, lambda: None, config)
+
+        assert queue["entries"][0]["status"] == "blocked"
+
+    def test_the_error_is_still_recorded(self, tmp_path, monkeypatch):
+        config = self._config(tmp_path)
+        queue = self._queue_with(config, 1)
+        error = self._quota_error()
+        monkeypatch.setattr(publish_queue, "upload_and_schedule",
+                            lambda *a, **kw: (_ for _ in ()).throw(error))
+
+        publish_queue._upload_one(queue["entries"][0], queue, lambda: None, config)
+
+        assert "quota" in queue["entries"][0]["last_error"].lower()
+        assert "[error]" in open(config.notifications_path, encoding="utf-8").read()
+
+
+class TestKillingABlockedEntryStaysLocal:
+    """An entry blocked before the insert has no video_id, so there is nothing on YouTube
+    to take down. BLOCKED was added to the status set and to the selector but not to the
+    kill path, so killing one opened a real OAuth session and then asked the API to update
+    the video with id None - the operator got a traceback and the entry stayed blocked."""
+
+    def test_no_service_is_built(self, tmp_path):
+        queue = {"entries": []}
+        entry = enqueue(queue, "clip0", "/v/0.mp4", "/m/0.json", "Заголовок", "описание", ["тег"])
+        entry["status"] = publish_queue.BLOCKED
+        entry["attempts"] = 3
+
+        def no_network():
+            raise AssertionError("a blocked entry has nothing to cancel remotely")
+
+        assert publish_queue.kill_item(queue, "clip0", no_network)["status"] == "killed"
+
+    def test_an_entry_with_a_video_id_still_goes_to_the_api(self, tmp_path):
+        """The guard is the missing video_id, not the status - a blocked entry that did
+        get as far as an insert has a real video to unschedule."""
+        queue = {"entries": []}
+        entry = enqueue(queue, "clip0", "/v/0.mp4", "/m/0.json", "Заголовок", "описание", ["тег"])
+        entry["status"] = publish_queue.BLOCKED
+        entry["video_id"] = "vid-1"
+        reached = []
+
+        with pytest.raises(Exception):
+            publish_queue.kill_item(
+                queue, "clip0", lambda: reached.append(1) or (_ for _ in ()).throw(RuntimeError("boom"))
+            )
+
+        assert reached == [1]
+
+
 class TestOneBadItemDoesNotStopTheQueue:
     """The docstring on _upload_one always promised this; the code raised instead.
 
@@ -1985,21 +2127,75 @@ class TestTheManifestSurvivesACrashMidWrite:
     somebody repairs it by hand, and the upload path writes this file two or three times
     per clip."""
 
-    def test_the_previous_manifest_survives_a_failed_write(self, tmp_path, monkeypatch):
+    def test_the_previous_manifest_survives_a_write_that_dies_half_way(self, tmp_path, monkeypatch):
+        """Cut off mid-write, with the bytes already going somewhere.
+
+        Stubbing the write so it raises before opening anything proves nothing: the old
+        implementation wrote straight to the target and would have passed that too, since
+        nothing was ever truncated. The failure has to happen with a partial document
+        already on disk, which is the only version of this that tells the two apart.
+        """
         path = str(tmp_path / "queue.json")
         good = {"entries": []}
         enqueue(good, "clip0", "/v/0.mp4", "/m/0.json", "Заголовок", "описание", ["тег"])
         save_queue(good, path)
 
-        def dies(self, *args, **kwargs):
-            raise OSError("no space left on device")
+        class DiesPartWay:
+            """Writes half the document and then runs out of disk."""
 
-        monkeypatch.setattr(publish_queue.Path, "write_text", dies)
+            def __init__(self, handle):
+                self._handle = handle
+
+            def write(self, text):
+                self._handle.write(text[: len(text) // 2])
+                raise OSError("no space left on device")
+
+            def flush(self):
+                self._handle.flush()
+
+            def fileno(self):
+                return self._handle.fileno()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self._handle.close()
+                return False
+
+        real_open = io.open
+
+        def half_write(file, mode="r", *args, **kwargs):
+            handle = real_open(file, mode, *args, **kwargs)
+            return DiesPartWay(handle) if "w" in str(mode) else handle
+
+        monkeypatch.setattr(publish_queue, "open", half_write, raising=False)
 
         with pytest.raises(OSError):
             save_queue({"entries": [], "мусор": True}, path)
 
+        monkeypatch.undo()
         assert load_queue(path)["entries"][0]["clip_id"] == "clip0"
+
+    def test_the_bytes_go_to_the_temporary_name_not_the_manifest(self, tmp_path, monkeypatch):
+        """The other half of the same guarantee: the target is never opened for writing,
+        so there is no window in which it holds half a document."""
+        path = str(tmp_path / "queue.json")
+        save_queue({"entries": []}, path)
+
+        opened = []
+        real_open = io.open
+
+        def spy(file, mode="r", *args, **kwargs):
+            if "w" in str(mode) or "a" in str(mode):
+                opened.append(str(file))
+            return real_open(file, mode, *args, **kwargs)
+
+        monkeypatch.setattr(publish_queue, "open", spy, raising=False)
+        save_queue({"entries": []}, path)
+        monkeypatch.undo()
+
+        assert opened == [path + ".tmp"]
 
     def test_no_temporary_file_is_left_where_the_loader_looks(self, tmp_path):
         path = str(tmp_path / "queue.json")

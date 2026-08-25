@@ -44,9 +44,11 @@ from scripts.tiktok_publish import (
 # --- Task 1: queue lifecycle -------------------------------------------
 
 
-def test_valid_statuses_contains_exactly_five_states():
+def test_valid_statuses_contains_exactly_six_states():
+    """Six since BLOCKED: an entry that has failed three times running is held out of
+    the selector so the queue behind it keeps moving."""
     assert VALID_STATUSES == frozenset(
-        {"queued", "uploading", "published", "killed", "paused"}
+        {"queued", "uploading", "published", "killed", "paused", "blocked"}
     )
 
 
@@ -965,7 +967,7 @@ def test_upload_one_success_appends_normal_notification_when_public(tmp_path):
     assert "SELF_ONLY" not in log_text
 
 
-def test_upload_one_appends_error_notification_and_reraises_on_failure(tmp_path):
+def test_upload_one_notifies_and_sets_the_entry_aside_on_failure(tmp_path):
     video_path = tmp_path / "clip.mp4"
     video_path.write_bytes(b"0123456789")
     queue_path = tmp_path / "tiktok_queue.json"
@@ -989,11 +991,18 @@ def test_upload_one_appends_error_notification_and_reraises_on_failure(tmp_path)
         FakeResponse({"data": {"status": "FAILED", "fail_reason": "video too long"}}),
     ])
 
-    with pytest.raises(RuntimeError):
-        _upload_one(entry, queue, lambda: "token", config, session=session)
+    # Loud but not fatal: it used to re-raise, and since --check has no catch-all that
+    # killed the whole run - so the same entry was picked and failed again every tick and
+    # nothing behind it was ever published.
+    _upload_one(entry, queue, lambda: "token", config, session=session)
 
     log_text = notifications_path.read_text(encoding="utf-8")
     assert "[error]" in log_text
+    assert entry["attempts"] == 1
+    # Still UPLOADING - the failure happened after the entry was claimed, and
+    # reconcile_all_uploading is what resolves that on the next tick. What matters here
+    # is that it was not blocked on its first failure and that the run did not die.
+    assert entry["status"] != "blocked"
 
 
 def test_upload_one_dry_run_does_not_notify(tmp_path):

@@ -10,6 +10,7 @@ import datetime as dt
 import os
 import pathlib
 import tempfile
+import types
 
 import pytest
 
@@ -353,3 +354,83 @@ class TestAFileLeftFromAnEarlierRunIsNotTrusted:
     def test_a_missing_file_is_not_reused(self):
         directory = tempfile.mkdtemp()
         assert session.already_joined([], os.path.join(directory, "nope.mkv")) is False
+
+
+class TestARebuildCannotDestroyWhatItIsReplacing:
+    """ffmpeg's -y truncates its output before it reads a byte of input.
+
+    Writing the join straight to its destination meant a rebuild wiped whatever was
+    already there before finding out whether it could produce a replacement - so one part
+    being briefly unreadable (a backup holding it open, an antivirus scan) turned
+    yesterday's good joined file into a stub, with the originals long since deleted.
+    """
+
+    def _parts(self, directory):
+        paths = [os.path.join(directory, f"p{n}.mkv") for n in (1, 2)]
+        for path in paths:
+            with open(path, "wb") as f:
+                f.write(b"x" * 1000)
+        return paths
+
+    def test_a_failed_join_leaves_the_old_file_alone(self, monkeypatch):
+        directory = tempfile.mkdtemp()
+        parts = self._parts(directory)
+        destination = os.path.join(directory, "joined.mkv")
+        with open(destination, "wb") as f:
+            f.write(b"yesterday's good join")
+
+        def ffmpeg_fails(*args, **kwargs):
+            return types.SimpleNamespace(returncode=1, stderr="Invalid data found")
+
+        monkeypatch.setattr(session.subprocess, "run", ffmpeg_fails)
+
+        with pytest.raises(session.SessionError):
+            session.join(parts, destination)
+
+        with open(destination, "rb") as f:
+            assert f.read() == b"yesterday's good join"
+
+    def test_a_join_that_does_not_match_leaves_the_old_file_alone(self, monkeypatch):
+        """The check failing is the other way in - and the message promises the bad copy
+        is kept for inspection, which was not true while it was overwriting the good one."""
+        directory = tempfile.mkdtemp()
+        parts = self._parts(directory)
+        destination = os.path.join(directory, "joined.mkv")
+        with open(destination, "wb") as f:
+            f.write(b"yesterday's good join")
+
+        def ffmpeg_writes_a_stub(command, **kwargs):
+            with open(command[-1], "wb") as f:
+                f.write(b"x" * 10)
+            return types.SimpleNamespace(returncode=0, stderr="")
+
+        monkeypatch.setattr(session.subprocess, "run", ffmpeg_writes_a_stub)
+        monkeypatch.setattr(session, "probe_duration", lambda path: 1.0)
+
+        with pytest.raises(session.SessionError):
+            session.join(parts, destination)
+
+        with open(destination, "rb") as f:
+            assert f.read() == b"yesterday's good join"
+
+    def test_a_join_that_passes_replaces_it(self, monkeypatch):
+        directory = tempfile.mkdtemp()
+        parts = self._parts(directory)
+        destination = os.path.join(directory, "joined.mkv")
+        with open(destination, "wb") as f:
+            f.write(b"yesterday's good join")
+
+        def ffmpeg_writes_the_whole_thing(command, **kwargs):
+            with open(command[-1], "wb") as f:
+                f.write(b"x" * 2000)
+            return types.SimpleNamespace(returncode=0, stderr="")
+
+        monkeypatch.setattr(session.subprocess, "run", ffmpeg_writes_the_whole_thing)
+        monkeypatch.setattr(
+            session, "probe_duration", lambda path: 20.0 if path.endswith(".part") else 10.0
+        )
+
+        assert session.join(parts, destination) == destination
+        with open(destination, "rb") as f:
+            assert f.read() == b"x" * 2000
+        assert not os.path.exists(destination + ".part")

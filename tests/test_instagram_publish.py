@@ -52,9 +52,11 @@ from scripts.instagram_publish import (
 # --- Task 1: queue lifecycle -------------------------------------------
 
 
-def test_valid_statuses_contains_exactly_five_states():
+def test_valid_statuses_contains_exactly_six_states():
+    """Six since BLOCKED: an entry that has failed three times running is held out of
+    the selector so the queue behind it keeps moving."""
     assert VALID_STATUSES == frozenset(
-        {"queued", "uploading", "published", "killed", "paused"}
+        {"queued", "uploading", "published", "killed", "paused", "blocked"}
     )
 
 
@@ -937,7 +939,7 @@ def test_upload_and_publish_instagram_access_error_propagates_unchanged(tmp_path
         )
 
 
-def test_upload_one_instagram_access_error_notified_and_reraised(tmp_path):
+def test_upload_one_instagram_access_error_notified_and_set_aside(tmp_path):
     video_path = tmp_path / "clip.mp4"
     video_path.write_bytes(b"0123456789")
     queue_path = tmp_path / "instagram_queue.json"
@@ -961,11 +963,18 @@ def test_upload_one_instagram_access_error_notified_and_reraised(tmp_path):
         ),
     ])
 
-    with pytest.raises(InstagramAccessError):
-        _upload_one(entry, queue, lambda: "access-token-123", config, ig_user_id="ig-user-1", session=session)
+    # Loud but not fatal: it used to re-raise, and since --check has no catch-all that
+    # killed the whole run - so the same entry was picked and failed again every tick and
+    # nothing behind it was ever published.
+    _upload_one(entry, queue, lambda: "access-token-123", config, ig_user_id="ig-user-1", session=session)
 
     log_text = notifications_path.read_text(encoding="utf-8")
     assert "advanced access" in log_text.lower() or "permission" in log_text.lower()
+    assert entry["attempts"] == 1
+    # Still UPLOADING - the failure happened after the entry was claimed, and
+    # reconcile_all_uploading is what resolves that on the next tick. What matters here
+    # is that it was not blocked on its first failure and that the run did not die.
+    assert entry["status"] != "blocked"
 
 
 def test_upload_one_success_appends_normal_notification(tmp_path):
