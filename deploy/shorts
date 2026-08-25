@@ -57,6 +57,15 @@ interactive=()
 env_file=()
 [ -f "$ROOT/.env" ] && env_file=(--env-file "$ROOT/.env")
 
+# Run as whoever called this rather than as root inside the container. Transcripts and
+# clips land on a share the desktop reaches over the network, and root-owned files there
+# are files you can look at but not tidy up.
+#
+# A container user with no home directory needs one it can write to, or every library that
+# caches something falls over on the first write. /cache is the mounted one, so HOME and
+# the cache both point at a directory this user owns.
+as_you=(--user "$(id -u):$(id -g)" -e HOME=/cache/home -e XDG_CACHE_HOME=/cache)
+
 case "${1}" in
     shell) shift; set -- bash "$@" ;;
     ingest) shift; set -- python3 scripts/ingest.py "$@" ;;
@@ -71,7 +80,8 @@ docker run --rm \
     "${interactive[@]}" \
     --gpus "device=$GPU" \
     "${env_file[@]}" \
-    -v "$ROOT/cache:/root/.cache" \
+    "${as_you[@]}" \
+    -v "$ROOT/cache:/cache" \
     -v "$ROOT/config.server.yaml:/app/config.yaml:ro" \
     -v "$ROOT/work:/app/work" \
     -v "$MEDIA/recordings:/media/recordings:ro" \
