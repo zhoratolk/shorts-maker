@@ -72,6 +72,12 @@ case "${1}" in
     render) shift; set -- python3 scripts/render_batch.py "$@" ;;
 esac
 
+# The code is mounted over the copy baked into the image on purpose: the image carries the
+# dependencies, this checkout carries the code. Without it every one-line fix needs a
+# rebuild - and worse, an edit made here runs as the old version with no sign anything is
+# stale, which is exactly how a script fixed once failed again on the next pass.
+# Read-only, because nothing in a run has any business editing the source.
+#
 # Not `exec`. Replacing this shell with docker would take the EXIT trap above with it, so
 # the claim file would never be removed and the heartbeat would outlive the run - the card
 # would stay out of the queue until the claim expired, every single time.
@@ -83,6 +89,8 @@ docker run --rm \
     "${as_you[@]}" \
     -v "$ROOT/cache:/cache" \
     -v "$ROOT/config.server.yaml:/app/config.yaml:ro" \
+    -v "$ROOT/scripts:/app/scripts:ro" \
+    -v "$ROOT/deploy:/app/deploy:ro" \
     -v "$ROOT/work:/app/work" \
     -v "$MEDIA/recordings:/media/recordings:ro" \
     -v "$MEDIA/clips:/media/clips" \
