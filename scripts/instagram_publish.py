@@ -36,6 +36,7 @@ lightweight, always-installed dependency, not an optional extra.
 import argparse
 import http.server
 import json
+import os
 import random
 import re
 import string
@@ -160,12 +161,19 @@ def load_queue(path: str = DEFAULT_QUEUE_PATH) -> dict[str, Any]:
 def save_queue(queue: dict[str, Any], path: str = DEFAULT_QUEUE_PATH) -> None:
     """Writes the queue manifest as human-readable UTF-8 JSON, creating
     parent directories as needed (matches scripts/publish_queue.py exactly).
+
+    Written beside the target and moved into place: a plain write truncates
+    first, so a crash mid-write leaves half a JSON document, and the loader
+    deliberately refuses to parse a broken manifest rather than silently
+    re-publishing everything.
     """
     queue_file = Path(path)
     queue_file.parent.mkdir(parents=True, exist_ok=True)
-    queue_file.write_text(
+    temporary = queue_file.with_name(queue_file.name + ".tmp")
+    temporary.write_text(
         json.dumps(queue, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    os.replace(temporary, queue_file)
 
 
 def enqueue(

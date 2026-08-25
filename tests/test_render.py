@@ -944,6 +944,16 @@ def test_build_transition_filter_glitch_returns_pixelize_chain_with_rgbashift_an
     assert result.endswith("[vout]")
 
 
+def test_build_transition_filter_glitch_only_dirties_the_seam():
+    """Both effects sit downstream of xfade, so without a gate they process every frame
+    that passes through - the whole rest of the clip. A single glitched boundary then
+    leaves the entire short with shifted channels and grain, which reads as a broken
+    render rather than as an edit."""
+    result = build_transition_filter("glitch", duration=0.2, offset=1.0, in_a="vA", in_b="vB", out_label="vout")
+
+    assert result.count("enable='between(t\\,1.0\\,1.2)'") == 2
+
+
 def test_build_transition_filter_cut_returns_none():
     assert build_transition_filter("cut", duration=0.35, offset=1.0, in_a="vA", in_b="vB", out_label="vout") is None
 

@@ -12,6 +12,7 @@ path is added).
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -24,8 +25,21 @@ SCHEDULED = "scheduled"
 PUBLISHED = "published"
 KILLED = "killed"
 PAUSED = "paused"
+# An entry that failed the same way too many times. Set aside rather than retried
+# forever, because select_next_due always picks the lowest seq: an entry that fails
+# deterministically - a title over 100 characters, a deleted file, a revoked token - is
+# chosen again on every tick, and nothing behind it is ever published. That is the same
+# outcome as the incident this queue was built after, reached by a different road.
+BLOCKED = "blocked"
 
-VALID_STATUSES = frozenset({QUEUED, UPLOADING, SCHEDULED, PUBLISHED, KILLED, PAUSED})
+VALID_STATUSES = frozenset(
+    {QUEUED, UPLOADING, SCHEDULED, PUBLISHED, KILLED, PAUSED, BLOCKED}
+)
+
+# How many times an entry may fail before it is set aside. Three, because a transient
+# failure - a 5xx, a dropped connection - rarely repeats three times in a row, while a
+# deterministic one repeats every time.
+MAX_UPLOAD_ATTEMPTS = 3
 
 # Queue manifest + notification-log locations (paths only - no file is
 # created by importing this module).
@@ -76,12 +90,24 @@ def load_queue(path: str = DEFAULT_QUEUE_PATH) -> dict[str, Any]:
 def save_queue(queue: dict[str, Any], path: str = DEFAULT_QUEUE_PATH) -> None:
     """Writes the queue manifest as human-readable UTF-8 JSON, creating
     parent directories as needed (matches youtube_analytics.py's cache-
-    writing style: ensure_ascii=False, indent=2)."""
+    writing style: ensure_ascii=False, indent=2).
+
+    Written beside the target and moved into place, because a plain write
+    truncates first: a crash or a power cut in the middle leaves half a JSON
+    document, and load_queue deliberately refuses to parse a broken manifest
+    (T-03-03) rather than silently re-publishing everything. That combination
+    stops the whole publish path until somebody repairs the file by hand - and
+    the upload path writes this file two or three times per clip, so the window
+    is not as small as it sounds. os.replace is atomic on both platforms this
+    runs on.
+    """
     queue_file = Path(path)
     queue_file.parent.mkdir(parents=True, exist_ok=True)
-    queue_file.write_text(
+    temporary = queue_file.with_name(queue_file.name + ".tmp")
+    temporary.write_text(
         json.dumps(queue, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    os.replace(temporary, queue_file)
 
 
 def default_thumbnail_path(video_path: str) -> str:
@@ -516,19 +542,35 @@ def pause_item(queue: dict[str, Any], clip_id: str) -> dict[str, Any]:
 
 
 def resume_item(queue: dict[str, Any], clip_id: str) -> dict[str, Any]:
-    """Flips a PAUSED entry back to QUEUED so it becomes eligible again."""
+    """Flips a PAUSED or BLOCKED entry back to QUEUED so it becomes eligible again.
+
+    The attempt counter is cleared with it. A blocked entry is resumed because
+    somebody fixed what was wrong with it, and leaving the count at the limit
+    would set it aside again on the first hiccup after that.
+    """
     entry = _find_entry(queue, clip_id)
     entry["status"] = QUEUED
+    entry["attempts"] = 0
+    entry.pop("last_error", None)
     entry["updated_at"] = datetime.now(timezone.utc).isoformat()
     return entry
 
 
-def select_next_due(queue: dict[str, Any]) -> dict[str, Any] | None:
+def select_next_due(
+    queue: dict[str, Any], skip: frozenset[str] = frozenset()
+) -> dict[str, Any] | None:
     """Returns the lowest-seq QUEUED entry, or None if nothing is eligible.
-    PAUSED and KILLED entries are never returned - a paused item is never
-    picked by the periodic-check "next due item" selection (PUB-04).
+    PAUSED, KILLED and BLOCKED entries are never returned - a paused item is
+    never picked by the periodic-check "next due item" selection (PUB-04).
+
+    `skip` holds clip_ids already tried and failed in this batch. Without it the
+    caller's loop would hand the same lowest-seq entry back on every iteration
+    now that a failure no longer raises out of the loop.
     """
-    eligible = [entry for entry in queue["entries"] if entry["status"] == QUEUED]
+    eligible = [
+        entry for entry in queue["entries"]
+        if entry["status"] == QUEUED and entry["clip_id"] not in skip
+    ]
     if not eligible:
         return None
     return min(eligible, key=lambda entry: entry["seq"])
@@ -575,13 +617,53 @@ def verify_killed(service, video_id: str) -> bool:
     return fetch_privacy_status(service, video_id) == "private"
 
 
+def _error_reason(error: Exception) -> str:
+    """The machine-readable `reason` from an API error body, or "" if absent.
+
+    Read rather than the human message so a localized or reworded body still
+    classifies correctly - the reason string is part of the API contract.
+    """
+    for detail in getattr(error, "error_details", None) or []:
+        if isinstance(detail, dict) and detail.get("reason"):
+            return str(detail["reason"])
+    content = getattr(error, "content", None)
+    if not content:
+        return ""
+    try:
+        if isinstance(content, bytes):
+            content = content.decode("utf-8", "replace")
+        errors = json.loads(content).get("error", {}).get("errors") or []
+        return str(errors[0].get("reason", "")) if errors else ""
+    except (ValueError, AttributeError, IndexError):
+        return ""
+
+
+# A 403 that means "this video is not yours / not reachable" and therefore cannot be
+# unscheduled. Everything else the API answers 403 to - an exhausted daily quota, a token
+# without videos.update, a rate limit - is a live video and a real failure.
+GONE_403_REASONS = frozenset({"forbidden", "videoNotFound"})
+
+
 def _video_is_gone(error: Exception) -> bool:
     """True for the API error raised when the video id no longer exists.
-    Matched on the response status rather than the message so a localized or
-    reworded body still reads correctly; anything else is a real failure.
+
+    404 is unambiguous. 403 is not, and treating it as "gone" was dangerous in
+    exactly one direction: an exhausted quota during --kill marked the entry
+    KILLED with "video already absent" while the video was alive and still
+    scheduled. The operator believes the release is cancelled, and it publishes
+    on schedule anyway - the worst failure mode a safety switch can have. The
+    file already knew 403 was ambiguous: see the UPLOAD_SCOPE note above, where
+    videos.update answers 403 insufficientPermissions under a narrow scope.
+
+    An unrecognised 403 counts as a real failure, because a kill that loudly did
+    not work is recoverable and a kill that silently did not work is not.
     """
     status = getattr(getattr(error, "resp", None), "status", None)
-    return status in (403, 404)
+    if status == 404:
+        return True
+    if status != 403:
+        return False
+    return _error_reason(error) in GONE_403_REASONS
 
 
 def kill_item(queue: dict[str, Any], clip_id: str, service_factory) -> dict[str, Any]:
@@ -895,13 +977,23 @@ def upload_batch(
     # slots this queue never knew about need carrying across iterations.
     extra_scheduled = fetch_channel_scheduled_slots(service_factory())
 
+    # Entries this batch already tried and failed. A failure no longer raises, so without
+    # this the loop would keep selecting the same lowest-seq entry and never terminate.
+    failed: set[str] = set()
+
     while limit is None or len(uploaded) < limit:
         queue = load_queue(config.queue_path)
-        entry = select_next_due(queue)
+        entry = select_next_due(queue, frozenset(failed))
         if entry is None:
             break
-        _upload_one(entry, queue, service_factory, config, thumbnail_upload, extra_scheduled)
-        uploaded.append(entry)
+        if _upload_one(entry, queue, service_factory, config, thumbnail_upload,
+                       extra_scheduled):
+            uploaded.append(entry)
+        else:
+            # The rest of the batch is still worth uploading: the operator asked for
+            # these clips to go up, and one bad title should not hold back nine good
+            # clips. The failure is already in the notification log.
+            failed.add(entry["clip_id"])
     return uploaded
 
 
@@ -912,12 +1004,15 @@ def _upload_one(
     config,
     thumbnail_upload: bool = True,
     extra_scheduled: list[str] | None = None,
-) -> None:
+) -> bool:
     """Shared upload step for both --check and --now: calls the exact same
     upload_and_schedule() (Plan 02) and appends the matching notification
     line - the two trigger paths never diverge (D-05, T-03-14 key link).
     Errors are caught here (not re-raised) so a single bad item doesn't
     crash the whole periodic check; an error line is appended instead.
+
+    Returns whether the entry moved on. The caller needs to know: a batch loop
+    that cannot tell success from failure would re-select the same entry.
     """
     try:
         result = upload_and_schedule(
@@ -929,14 +1024,32 @@ def _upload_one(
         append_notification(
             _error_notification_text(entry, str(error)), config.notifications_path
         )
-        raise
+        # Counted and set aside rather than re-raised. The docstring above always promised
+        # that one bad item would not stop the periodic check, but the raise meant the
+        # opposite: select_next_due picks the lowest seq every tick, so an entry that
+        # fails the same way each time is chosen forever and nothing behind it is ever
+        # published. Ten clips once sat in this queue for two days looking enqueued.
+        entry["attempts"] = entry.get("attempts", 0) + 1
+        entry["last_error"] = str(error)[:500]
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+        if entry["attempts"] >= MAX_UPLOAD_ATTEMPTS:
+            entry["status"] = BLOCKED
+            append_notification(
+                f"[{entry['clip_id']}] отложен после {entry['attempts']} неудач: "
+                f"{entry['last_error']}. Очередь идёт дальше; вернуть — "
+                f"--resume {entry['clip_id']}",
+                config.notifications_path,
+            )
+        save_queue(queue, config.queue_path)
+        return False
 
     if isinstance(result, dict) and result.get("dry_run"):
         print("dry-run: skipped (opt-in disabled)")
-        return
+        return False
 
     append_notification(_success_notification_text(entry), config.notifications_path)
     print(_success_notification_text(entry))
+    return True
 
 
 def build_argument_parser() -> argparse.ArgumentParser:

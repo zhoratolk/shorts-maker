@@ -7,8 +7,12 @@ from pathlib import Path
 
 import pytest
 
+from scripts import publish_queue
+
 from scripts.publish_queue import (
+    BLOCKED,
     KILLED,
+    MAX_UPLOAD_ATTEMPTS,
     PAUSED,
     PUBLISHED,
     QUEUED,
@@ -45,9 +49,11 @@ from scripts.publish_queue import (
 )
 
 
-def test_valid_statuses_contains_exactly_six_states():
+def test_valid_statuses_contains_exactly_seven_states():
+    """`blocked` joined the set: an entry that keeps failing the same way is set aside
+    so the queue behind it keeps moving, instead of being retried on every tick."""
     assert VALID_STATUSES == frozenset(
-        {"queued", "uploading", "scheduled", "published", "killed", "paused"}
+        {"queued", "uploading", "scheduled", "published", "killed", "paused", "blocked"}
     )
 
 
@@ -1803,3 +1809,200 @@ def test_reconcile_all_scheduled_adopts_youtubes_publish_at_when_it_was_moved():
     entry = queue["entries"][0]
     assert entry["status"] == SCHEDULED
     assert entry["publish_at"] == "2026-08-25T01:00:00Z"
+
+
+class TestOneBadItemDoesNotStopTheQueue:
+    """The docstring on _upload_one always promised this; the code raised instead.
+
+    select_next_due picks the lowest seq every tick, so an entry that fails the same way
+    each time - a title over 100 characters, a deleted file, a revoked token - was chosen
+    again forever and nothing behind it was ever published. That is the incident this
+    queue was built after, reached by a different road.
+    """
+
+    def _config(self, tmp_path, enabled=True):
+        class _Config:
+            queue_path = str(tmp_path / "queue.json")
+            notifications_path = str(tmp_path / "notifications.log")
+
+        _Config.enabled = enabled
+        return _Config()
+
+    def _queue_with(self, config, count):
+        queue = {"entries": []}
+        for n in range(count):
+            enqueue(queue, f"clip{n}", f"/v/{n}.mp4", f"/m/{n}.json",
+                    f"Заголовок {n}", "описание", ["тег"])
+        save_queue(queue, config.queue_path)
+        return queue
+
+    def test_a_failure_no_longer_escapes_the_call(self, tmp_path, monkeypatch):
+        config = self._config(tmp_path)
+        queue = self._queue_with(config, 1)
+        monkeypatch.setattr(publish_queue, "upload_and_schedule",
+                            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("title too long")))
+
+        moved = publish_queue._upload_one(queue["entries"][0], queue, lambda: None, config)
+
+        assert moved is False
+
+    def test_the_failure_is_counted_on_the_entry(self, tmp_path, monkeypatch):
+        config = self._config(tmp_path)
+        queue = self._queue_with(config, 1)
+        monkeypatch.setattr(publish_queue, "upload_and_schedule",
+                            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("boom")))
+
+        publish_queue._upload_one(queue["entries"][0], queue, lambda: None, config)
+
+        entry = load_queue(config.queue_path)["entries"][0]
+        assert entry["attempts"] == 1
+        assert "boom" in entry["last_error"]
+        assert entry["status"] == QUEUED
+
+    def test_it_is_set_aside_after_the_third_failure(self, tmp_path, monkeypatch):
+        config = self._config(tmp_path)
+        queue = self._queue_with(config, 1)
+        monkeypatch.setattr(publish_queue, "upload_and_schedule",
+                            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("boom")))
+
+        for _ in range(MAX_UPLOAD_ATTEMPTS):
+            queue = load_queue(config.queue_path)
+            publish_queue._upload_one(queue["entries"][0], queue, lambda: None, config)
+
+        assert load_queue(config.queue_path)["entries"][0]["status"] == BLOCKED
+
+    def test_a_blocked_entry_is_never_selected(self, tmp_path):
+        config = self._config(tmp_path)
+        queue = self._queue_with(config, 2)
+        queue["entries"][0]["status"] = BLOCKED
+
+        assert select_next_due(queue)["clip_id"] == "clip1"
+
+    def test_resuming_clears_the_count(self, tmp_path):
+        """Somebody fixed whatever was wrong. Leaving the counter at the limit would set
+        the entry aside again on the first hiccup after that."""
+        config = self._config(tmp_path)
+        queue = self._queue_with(config, 1)
+        queue["entries"][0].update(status=BLOCKED, attempts=3, last_error="boom")
+
+        entry = resume_item(queue, "clip0")
+
+        assert entry["status"] == QUEUED
+        assert entry["attempts"] == 0
+        assert "last_error" not in entry
+
+    def test_a_batch_gets_past_a_bad_item(self, tmp_path, monkeypatch):
+        """Nine good clips must not wait on one bad title - and the loop must terminate,
+        which it would not if the same entry were selected every iteration."""
+        config = self._config(tmp_path)
+        self._queue_with(config, 3)
+
+        def upload(queue, entry, *a, **kw):
+            if entry["clip_id"] == "clip0":
+                raise RuntimeError("title too long")
+            entry["status"] = PUBLISHED
+            entry["publish_at"] = "2026-08-26T18:00:00Z"
+            save_queue(queue, config.queue_path)
+            return {}
+
+        monkeypatch.setattr(publish_queue, "upload_and_schedule", upload)
+        monkeypatch.setattr(publish_queue, "reconcile_all_uploading", lambda *a, **kw: None)
+        monkeypatch.setattr(publish_queue, "reconcile_all_scheduled", lambda *a, **kw: None)
+        monkeypatch.setattr(publish_queue, "fetch_channel_scheduled_slots", lambda service: [])
+
+        uploaded = publish_queue.upload_batch(lambda: None, config)
+
+        assert [entry["clip_id"] for entry in uploaded] == ["clip1", "clip2"]
+
+    def test_the_selection_can_skip_what_already_failed(self, tmp_path):
+        config = self._config(tmp_path)
+        queue = self._queue_with(config, 2)
+
+        assert select_next_due(queue, frozenset({"clip0"}))["clip_id"] == "clip1"
+
+
+class TestAQuotaErrorIsNotAMissingVideo:
+    """403 covers an exhausted quota and a token without videos.update as well as a
+    video that is not ours. Reading all of them as "already gone" marked entries KILLED
+    while the video was alive and still scheduled - the operator believes the release is
+    cancelled and it publishes anyway."""
+
+    class _Error(Exception):
+        def __init__(self, status, reason=None, content=None):
+            super().__init__("api error")
+            self.resp = type("Resp", (), {"status": status})()
+            if reason is not None:
+                self.error_details = [{"reason": reason}]
+            if content is not None:
+                self.content = content
+
+    def test_a_deleted_video_is_gone(self):
+        assert publish_queue._video_is_gone(self._Error(404)) is True
+
+    def test_an_exhausted_quota_is_not_gone(self):
+        assert publish_queue._video_is_gone(
+            self._Error(403, "quotaExceeded")) is False
+
+    def test_a_token_without_permission_is_not_gone(self):
+        """The exact case the UPLOAD_SCOPE comment in this module describes."""
+        assert publish_queue._video_is_gone(
+            self._Error(403, "insufficientPermissions")) is False
+
+    def test_a_video_that_is_not_ours_is_gone(self):
+        assert publish_queue._video_is_gone(self._Error(403, "forbidden")) is True
+
+    def test_an_unrecognised_403_is_treated_as_a_real_failure(self):
+        """A kill that loudly did not work is recoverable; one that silently did not
+        work is not."""
+        assert publish_queue._video_is_gone(self._Error(403, "somethingNew")) is False
+
+    def test_the_reason_is_read_from_the_body_too(self):
+        body = b'{"error": {"errors": [{"reason": "quotaExceeded"}], "code": 403}}'
+        assert publish_queue._video_is_gone(self._Error(403, content=body)) is False
+
+    def test_a_kill_during_a_quota_outage_raises_instead_of_lying(self, tmp_path):
+        queue = {"entries": []}
+        enqueue(queue, "clip0", "/v/0.mp4", "/m/0.json", "Заголовок", "описание", ["тег"])
+        entry = queue["entries"][0]
+        entry.update(status=SCHEDULED, video_id="vid123")
+        error = self._Error(403, "quotaExceeded")
+
+        def service_factory():
+            class _Service:
+                def videos(self):
+                    raise error
+            return _Service()
+
+        with pytest.raises(Exception):
+            kill_item(queue, "clip0", service_factory)
+
+        assert queue["entries"][0]["status"] == SCHEDULED
+
+
+class TestTheManifestSurvivesACrashMidWrite:
+    """load_queue refuses to parse a broken manifest on purpose - a silent reset would
+    re-publish everything. So a half-written file stops the entire publish path until
+    somebody repairs it by hand, and the upload path writes this file two or three times
+    per clip."""
+
+    def test_the_previous_manifest_survives_a_failed_write(self, tmp_path, monkeypatch):
+        path = str(tmp_path / "queue.json")
+        good = {"entries": []}
+        enqueue(good, "clip0", "/v/0.mp4", "/m/0.json", "Заголовок", "описание", ["тег"])
+        save_queue(good, path)
+
+        def dies(self, *args, **kwargs):
+            raise OSError("no space left on device")
+
+        monkeypatch.setattr(publish_queue.Path, "write_text", dies)
+
+        with pytest.raises(OSError):
+            save_queue({"entries": [], "мусор": True}, path)
+
+        assert load_queue(path)["entries"][0]["clip_id"] == "clip0"
+
+    def test_no_temporary_file_is_left_where_the_loader_looks(self, tmp_path):
+        path = str(tmp_path / "queue.json")
+        save_queue({"entries": []}, path)
+
+        assert not (tmp_path / "queue.json.tmp").exists()

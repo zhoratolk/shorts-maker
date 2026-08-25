@@ -67,9 +67,16 @@ def build_transition_filter(
         # 04-RESEARCH.md Pattern 4: no single native xfade transition reads as
         # "glitch" - blend on a pixelize xfade then layer an RGB channel split
         # and noise on top for the transition's duration.
+        # Both effects are gated to the transition window. Without `enable` they sit
+        # downstream of xfade in the chain and therefore process every frame that passes
+        # through it - the whole rest of the clip, not the seam. One boundary then left
+        # the entire short with shifted colour channels and grain, which reads as a
+        # broken render rather than as an edit.
+        window = f"between(t\\,{offset}\\,{offset + duration})"
         return (
             f"[{in_a}][{in_b}]xfade=transition=pixelize:duration={duration}:offset={offset},"
-            f"rgbashift=rh=8:bh=-8:edge=smear,noise=alls=25:allf=t+u[{out_label}]"
+            f"rgbashift=rh=8:bh=-8:edge=smear:enable='{window}',"
+            f"noise=alls=25:allf=t+u:enable='{window}'[{out_label}]"
         )
 
     xfade_name = _XFADE_TRANSITION_NAMES[transition_type]
