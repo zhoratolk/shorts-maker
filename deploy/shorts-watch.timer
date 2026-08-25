@@ -1,0 +1,13 @@
+[Unit]
+Description=Checks for new recordings every ten minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+# The recording has to sit untouched for ten minutes before it counts as finished
+# anyway, so checking more often would only find the same unfinished file sooner.
+AccuracySec=1min
+Unit=shorts-watch.service
+
+[Install]
+WantedBy=timers.target

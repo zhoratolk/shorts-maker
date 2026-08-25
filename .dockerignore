@@ -1,0 +1,19 @@
+# The build context is the repository root, and most of what is in it is data rather than
+# code: work/ alone holds every transcript, chunk and frame ever extracted. Sending it to
+# the daemon would make each build minutes slower for nothing.
+work/
+data/
+assets/
+.git/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Credentials. These are per-machine and are mounted at run time through the env file,
+# never baked into an image that could then be copied somewhere else.
+*token*.json
+client_secret.json
+tiktok_client_key.json
+.env

@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Runs a stage of the pipeline on the server's GPU, holding the card while it runs.
+#
+#   shorts ingest  /media/recordings/2026-08-25.mkv
+#   shorts render  --plan work/<stem>/PLAN.json ...
+#   shorts shell                                  # a prompt inside the image
+#
+# The card is borrowed rather than taken. While this runs, a claim file tells the
+# business queue on this machine to send new work to the other card; when this exits -
+# normally, by Ctrl-C, or by being killed - the claim goes away and the card is back in
+# the pool within seconds.
+#
+# The claim is written here in shell rather than by calling the business project's
+# helper, deliberately: what the two projects share is a file format, not a program. A
+# claim is a file with a name and a fresh timestamp, and anything that can touch a file
+# can hold a card.
+set -euo pipefail
+
+IMAGE=${SHORTS_IMAGE:-shorts-maker:latest}
+GPU=${SHORTS_GPU:-1}
+CLAIMS=${GPU_CLAIMS_DIR:-/srv/work/gpu-claims}
+ROOT=${SHORTS_ROOT:-/srv/shorts-maker}
+MEDIA=${SHORTS_MEDIA:-/srv/media}
+
+if [ $# -eq 0 ]; then
+    echo "usage: shorts <ingest|render|shell|python3|...> [args...]" >&2
+    exit 2
+fi
+
+mkdir -p "$CLAIMS" "$ROOT/work" "$MEDIA/clips" "$MEDIA/recordings"
+
+claim="$CLAIMS/gpu$GPU"
+echo "shorts-maker pid=$$" > "$claim"
+
+# The reader treats a claim older than two minutes as abandoned, so a beat every thirty
+# seconds can miss three in a row - to a loaded machine or a stalled disk - before the
+# card is handed back while this is still using it.
+( while sleep 30; do touch "$claim" 2>/dev/null || exit 0; done ) &
+heartbeat=$!
+
+# Runs on every exit path there is, which is the whole point: a claim left behind keeps a
+# card out of the queue until it expires, and the queue is the side with paying work.
+cleanup() {
+    kill "$heartbeat" 2>/dev/null || true
+    rm -f "$claim"
+}
+trap cleanup EXIT INT TERM
+
+# -it only when there is a terminal to attach to: the same script is meant to be callable
+# from a watcher or a timer, where -i on a closed stdin makes docker fail outright.
+interactive=()
+[ -t 0 ] && interactive=(-it)
+
+env_file=()
+[ -f "$ROOT/.env" ] && env_file=(--env-file "$ROOT/.env")
+
+case "${1}" in
+    shell) shift; set -- bash "$@" ;;
+    ingest) shift; set -- python3 scripts/ingest.py "$@" ;;
+    render) shift; set -- python3 scripts/render_batch.py "$@" ;;
+esac
+
+exec docker run --rm \
+    "${interactive[@]}" \
+    --gpus "device=$GPU" \
+    "${env_file[@]}" \
+    -v "$ROOT/config.server.yaml:/app/config.yaml:ro" \
+    -v "$ROOT/work:/app/work" \
+    -v "$MEDIA/recordings:/media/recordings:ro" \
+    -v "$MEDIA/clips:/media/clips" \
+    "$IMAGE" "$@"

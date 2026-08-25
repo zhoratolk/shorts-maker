@@ -1,0 +1,12 @@
+[Unit]
+Description=Joins finished recordings and transcribes them on the borrowed GPU
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=zhora
+# A three hour stream can take a while to transcribe, and the pass holds the card the
+# whole time. Nothing here should be killed for taking long.
+TimeoutStartSec=infinity
+ExecStart=/usr/local/bin/shorts-watch

@@ -1,0 +1,271 @@
+# Server copy of config.yaml. The desktop keeps its own; this one differs only where
+# the machine differs - where the recordings live, and where the fonts live.
+#
+# whisper.model is deliberately left as it is on the desktop. The card here could hold
+# large-v3 comfortably, but that changes what the transcripts say and therefore which
+# moments get found, so it is a decision to make on purpose rather than a side effect of
+# moving house.
+
+input_dir: "/media/recordings"
+output_dir: "/media/clips"
+
+whisper:
+  model: medium        # tiny | base | small | medium | large-v3
+  device: cuda          # auto | cuda | cpu
+  language: auto        # auto, or a fixed language code like "ru"
+
+analysis:
+  # Chunk size for pass-1 candidate search. Recommended range: 20-45 minutes.
+  # Smaller = more precise candidates but more subagent calls (slower/pricier).
+  # Larger = cheaper but risks missing a short moment inside a big block.
+  chunk_minutes: 35
+  # Parallel subagents per chunk (recommended). false = one sequential pass
+  # over the whole transcript instead - simpler and cheaper, but slower and
+  # coarser on very long (multi-hour) recordings.
+  use_subagents: false
+  # Stop and show CANDIDATES.md for you to pick from before rendering.
+  # false = fully automatic, rendering every candidate found.
+  require_approval: true
+  # Phrases (streamer/audience hype register) used to tag a moment as extra
+  # noteworthy. They boost a moment that already stands on its own — they do
+  # NOT by themselves turn empty/filler context into a candidate.
+  hype_phrases: ["завоз", "ору", "кринж", "база", "это база", "мем вышел", "жиза", "воу-воу", "рофл", "дичь", "жесть", "разрыв", "го клип", "клипани", "красава", "топчик", "агонь", "офигеть", "вот это поворот", "с ума сойти"]
+
+clip:
+  min_seconds: 20
+  # 35, не 45 (2026-08-23, замер по 137 зрелым роликам): медиана просмотров
+  # держится ~810 в коридоре 20–30 с и падает до 623 на 40–50 с, средний
+  # досмотр там же 43,6 % против 70,7 % на клипах до 20 с. Топовые ролики
+  # (>=800 просмотров) в среднем 29,0 с, слабые (<600) — 32,7 с.
+  max_seconds: 35
+  fade_seconds: 0.5
+
+crop:
+  mode: auto # auto | zoom | pad | original-16:9
+
+content:
+  allow_mature: true
+
+diarization:
+  enabled: true
+  num_speakers: null
+  min_speakers: null
+  max_speakers: null
+
+audio_energy:
+  enabled: true
+  threshold_db: 6.0
+  floor_lufs: -35.0
+  baseline_window_seconds: 20.0
+  min_duration: 0.3
+  merge_gap_seconds: 1.0
+
+metadata:
+  # Generate title/description/tags/caption text for posting, reusing the
+  # same transcript window pass 2 already reads for trim/crop decisions.
+  enabled: true
+  # Which platforms to generate a block for, in one combined text file per
+  # clip — handy when you post the same clip to more than one place.
+  platforms: [youtube, tiktok, instagram]   # youtube | tiktok | instagram
+  language: auto        # auto = same language as the transcript
+  english_title: true
+
+monetization:
+  # Per-platform monetization-risk flagging (scripts/monetization_risk.py),
+  # scored from the transcript against data/monetization_rules.yaml. Flags
+  # are ADVISORY ONLY - a heuristic hint to review before publishing, never
+  # a gate that blocks/auto-edits a clip. The age_restriction category also
+  # feeds scripts/profanity.py's --risk-rules pass (step 5), which actually
+  # masks those specific phrases in audio+captions - not just advisory there.
+  enabled: true
+  rules_path: data/monetization_rules.yaml
+  # Local Chromaprint audio fingerprinting - needs the separate `fpcalc`
+  # binary (not a pip package). Off by default (fail-open, not installed).
+  audio_fingerprint_enabled: false
+  enable_lookup: false
+
+facecam:
+  # Set true if the recording has a webcam or VTuber avatar overlay.
+  enabled: false
+  # manual_region: cheap, fixed coordinates for a static overlay.
+  # auto_detect: visual detection per video/scene - costs meaningfully more
+  # compute and tokens; useful for VTubers with multiple models/scenes or a
+  # moving camera.
+  mode: manual_region
+  region: null           # [x, y, w, h] as % of frame, only used in manual_region mode
+
+subtitles:
+  enabled: true 
+  font: /usr/share/fonts/truetype/msfonts/ariblk.ttf
+  size: 92
+  color: white
+  outline: black
+  highlight_color: yellow
+  position: bottom       # bottom | top | center
+  words_per_cue: 4
+  strip_punctuation: true
+  max_gap_seconds: 1.2
+  # Частичная маскировка матов в прожжённых субтитрах (хуй -> х**): начало
+  # видно, хвост в *. Использует тот же вордлист, что аудио-маска profanity.
+  censor_profanity: true
+  censor_keep_ratio: 0.4
+  censor_wordlist: data/profanity_wordlist.yaml
+
+audio:
+  # FFmpeg noise-reduction filter (afftdn) applied to every clip's audio.
+  denoise: true
+  # afftdn nr param in dB - lowered from 6 (было делало голос тоньше/резче
+  # на слух, хотя реальный питч не менялся - 2026-07-20).
+  denoise_strength: 3.0
+  # FFmpeg loudness normalization (EBU R128 loudnorm) applied after denoise.
+  loudnorm: true
+
+effects:
+  vignette: false
+  grain_strength: 0
+  punch_zoom_amount: 1.15
+  punch_zoom_ramp: 0.25
+
+jumpcuts:
+  enabled: true
+  detect_min_seconds: 0.15
+  # Паузы короче секунды — естественный ритм разговора, не резать (иначе
+  # джамп-кат съедает слова прямо на границе пауз ~0.4-1с, было на живых
+  # прогонах 2026-07-19/20).
+  cut_threshold_seconds: 1.0
+
+visual:
+  enabled: true
+  frame_interval_seconds: 120.0
+  detect_game_context: true
+  detect_visual_candidates: true
+
+profanity:
+  # Маскировка матов (RU+EN, вкл. обфускации) duck+garble на рендере.
+  # Fail-open: битый конфиг/вордлист = без маскировки, пайплайн не падает.
+  enabled: true
+  wordlist_path: data/profanity_wordlist.yaml
+  pad_seconds: 0.0
+  max_masked_spans_per_clip: 40
+  duck_volume: 0.12
+  garble_freq: 1200.0
+  garble_width_octaves: 6.0
+  warble_freq: 25.0
+  warble_depth: 1.0
+  mask_mode: "sound"
+  mask_sound_path: "assets/sounds/censor_beep.wav"
+  mask_onset_seconds: 0.0
+  # Писк идёт мимо loudnorm (амиксится ПОСЛЕ него), поэтому громкость тут
+  # сырая: 0.6 даёт около -30 dB против -19 dB речи. Тише голоса намеренно.
+  mask_sound_volume: 0.6
+
+hook_banner:
+  enabled: true
+  mode: persistent
+  cta_text: "@zhorekp"
+
+emphasis:
+  # Мид-клип монтажные акценты (Phase 9) — транзиентные мягкие зумы на
+  # игровой момент/реакцию по ходу цельного клипа, не только на стыках.
+  # Решает Claude в шаге 5 по сигналам (audio_energy, реплики, визуал-пасс).
+  enabled: true
+  max_moves: 2
+  zoom_amount: 1.12
+  ramp_seconds: 0.18
+  min_hold_seconds: 0.25
+  face_enabled: false
+
+transitions:
+  # Контекстные переходы (crossfade/whip_pan/mask_wipe/glitch/match_cut) на
+  # стыках jump-cut сплайсов внутри клипа вместо плоского реза — по
+  # motion(cv2)/audio(librosa) сигналам стыка, консервативный дефолт cut.
+  enabled: true
+  transition_duration: 0.35
+  min_overlap_seconds: 0.12
+  strong_signal_percentile: 85.0
+  match_cut_similarity: 0.9
+
+cold_open:
+  # Тизер панча в первые секунды — только для клипов с явной кульминацией
+  # (решает Claude в шаге 5, не все клипы подряд). Переход "вжух" (whip_pan).
+  enabled: true
+  transition: whip_pan
+  transition_duration: 0.25
+
+loop:
+  # Луп-клип: панч ПЕРЕНОСИТСЯ в начало и вырезается из конца, клип
+  # заканчивается прямо перед ним. Повтор ленты читается как «сетап → панч»,
+  # шов точный по построению. Только для клипов, которые реально зациклятся
+  # (решает Claude в шаге 5, не все подряд).
+  enabled: true
+  # rotate — перенос панча в начало (точка считается сама из слов клипа,
+  # loop_rotate_at в плане нужен только как переопределение).
+  # seam — старый косметический кроссфейд хвоста в начало, порядок не меняет.
+  mode: rotate
+  # auto — переход на внутреннем стыке (панч→сетап) выбирается замером
+  # похожести кадров: совпали — match_cut (склейку не видно, размывать нечего),
+  # разошлись — whip_pan, а на застывшей картинке mask_wipe.
+  # Шов заворота точный по построению и перехода не получает никогда.
+  rotate_transition: auto
+  transition: crossfade
+  transition_duration: 0.4
+
+publish:
+  enabled: true
+  # МСК = UTC+3: 00 / 04 / 08 / 12 / 16 / 20 МСК, раз в 4 часа.
+  # UTC отсортированы хронологически — next_free_slot идёт по порядку списка.
+  daily_slots_utc: ["01:00", "05:00", "09:00", "13:00", "17:00", "21:00"]
+
+social_overlay:
+  # Капсула-ссылка выезжает слева на клипе. twitch — с глифом, telegram —
+  # текстом (TG-глифа пока нет). Рисуется по одной на платформу за клип.
+  enabled: true
+  platforms: [twitch, telegram]
+  icon_paths:
+    twitch: assets/overlays/twitch_glyph.png
+  labels:
+    twitch: twitch.tv/ZhorikP
+    telegram: t.me/zhorekp
+
+outro_card:
+  # Анимированная концовка: ник + ссылка на самоанимирующемся градиенте.
+  enabled: true
+  nick: ZhorikP
+  tagline: "Заходите на стримы"
+  cta_text: t.me/zhorekp
+
+thumbnail:
+  # Обложка: кадр из готового клипа + короткая подпись поверх. Размер 9:16 -
+  # у Shorts своя обложка видна в сетке канала и при шаринге. render_batch.py
+  # генерит её сам после рендера, подпись берёт из плана (thumbnail_text, иначе
+  # banner_text). upload=true - publish_queue ставит её через thumbnails.set
+  # после загрузки (fail-open, ошибка обложки не роняет уже залитое видео).
+  enabled: true
+  upload: true
+  width: 1080
+  height: 1920
+  font: /usr/share/fonts/truetype/msfonts/ariblk.ttf
+  font_size: 96
+  text_color: "white"
+  box_color: "black"
+  box_opacity: 0.55
+  position: "center"
+  max_lines: 3
+  timestamp_strategy: "energy"
+
+video:
+  # Кодек рендера. libx264 - дефолт; h264_nvenc = аппаратный энкодер NVIDIA
+  # (preset/crf там не применяются, оставлять пустыми).
+  codec: libx264
+  preset: ""
+  crf: null
+  # -hwaccel на декоде исходника (cuda = аппаратный декод NVIDIA). none = выключено.
+  hwaccel: none
+  # сколько клипов рендерить параллельно (semaphore). 1 = как раньше, последовательно.
+  parallel_clips: 1
+
+top_moments:
+  # Глобальный кэп авто-отбора: rate_per_hour * часы записи. 4/час на
+  # 4-часовом стриме = 16 клипов со всей записи (не по 4 на каждый час).
+  rate_per_hour: 4.0
+  minimum: 1
