@@ -214,23 +214,39 @@ def main(argv: list[str] | None = None) -> int:
                         help="how long a file must be untouched before it counts as done")
     parser.add_argument("--list", action="store_true",
                         help="print the sessions that would be joined and stop")
+    parser.add_argument("--manifest",
+                        help="write one usable recording path per line here")
     args = parser.parse_args(argv)
 
     parts = find_parts(args.directory, time.time(), args.quiet_minutes * 60)
     sessions = group_sessions(parts)
+    ready = []
 
     for session in sessions:
         destination = os.path.join(args.into, session_name(session))
         if args.list:
             print(f"{len(session)} part(s) -> {destination}")
             continue
-        if os.path.exists(destination):
-            print(f"already joined: {destination}")
-            continue
         try:
-            print(join(session, destination))
+            # A session of one part is used where it lies, so what comes back here is
+            # sometimes the joined file and sometimes the original. Whichever it is, it is
+            # the path the rest of the pipeline should be given.
+            ready.append(session[0] if len(session) == 1 else
+                         (destination if os.path.exists(destination) else join(session, destination)))
         except SessionError as e:
             print(f"session starting {os.path.basename(session[0])}: {e}", file=sys.stderr)
+
+    # Written to a file rather than printed, because stdout is not ours alone: this runs
+    # inside a container whose base image greets every start with a licence notice, and a
+    # caller parsing that would treat the greeting as a recording.
+    if args.manifest:
+        os.makedirs(os.path.dirname(args.manifest), exist_ok=True)
+        with open(args.manifest, "w", encoding="utf-8") as f:
+            for path in ready:
+                f.write(path + "\n")
+
+    for path in ready:
+        print(path)
     return 0
 
 

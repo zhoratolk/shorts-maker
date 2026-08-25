@@ -206,3 +206,69 @@ class TestTheInterpreterTheSubStepsRunUnder:
         monkeypatch.setattr(ingest, "REPO_ROOT", pathlib.Path(tempfile.mkdtemp()))
 
         assert ingest._interpreter() == sys.executable
+
+
+class TestTheManifest:
+    """What the unattended pass actually reads.
+
+    It used to glob the joined-files directory, which meant a recording that arrived as a
+    single part - most of them - was never picked up at all, because a session of one is
+    used where it lies and no joined file is ever written for it.
+    """
+
+    def _fake_parts(self, monkeypatch, parts):
+        monkeypatch.setattr(session, "find_parts", lambda directory, now, quiet: parts)
+
+    def test_a_single_part_recording_is_listed_where_it_lies(self, monkeypatch):
+        directory = pathlib.Path(tempfile.mkdtemp())
+        manifest = directory / "_auto" / "sessions.txt"
+        self._fake_parts(monkeypatch, [
+            ("/media/recordings/2026-08-25 14-00-00.mkv",
+             dt.datetime(2026, 8, 25, 14, 0), 900.0),
+        ])
+
+        session.main(["/media/recordings", "--into", "/media/clips/sources",
+                      "--manifest", str(manifest)])
+
+        assert manifest.read_text(encoding="utf-8").strip() == \
+            "/media/recordings/2026-08-25 14-00-00.mkv"
+
+    def test_a_joined_session_is_listed_at_its_joined_path(self, monkeypatch):
+        directory = pathlib.Path(tempfile.mkdtemp())
+        manifest = directory / "sessions.txt"
+        joined = directory / "2026-08-25 14-00-00-joined-2.mkv"
+        joined.write_bytes(b"already here")
+        self._fake_parts(monkeypatch, [
+            ("/rec/2026-08-25 14-00-00.mkv", dt.datetime(2026, 8, 25, 14, 0), 900.0),
+            ("/rec/2026-08-25 14-15-00.mkv", dt.datetime(2026, 8, 25, 14, 15), 900.0),
+        ])
+
+        session.main(["/rec", "--into", str(directory), "--manifest", str(manifest)])
+
+        assert manifest.read_text(encoding="utf-8").strip() == str(joined)
+
+    def test_a_session_that_could_not_be_joined_is_left_out(self, monkeypatch):
+        """Better to skip it than to hand the next stage a file that does not match its
+        parts - and it stays on disk, so the mismatch can be looked at."""
+        directory = pathlib.Path(tempfile.mkdtemp())
+        manifest = directory / "sessions.txt"
+        self._fake_parts(monkeypatch, [
+            ("/rec/a.mkv", dt.datetime(2026, 8, 25, 14, 0), 900.0),
+            ("/rec/b.mkv", dt.datetime(2026, 8, 25, 14, 15), 900.0),
+        ])
+        monkeypatch.setattr(session, "join",
+                            lambda paths, dest: (_ for _ in ()).throw(session.SessionError("nope")))
+
+        session.main(["/rec", "--into", str(directory), "--manifest", str(manifest)])
+
+        assert manifest.read_text(encoding="utf-8") == ""
+
+    def test_nothing_ready_writes_an_empty_manifest_rather_than_leaving_a_stale_one(self, monkeypatch):
+        directory = pathlib.Path(tempfile.mkdtemp())
+        manifest = directory / "sessions.txt"
+        manifest.write_text("/rec/from-last-time.mkv\n", encoding="utf-8")
+        self._fake_parts(monkeypatch, [])
+
+        session.main(["/rec", "--into", str(directory), "--manifest", str(manifest)])
+
+        assert manifest.read_text(encoding="utf-8") == ""
