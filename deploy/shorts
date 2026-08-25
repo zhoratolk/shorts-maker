@@ -27,7 +27,10 @@ if [ $# -eq 0 ]; then
     exit 2
 fi
 
-mkdir -p "$CLAIMS" "$ROOT/work" "$MEDIA/clips" "$MEDIA/recordings"
+# The model cache is a mount rather than something baked into the image: the container is
+# --rm, and without it every single run would re-download several gigabytes of whisper
+# weights before it could say a word.
+mkdir -p "$CLAIMS" "$ROOT/work" "$ROOT/cache" "$MEDIA/clips" "$MEDIA/recordings"
 
 claim="$CLAIMS/gpu$GPU"
 echo "shorts-maker pid=$$" > "$claim"
@@ -60,12 +63,18 @@ case "${1}" in
     render) shift; set -- python3 scripts/render_batch.py "$@" ;;
 esac
 
-exec docker run --rm \
+# Not `exec`. Replacing this shell with docker would take the EXIT trap above with it, so
+# the claim file would never be removed and the heartbeat would outlive the run - the card
+# would stay out of the queue until the claim expired, every single time.
+status=0
+docker run --rm \
     "${interactive[@]}" \
     --gpus "device=$GPU" \
     "${env_file[@]}" \
+    -v "$ROOT/cache:/root/.cache" \
     -v "$ROOT/config.server.yaml:/app/config.yaml:ro" \
     -v "$ROOT/work:/app/work" \
     -v "$MEDIA/recordings:/media/recordings:ro" \
     -v "$MEDIA/clips:/media/clips" \
-    "$IMAGE" "$@"
+    "$IMAGE" "$@" || status=$?
+exit "$status"

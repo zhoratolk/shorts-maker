@@ -15,12 +15,35 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PYTHON = str(REPO_ROOT / ".venv" / "Scripts" / "python.exe")
+
+
+def _interpreter() -> str:
+    """The Python the sub-steps should run under.
+
+    The repo's own virtualenv when there is one, because that is where the pipeline's
+    dependencies were installed and this is normally started by a shell that has not
+    activated it. `Scripts/python.exe` is the Windows layout and `bin/python` the POSIX
+    one; naming only the first meant this could never run anywhere but the desktop it was
+    written on.
+
+    With no virtualenv, the interpreter running this file - which is the right answer
+    inside a container, where the dependencies are simply installed system-wide and there
+    is no `.venv` to find.
+    """
+    for candidate in (REPO_ROOT / ".venv" / "Scripts" / "python.exe",
+                      REPO_ROOT / ".venv" / "bin" / "python"):
+        if candidate.exists():
+            return str(candidate)
+    return sys.executable
+
+
+PYTHON = _interpreter()
 
 
 def video_stem(video_path: str) -> str:

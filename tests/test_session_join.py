@@ -170,3 +170,39 @@ class TestJoining:
     def test_a_session_of_one_is_used_where_it_lies(self):
         """No copy, no re-encode, no second 8 GB on the disk for nothing."""
         assert session.join(["/rec/only.mkv"], "/out/only.mkv") == "/rec/only.mkv"
+
+
+class TestTheInterpreterTheSubStepsRunUnder:
+    """Naming only the Windows virtualenv layout meant ingest could not run anywhere else,
+    which is how it failed the first time it was asked to run in a container."""
+
+    def test_a_posix_virtualenv_is_found(self, monkeypatch):
+        from scripts import ingest
+
+        root = pathlib.Path(tempfile.mkdtemp())
+        (root / ".venv" / "bin").mkdir(parents=True)
+        (root / ".venv" / "bin" / "python").write_text("#!/bin/sh\n", encoding="utf-8")
+        monkeypatch.setattr(ingest, "REPO_ROOT", root)
+
+        assert ingest._interpreter().endswith(os.path.join("bin", "python"))
+
+    def test_a_windows_virtualenv_is_found(self, monkeypatch):
+        from scripts import ingest
+
+        root = pathlib.Path(tempfile.mkdtemp())
+        (root / ".venv" / "Scripts").mkdir(parents=True)
+        (root / ".venv" / "Scripts" / "python.exe").write_bytes(b"MZ")
+        monkeypatch.setattr(ingest, "REPO_ROOT", root)
+
+        assert ingest._interpreter().endswith("python.exe")
+
+    def test_without_a_virtualenv_the_running_interpreter_is_used(self, monkeypatch):
+        """The container case: the dependencies are installed system-wide and there is no
+        .venv to find, so insisting on one would leave nothing to run."""
+        import sys
+
+        from scripts import ingest
+
+        monkeypatch.setattr(ingest, "REPO_ROOT", pathlib.Path(tempfile.mkdtemp()))
+
+        assert ingest._interpreter() == sys.executable
