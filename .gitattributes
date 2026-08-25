@@ -1,0 +1,6 @@
+# The deploy scripts run on Linux. Git's autocrlf would hand them back with CRLF line
+# endings on this machine, and a shell script with a carriage return at the end of its
+# shebang fails with "bad interpreter: /usr/bin/env bash^M" - which reads like the
+# interpreter is missing rather than like a line-ending problem.
+deploy/shorts text eol=lf
+*.sh text eol=lf
