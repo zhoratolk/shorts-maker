@@ -43,15 +43,40 @@ def metadata_json_path(plan_path: str, entry: dict) -> Path:
     return Path(plan_path).parent / "metadata_data" / f"{clip_stem(entry)}.json"
 
 
+def _span(segment) -> float:
+    """How much footage one compilation member contributes.
+
+    build_compilation_entry writes members as {"start": ..., "end": ...}, and a member
+    that was jump-cut carries its own keep_segments - the pauses inside it are not in the
+    finished clip, so counting them would overstate the length of exactly the clips that
+    were shortened.
+    """
+    if isinstance(segment, dict):
+        keep = segment.get("keep_segments")
+        if keep:
+            return sum(float(end) - float(start) for start, end in keep)
+        return float(segment["end"]) - float(segment["start"])
+    start, end = segment
+    return float(end) - float(start)
+
+
 def clip_duration(entry: dict) -> float:
     """The clip's own length in seconds, before cold open and outro card.
 
     A compilation sums its members' segments; a jump-cut clip sums the kept
     segments; anything else is end - start.
+
+    The compilation branch used to unpack each member as a pair, which is not what a plan
+    ever holds: iterating {"start": ..., "end": ...} yields the two key names, and
+    float("end") raises. Every compilation - a normal product of step 5b - crashed the
+    enqueue at the very end of a render that had already cost hours, and because the queue
+    is only saved once at the end, the whole batch went unqueued and unpublished. The
+    tests were green because they fed a list of pairs, a shape nothing in the pipeline
+    produces.
     """
     members = entry.get("segments")
     if members:
-        return round(sum(float(end) - float(start) for start, end in members), 2)
+        return round(sum(_span(member) for member in members), 2)
     keep = entry.get("keep_segments")
     if keep:
         return round(sum(float(end) - float(start) for start, end in keep), 2)
@@ -142,8 +167,11 @@ def main() -> None:
         "--local-only", action="store_true",
         help="Stop after writing the local queue instead of uploading the batch to YouTube",
     )
-    parser.add_argument("--client-secret", default="client_secret.json", help="OAuth client secret JSON path")
-    parser.add_argument("--token", default="upload_token.json", help="Cached upload-scoped OAuth token JSON path")
+    # Default None, resolved from the config below: a literal default would silently
+    # override paths the config declares, which is what made publish.client_secret_path
+    # look configurable while never being read.
+    parser.add_argument("--client-secret", default=None, help="OAuth client secret JSON path")
+    parser.add_argument("--token", default=None, help="Cached upload-scoped OAuth token JSON path")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -169,7 +197,11 @@ def main() -> None:
     # separate chore to remember afterwards - with no scheduled task to
     # pick the queue up later, a clip left in `queued` is a clip nobody
     # will ever publish.
-    upload_queued_batch(config, args.client_secret, args.token)
+    upload_queued_batch(
+        config,
+        args.client_secret or config.publish.client_secret_path,
+        args.token or config.publish.upload_token_path,
+    )
 
 
 def upload_queued_batch(config: Config, client_secret: str, token: str) -> list[dict]:

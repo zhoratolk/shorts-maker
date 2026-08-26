@@ -1,6 +1,7 @@
 import json
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -244,8 +245,14 @@ def test_instagram_authorize_url_scope_param_is_exact_no_broader_scope(tmp_path,
     port = 8767
 
     def hit_redirect():
-        time.sleep(0.2)
-        urllib.request.urlopen(f"http://127.0.0.1:{port}/callback?code=abc123&state=xyz", timeout=5)
+        for _ in range(100):
+            if opened_urls:
+                break
+            time.sleep(0.05)
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(opened_urls[0]).query)
+        urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/callback?code=abc123&state={query['state'][0]}", timeout=5
+        )
 
     thread = threading.Thread(target=hit_redirect)
     thread.start()
@@ -467,8 +474,16 @@ def test_run_instagram_oauth_consent_full_flow(tmp_path, monkeypatch):
     port = 8766
 
     def hit_redirect():
-        time.sleep(0.2)
-        urllib.request.urlopen(f"http://127.0.0.1:{port}/callback?code=abc123&state=xyz", timeout=5)
+        # Как настоящий браузер: state берётся из authorize-URL, который открыл флоу.
+        for _ in range(100):
+            if opened_urls:
+                break
+            time.sleep(0.05)
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(opened_urls[0]).query)
+        state = query["state"][0]
+        urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/callback?code=abc123&state={state}", timeout=5
+        )
 
     thread = threading.Thread(target=hit_redirect)
     thread.start()
@@ -1314,3 +1329,76 @@ def test_run_command_signature_takes_ig_user_id_positionally_after_config():
 
     sig = inspect.signature(run_command)
     assert list(sig.parameters) == ["args", "credentials_factory", "config", "ig_user_id", "session"]
+
+
+def test_a_redirect_with_the_wrong_state_is_ignored():
+    """Классический OAuth CSRF: пока слушатель открыт (пять минут), любая страница в
+    браузере оператора может постучаться на 127.0.0.1 со своим кодом.
+
+    state кладётся в authorize-URL именно для этого, но не проверялся — чужой код
+    принимался и обменивался на токен чужого аккаунта, без единого признака, что
+    что-то не так.
+    """
+    port = 8787
+    expected = "the-real-state"
+
+    def send_requests():
+        time.sleep(0.2)
+        try:
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/callback?code=attacker&state=guessed", timeout=5
+            )
+        except urllib.error.HTTPError:
+            pass
+        urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/callback?code=ours&state={expected}", timeout=5
+        )
+
+    thread = threading.Thread(target=send_requests)
+    thread.start()
+    code = _capture_oauth_redirect_code(
+        "127.0.0.1", port, expected_state=expected, timeout_seconds=10
+    )
+    thread.join()
+
+    assert code == "ours"
+
+
+def test_the_consent_state_is_not_guessable(tmp_path, monkeypatch):
+    """random.choices сеется предсказуемо; для значения, которое и есть вся защита
+    слушателя, этого мало."""
+    client_secret_path = tmp_path / "instagram_client_secret.json"
+    client_secret_path.write_text(
+        json.dumps({"client_id": "cid", "client_secret": "csecret"}), encoding="utf-8"
+    )
+    opened = []
+    monkeypatch.setattr(instagram_publish.webbrowser, "open", lambda url: opened.append(url))
+    monkeypatch.setattr(
+        instagram_publish, "_capture_oauth_redirect_code", lambda *a, **kw: "code"
+    )
+    monkeypatch.setattr(
+        instagram_publish,
+        "_exchange_for_long_lived_token",
+        lambda *a, **kw: {"access_token": "t", "expires_in": 1},
+        raising=False,
+    )
+
+    states = []
+    for _ in range(2):
+        opened.clear()
+        try:
+            run_instagram_oauth_consent(
+                str(client_secret_path),
+                str(tmp_path / "token.json"),
+                session=FakeSession([
+                    FakeResponse({"access_token": "s", "user_id": "u"}),
+                    FakeResponse({"access_token": "l", "expires_in": 100}),
+                ]),
+            )
+        except Exception:
+            pass
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(opened[0]).query)
+        states.append(query["state"][0])
+
+    assert states[0] != states[1]
+    assert len(states[0]) >= 20

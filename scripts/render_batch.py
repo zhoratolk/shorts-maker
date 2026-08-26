@@ -563,6 +563,24 @@ def spikes_within(spikes: list[dict], start: float, end: float) -> list[dict]:
     ]
 
 
+def _poster_focus(entry: dict) -> float:
+    """Where across the frame the poster should be cut from, as a percentage.
+
+    The same number the clip itself is framed with. It used to read "focus_x_pct", a key
+    nothing in this codebase ever writes - autoframe_entries writes crop_focus_x and
+    crop_focus_keyframes - so every poster was centred no matter where the clip looked.
+    On a clip framed hard left or right the cover art showed a different part of the
+    picture than the video, which is exactly the mismatch thumbnail.py exists to avoid.
+
+    A panning clip has no single answer, so the poster takes the first keyframe: the
+    frame it is cut from is near the start.
+    """
+    keyframes = entry.get("crop_focus_keyframes")
+    if keyframes:
+        return float(keyframes[0][1])
+    return float(entry.get("crop_focus_x", 50.0))
+
+
 def generate_thumbnails(
     config: Config, entries: list[dict], output_dir: str, video_path: str
 ) -> list[str]:
@@ -607,7 +625,7 @@ def generate_thumbnails(
                 box_opacity=thumbnail.box_opacity,
                 position=thumbnail.position,
                 max_lines=thumbnail.max_lines,
-                focus_x_pct=float(entry.get("focus_x_pct", 50.0)),
+                focus_x_pct=_poster_focus(entry),
             )
         except Exception as error:  # noqa: BLE001 - fail-open by design
             print(f"[warn] no thumbnail for {clip_path.name}: {error}", file=sys.stderr)
@@ -736,7 +754,14 @@ def main() -> None:
 
         enqueue_batch(config, args.plan_json, output_dir)
         if config.publish.enabled and not args.enqueue_local_only:
-            upload_queued_batch(config, "client_secret.json", "upload_token.json")
+            # From the config, not from literals. Both paths are declared and validated
+            # in config.py and were then ignored here, so moving the secrets out of the
+            # repository root - the sensible thing to do with them - produced a
+            # FileNotFoundError at the very end of a render that had already run for
+            # hours, with the config fields quietly implying otherwise.
+            upload_queued_batch(
+                config, config.publish.client_secret_path, config.publish.upload_token_path
+            )
 
 
 if __name__ == "__main__":

@@ -5,6 +5,11 @@ import json
 import re
 import statistics
 import subprocess
+import sys
+
+
+class AudioEnergyError(ValueError):
+    pass
 
 
 _MOMENTARY_RE = re.compile(r"t:\s*([\d.]+)\s+TARGET:.*?M:\s*(-?[\d.]+)")
@@ -19,6 +24,17 @@ def measure_momentary_loudness(path: str, runner=subprocess.run) -> list[dict]:
     """
     command = ["ffmpeg", "-i", path, "-map", "0:a", "-af", "ebur128", "-f", "null", "-"]
     result = runner(command, capture_output=True, text=True)
+    # A failed ffmpeg - a file with no audio track, a truncated recording - writes no
+    # "t:" lines either, so an unchecked run came back as an empty but perfectly
+    # successful list. ingest then recorded the step as done and wrote [] into the cache,
+    # and every later read found that file and returned nothing, silently: posters lost
+    # their energy timestamps and the wordless-reaction candidates disappeared for that
+    # recording, with not one warning anywhere. ingest checks the exit code, so failing
+    # here is what makes its existing warning path fire.
+    if result.returncode != 0:
+        raise AudioEnergyError(
+            f"ffmpeg could not measure loudness for {path}: {(result.stderr or '').strip()[-300:]}"
+        )
     return [
         {"time": float(match.group(1)), "momentary_lufs": float(match.group(2))}
         for match in _MOMENTARY_RE.finditer(result.stderr)
@@ -125,14 +141,18 @@ def main() -> None:
     parser.add_argument("--merge-gap-seconds", type=float, default=1.0)
     args = parser.parse_args()
 
-    spikes = find_energy_spikes(
-        args.input_path,
-        threshold_db=args.threshold_db,
-        floor_lufs=args.floor_lufs,
-        baseline_window_seconds=args.baseline_window_seconds,
-        min_duration=args.min_duration,
-        merge_gap_seconds=args.merge_gap_seconds,
-    )
+    try:
+        spikes = find_energy_spikes(
+            args.input_path,
+            threshold_db=args.threshold_db,
+            floor_lufs=args.floor_lufs,
+            baseline_window_seconds=args.baseline_window_seconds,
+            min_duration=args.min_duration,
+            merge_gap_seconds=args.merge_gap_seconds,
+        )
+    except AudioEnergyError as error:
+        print(f"[error] {error}", file=sys.stderr)
+        raise SystemExit(1) from error
     print(json.dumps(spikes, ensure_ascii=False, indent=2))
 
 

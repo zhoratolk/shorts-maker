@@ -1,4 +1,7 @@
+import pytest
+
 from scripts.audio_energy import (
+    AudioEnergyError,
     compute_rolling_baseline,
     detect_energy_spikes,
     find_energy_spikes,
@@ -118,3 +121,27 @@ def test_find_energy_spikes_runs_measure_then_detect():
     )
 
     assert spikes == [{"start": 0.299979, "end": 0.299979, "reason": "audio energy spike"}]
+
+
+def test_a_failed_ffmpeg_is_not_an_empty_success():
+    """Файл без звуковой дорожки, обрезанная запись — ffmpeg падает и не пишет ни одной
+    строки «t:».
+
+    Без проверки кода возврата это выглядело как успешный пустой результат: ingest
+    записывал [] в кэш, а каждое последующее чтение находило этот файл и молча отдавало
+    пустоту. Спайки для обложек и бессловесные кандидаты исчезали для конкретной записи
+    без единого предупреждения.
+    """
+    def broken(command, **kwargs):
+        return FakeResult("ffmpeg: Stream map '0:a' matches no streams.", returncode=1)
+
+    with pytest.raises(AudioEnergyError):
+        measure_momentary_loudness("clip.mkv", runner=broken)
+
+
+def test_a_successful_run_with_no_samples_is_still_empty():
+    """Тишина — это законный ответ, лишь бы ffmpeg отработал."""
+    def quiet(command, **kwargs):
+        return FakeResult("", returncode=0)
+
+    assert measure_momentary_loudness("clip.mkv", runner=quiet) == []

@@ -37,9 +37,8 @@ import argparse
 import http.server
 import json
 import os
-import random
 import re
-import string
+import secrets
 import sys
 import time
 import urllib.parse
@@ -383,7 +382,7 @@ def load_credentials(client_secret_path: str, token_path: str, session=requests)
     return token_data["access_token"]
 
 
-def _build_redirect_server(host: str, port: int):
+def _build_redirect_server(host: str, port: int, expected_state: str = ""):
     """Constructs (but does not run) the one-shot local OAuth redirect
     listener, bound explicitly to `host` (the caller always passes
     "127.0.0.1", never "0.0.0.0" - T-06-05/V4 spoofing mitigation). Split
@@ -399,6 +398,20 @@ def _build_redirect_server(host: str, port: int):
         def do_GET(self) -> None:  # noqa: N802 - stdlib method name
             parsed = urllib.parse.urlparse(self.path)
             params = urllib.parse.parse_qs(parsed.query)
+            # The state is what ties this redirect to the consent this process started.
+            # It was put on the authorize URL and then never looked at, so for the five
+            # minutes the listener is open any page in the operator's browser could hit
+            # http://127.0.0.1:8766/callback with a code of its own - and the flow would
+            # exchange it, ending up with a token for somebody else's account and no sign
+            # anything was wrong. Textbook OAuth CSRF.
+            if expected_state and params.get("state", [""])[0] != expected_state:
+                self.send_response(400)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(
+                    "Unexpected OAuth state - this redirect was ignored.".encode("utf-8")
+                )
+                return
             captured["code"] = params.get("code", [""])[0]
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -414,16 +427,26 @@ def _build_redirect_server(host: str, port: int):
     return server, captured
 
 
-def _capture_oauth_redirect_code(host: str, port: int, timeout_seconds: float = 300) -> str:
-    """Blocks on a local HTTP listener bound to (host, port) for exactly one
-    redirect request (handle_request(), never serve_forever() - bounded, no
-    lingering listener), then returns the `code` query param from that one
-    request.
+def _capture_oauth_redirect_code(
+    host: str, port: int, expected_state: str = "", timeout_seconds: float = 300
+) -> str:
+    """Blocks on a local HTTP listener bound to (host, port) until a redirect arrives
+    carrying `expected_state`, then returns the `code` query param from it.
+
+    Bounded by the deadline and closed straight after - never serve_forever(), no
+    lingering listener. It waits for the *right* request rather than the first one on
+    purpose: a single handle_request() would spend the one shot on whatever arrived
+    first, so anything else hitting the port would take the flow down with it.
     """
-    server, captured = _build_redirect_server(host, port)
-    server.timeout = timeout_seconds
+    server, captured = _build_redirect_server(host, port, expected_state)
+    deadline = time.monotonic() + timeout_seconds
     try:
-        server.handle_request()
+        while not captured.get("code"):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            server.timeout = remaining
+            server.handle_request()
     finally:
         server.server_close()
 
@@ -451,7 +474,9 @@ def run_instagram_oauth_consent(
     """
     client = json.loads(Path(client_secret_path).read_text(encoding="utf-8"))
     redirect_uri = f"http://127.0.0.1:{port}/callback"
-    state = "".join(random.choices(string.ascii_letters + string.digits, k=16))
+    # secrets, not random: this value is the only thing standing between the listener
+    # below and a code somebody else planted, and random is seeded predictably.
+    state = secrets.token_urlsafe(24)
 
     authorize_url = (
         f"{INSTAGRAM_AUTHORIZE_URL}?client_id={client['client_id']}"
@@ -462,7 +487,7 @@ def run_instagram_oauth_consent(
     )
     webbrowser.open(authorize_url)
 
-    code = _capture_oauth_redirect_code("127.0.0.1", port)
+    code = _capture_oauth_redirect_code("127.0.0.1", port, expected_state=state)
 
     short_lived_response = session.post(
         INSTAGRAM_TOKEN_EXCHANGE_URL,

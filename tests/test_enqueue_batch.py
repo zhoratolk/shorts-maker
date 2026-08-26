@@ -69,9 +69,36 @@ def entry(name, **overrides):
         ({"start": 10.0, "end": 40.0}, 30.0),
         ({"start": 10.0, "end": 40.0, "keep_segments": [[10.0, 20.0], [25.0, 40.0]]}, 25.0),
         ({"start": 0.0, "end": 0.0, "segments": [[0.0, 12.0], [50.0, 61.5]]}, 23.5),
+        (
+            {
+                "type": "compilation",
+                "segments": [
+                    {"start": 0.0, "end": 12.0},
+                    {"start": 50.0, "end": 61.5},
+                ],
+            },
+            23.5,
+        ),
+        (
+            {
+                "type": "compilation",
+                "segments": [
+                    {"start": 0.0, "end": 12.0, "keep_segments": [[0.0, 5.0], [8.0, 12.0]]},
+                    {"start": 50.0, "end": 61.5},
+                ],
+            },
+            20.5,
+        ),
     ],
 )
 def test_clip_duration_covers_jump_cuts_and_compilations(plan_entry, expected):
+    """Форма, которую пишет build_compilation_entry, — словари, а не пары.
+
+    На парах тест был зелёным, а продакшен такой формы не создаёт никогда: распаковка
+    словаря даёт имена ключей, и float("end") падает. Компиляция — штатный продукт шага
+    5b, так что падало в самом конце дорогого рендера, а очередь сохраняется один раз в
+    конце — весь батч оставался непоставленным и неопубликованным.
+    """
     assert clip_duration(plan_entry) == expected
 
 
@@ -175,6 +202,8 @@ class _FakePublish:
         self.enabled = enabled
         self.queue_path = str(tmp_path / "queue.json")
         self.notifications_path = str(tmp_path / "log.txt")
+        self.client_secret_path = "secrets/yt_client.json"
+        self.upload_token_path = "secrets/yt_token.json"
 
 
 class _FakeThumbnail:
@@ -210,7 +239,10 @@ def test_main_uploads_after_enqueuing(monkeypatch, tmp_path):
 
     module.main()
 
-    assert calls == [("client_secret.json", "upload_token.json")]
+    # Пути берутся из конфига, а не из литералов: оба поля объявлены и валидируются в
+    # config.py, но не читались — вынести секреты из корня репозитория (разумное решение)
+    # означало FileNotFoundError в самом конце многочасового рендера.
+    assert calls == [("secrets/yt_client.json", "secrets/yt_token.json")]
 
 
 def test_main_skips_the_upload_when_told_to_stay_local(monkeypatch, tmp_path):
@@ -237,3 +269,21 @@ def test_main_uploads_nothing_while_publishing_is_disabled(monkeypatch, tmp_path
     monkeypatch.setattr(sys, "argv", ["enqueue_batch.py", "PLAN.json"])
 
     module.main()
+
+
+def test_main_lets_the_flags_win_over_the_config(monkeypatch, tmp_path):
+    import scripts.enqueue_batch as module
+
+    calls = []
+    monkeypatch.setattr(module, "enqueue_batch", lambda *a, **k: [])
+    monkeypatch.setattr(module, "load_queue", lambda path: {"entries": []})
+    monkeypatch.setattr(module, "load_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr(module, "upload_queued_batch",
+                        lambda config, secret, token: calls.append((secret, token)))
+    monkeypatch.setattr(sys, "argv", [
+        "enqueue_batch.py", "PLAN.json", "--client-secret", "a.json", "--token", "b.json",
+    ])
+
+    module.main()
+
+    assert calls == [("a.json", "b.json")]
