@@ -9,6 +9,48 @@ description: Turn a long gameplay/stream recording into vertical (9:16) short cl
 
 Every command below is relative to this repo (`scripts/*.py`, `config.yaml`, `work/`). Claude Code's actual project root — where it discovered this skill from — may not be this repo (e.g. it was invoked from a parent directory's `.claude/skills/`). Before running anything below, confirm the shell's cwd is this repo's path; `cd` there first if it isn't.
 
+## Where this runs
+
+Two machines, and which one you are on changes the first half of this document.
+
+**The desktop** (`D:\shorts-maker`) records the stream and owns the credentials. `config.yaml`, `client_secret.json` and `upload_token.json` live here, and so does everything in step 7 — nothing on the server can publish.
+
+**The server** (`/srv/shorts-maker`, two cards) does the slow half. Whisper, diarization and the render run there, in a container, reading recordings off `/srv/media` — the Samba share the desktop writes to — and putting finished clips back on it.
+
+### On the server, run everything through `shorts`
+
+```bash
+shorts fetch   https://www.twitch.tv/videos/1234567890
+shorts ingest  /media/recordings/"2026-08-25 19-04-11.mkv"
+shorts render  "<video>" work/<video_stem>/PLAN.json --config config.yaml
+shorts shell                       # a prompt inside the image
+```
+
+`shorts` is a wrapper around `docker run`. What it does that matters here:
+
+- **It borrows a GPU rather than taking one.** While a command runs it holds a claim file that tells the business queue on the same machine to send new work to the other card; the claim disappears when the command exits, however it exits. So **do not background a `shorts` command and start another** — two heavy stages land on one card, make each other slower, and only one claim is held. Run them one after another.
+- **The image carries the dependencies, the checkout carries the code.** `scripts/` and `deploy/` are mounted over the image's own copy, read-only, so a fix written to `/srv/shorts-maker` takes effect on the next run with no rebuild. A change to `requirements.txt` still needs one.
+- **Paths inside the container are not the paths outside it.** Recordings are `/media/recordings` (read-only), clips are `/media/clips`, the checkout is `/app`, and `work/` is shared with the host. `config.yaml` inside is `deploy/config.server.yaml` outside — edit that file, not the desktop's `config.yaml`, when the server's behaviour is what you mean to change.
+- **`python scripts/setup.py` is the desktop path only.** It installs ffmpeg through winget. The image already has everything.
+
+### A recording that is not on the share yet
+
+`shorts fetch <url>` downloads a Twitch/YouTube VOD straight into the recordings folder the timer already watches, so nothing after it is any different from a stream OBS wrote. It names the file after the VOD's own **start** time, in OBS's format, because `session.py` orders a session's parts by the time in the filename — not by mtime, which is when writing *finished*. A file named anything else is invisible to that ordering.
+
+It takes no GPU claim: downloading is network and disk, and holding a card for the hour a three-hour VOD takes to arrive is exactly the waste the claim exists to prevent. The download is unlisted while it runs (a dot-prefixed working name), so a half-finished file is never picked up as a finished recording. Then the ten-minute timer takes it from there — you do not need to run ingest yourself.
+
+### The front half has usually already run
+
+A systemd timer (`shorts-watch.timer`, every ten minutes) runs `deploy/watch.sh`: it joins a session's parts into one recording, then transcribes and chunks it. It stops before moment selection on purpose — choosing what is worth clipping is judgement, not computation, and this exists so that step starts with everything already in front of it.
+
+**So on the server, check before running step 1-2:** `work/_auto/<stem>.ingested` exists once a pass finished that recording, and `work/<video_stem>/chunks/` is full. Re-running ingest is harmless (everything is cached) but spends a card for nothing. If the marker is missing and the chunks are not there, the pass either has not reached it yet or failed — `journalctl -u shorts-watch` says which, and the line to look for is `ingest failed for <name> - will try again next pass`.
+
+`deploy/session.py` is what joins OBS's split parts, which used to be done by hand before every batch. It joins by stream copy and then checks the result against the sum of its parts, because a concat that dropped a part exits 0 and plays fine — it is just an hour short. A file that fails that check is left on disk to be looked at and **re-joined** next pass rather than trusted. It never deletes a source: deleting the originals stays a human decision.
+
+### Publishing runs on the desktop
+
+Step 7 needs `client_secret.json` and `upload_token.json`, and neither is mounted into the container, deliberately. Render on the server, then enqueue from the desktop against the clips on the share. Nothing schedules this: **enqueueing is uploading**, and it happens when you run it (see step 7).
+
 ## Prerequisites
 
 Before the first run, make sure the environment is ready:
@@ -46,6 +88,8 @@ Steps 1/1b/1c/1d/2 — transcribe, pause detection, diarization, audio-energy sp
 ```bash
 python scripts/ingest.py "<video>"
 ```
+
+On the server this is `shorts ingest "<video>"`, and the ten-minute timer has usually run it already — check `work/_auto/<stem>.ingested` before spending a card on it (see **Where this runs**).
 
 (pass `--config <path>` only if not using the repo's own `config.yaml`). Same pattern `scripts/render_batch.py` uses for the render step (step 6), applied to the front half: it reads every gate/value from `config.yaml` itself, so nothing has to be threaded through by hand. It prints a JSON summary as its last line; read it for the paths the rest of the pipeline needs:
 
@@ -390,6 +434,8 @@ Everything else (`boundary_transitions`/`punch_zoom_at`/`subtitles_path`/`profan
 python scripts/render_batch.py "<video>" work/<video_stem>/PLAN.json --config config.yaml
 ```
 
+On the server: `shorts render "<video>" work/<video_stem>/PLAN.json --config config.yaml` — same arguments. It holds a card for the whole render, so let it finish before starting anything else heavy.
+
 That is the entire render step. `render_batch.py` derives every `render.py` flag from `config.yaml`, splits the loop clips into their own pass, and generates the posters — one command, nothing to assemble.
 
 **Never hand-build a `scripts/render.py` command line.** It takes ~60 flags and every optional feature is a *silent* no-op when its flag is missing: the render still exits 0 and writes a clip that merely lacks the beeps, the censored captions, the social capsule, or the outro card. That is exactly how a batch shipped uncensored on 2026-08-06. If a feature needs to change, change `config.yaml` — never the command.
@@ -447,6 +493,8 @@ This probes the source video once, then renders every entry in `PLAN.json` into 
 ```bash
 python scripts/enqueue_batch.py work/<video_stem>/PLAN.json
 ```
+
+**Run this on the desktop, not through `shorts`.** The credentials it needs are not mounted into the container, so `--enqueue` on the server fails at the very end of a render that cost hours.
 
 Or fold it into the render so the batch goes out in one command:
 
