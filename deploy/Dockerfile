@@ -40,6 +40,11 @@ WORKDIR /app
 # gigabytes of torch and CUDA wheels. The extras are named explicitly rather than
 # installed through `.[all]` because that form needs the project itself present, which
 # would drag the code into this layer and defeat the split.
+# yt-dlp from pip rather than apt: sites change their players every few weeks and the
+# apt package is months behind, which shows up as a download that worked last month and
+# refuses today. Deliberately unpinned - a rebuild is how it gets current.
+RUN pip install --no-cache-dir yt-dlp
+
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir \

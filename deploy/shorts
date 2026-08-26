@@ -23,9 +23,21 @@ ROOT=${SHORTS_ROOT:-/srv/shorts-maker}
 MEDIA=${SHORTS_MEDIA:-/srv/media}
 
 if [ $# -eq 0 ]; then
-    echo "usage: shorts <ingest|render|shell|python3|...> [args...]" >&2
+    echo "usage: shorts <fetch|ingest|render|shell|python3|...> [args...]" >&2
     exit 2
 fi
+
+# Recordings are read-only for every stage that reads them, which is all of them but one:
+# fetch exists to put a recording there. Widened for that subcommand alone, so a bug in a
+# render filter still cannot touch the only copy of a stream.
+recordings_mode=":ro"
+[ "${1}" = "fetch" ] && recordings_mode=""
+
+# Downloading is network and disk, not GPU. Claiming a card for the hour a three-hour VOD
+# takes to arrive would hold it out of the paying queue for nothing - the exact waste the
+# claim exists to prevent.
+holds_gpu=1
+[ "${1}" = "fetch" ] && holds_gpu=0
 
 # The model cache is a mount rather than something baked into the image: the container is
 # --rm, and without it every single run would re-download several gigabytes of whisper
@@ -33,19 +45,23 @@ fi
 mkdir -p "$CLAIMS" "$ROOT/work" "$ROOT/cache" "$MEDIA/clips" "$MEDIA/recordings"
 
 claim="$CLAIMS/gpu$GPU"
-echo "shorts-maker pid=$$" > "$claim"
+heartbeat=""
+if [ "$holds_gpu" = "1" ]; then
+    echo "shorts-maker pid=$$" > "$claim"
 
-# The reader treats a claim older than two minutes as abandoned, so a beat every thirty
-# seconds can miss three in a row - to a loaded machine or a stalled disk - before the
-# card is handed back while this is still using it.
-( while sleep 30; do touch "$claim" 2>/dev/null || exit 0; done ) &
-heartbeat=$!
+    # The reader treats a claim older than two minutes as abandoned, so a beat every
+    # thirty seconds can miss three in a row - to a loaded machine or a stalled disk -
+    # before the card is handed back while this is still using it.
+    ( while sleep 30; do touch "$claim" 2>/dev/null || exit 0; done ) &
+    heartbeat=$!
+fi
 
 # Runs on every exit path there is, which is the whole point: a claim left behind keeps a
 # card out of the queue until it expires, and the queue is the side with paying work.
 cleanup() {
-    kill "$heartbeat" 2>/dev/null || true
-    rm -f "$claim"
+    [ -n "$heartbeat" ] && kill "$heartbeat" 2>/dev/null
+    [ "$holds_gpu" = "1" ] && rm -f "$claim"
+    return 0
 }
 trap cleanup EXIT INT TERM
 
@@ -70,7 +86,13 @@ case "${1}" in
     shell) shift; set -- bash "$@" ;;
     ingest) shift; set -- python3 scripts/ingest.py "$@" ;;
     render) shift; set -- python3 scripts/render_batch.py "$@" ;;
+    fetch) shift; set -- python3 scripts/fetch.py "$@" ;;
 esac
+
+# No card for a download. Asking for one anyway would fail outright on a machine whose
+# only GPU is busy, and succeed pointlessly on one where it is free.
+gpus=(--gpus "device=$GPU")
+[ "$holds_gpu" = "1" ] || gpus=()
 
 # The code is mounted over the copy baked into the image on purpose: the image carries the
 # dependencies, this checkout carries the code. Without it every one-line fix needs a
@@ -84,7 +106,7 @@ esac
 status=0
 docker run --rm \
     "${interactive[@]}" \
-    --gpus "device=$GPU" \
+    "${gpus[@]}" \
     "${env_file[@]}" \
     "${as_you[@]}" \
     -v "$ROOT/cache:/cache" \
@@ -92,7 +114,7 @@ docker run --rm \
     -v "$ROOT/scripts:/app/scripts:ro" \
     -v "$ROOT/deploy:/app/deploy:ro" \
     -v "$ROOT/work:/app/work" \
-    -v "$MEDIA/recordings:/media/recordings:ro" \
+    -v "$MEDIA/recordings:/media/recordings$recordings_mode" \
     -v "$MEDIA/clips:/media/clips" \
     "$IMAGE" "$@" || status=$?
 exit "$status"

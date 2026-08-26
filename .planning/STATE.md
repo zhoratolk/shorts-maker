@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 13
-current_phase_name: loop-junction-transition
-status: complete
-stopped_at: Phase 13 complete (13-02 rotate derivation reads keep_segments); November batch scheduled through 2026-08-27
-last_updated: "2026-08-24T07:00:00.000Z"
-last_activity: 2026-08-23
-last_activity_desc: Phase 11 reliability fixes shipped inline; Phase 12 November backlog searched
+current_phase: 16
+current_phase_name: vod-fetch
+status: in-progress
+stopped_at: Phase 16 (VOD fetch) in flight and uncommitted; Phases 14-15 shipped (server migration + publish hardening); publish grid runs dry after 2026-08-27 01:00 UTC
+last_updated: "2026-08-27T00:00:00.000Z"
+last_activity: 2026-08-26
+last_activity_desc: Pipeline moved onto the server (Phase 14) and the publish path hardened against sixteen quiet failures (Phase 15)
 progress:
-  total_phases: 13
-  completed_phases: 13
-  total_plans: 41
-  completed_plans: 41
-  percent: 100
+  total_phases: 16
+  completed_phases: 15
+  total_plans: 44
+  completed_plans: 43
+  percent: 98
 ---
 
 # Project State
@@ -28,14 +28,19 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 
 ## Current Position
 
-Phase: 08 (hook-title-overlay) — COMPLETE (executed inline 2026-07-12, 656 tests green, real-frame visual check passed)
-Plan: 1 of 1
-Status: Phase 8 complete — all roadmap phases done
-Last activity: 2026-07-12 — Phase 08 hook banner shipped (persistent nick-plate default per personality-first content strategy)
+Phase: 16 (vod-fetch) — В РАБОТЕ, не закоммичено (`scripts/fetch.py` untracked, правки `deploy/shorts` и `deploy/Dockerfile` в рабочем дереве, тестов нет)
+Plan: 0 of 1
+Status: Phases 1-15 complete. Пайплайн живёт на сервере: таймер сам джойнит, транскрибирует и чанкует, отбор моментов остаётся судейством в сессии.
+Last activity: 2026-08-26 — Phase 14 (переезд на сервер) и Phase 15 (закалка тракта публикации, 1097 тестов)
 
 Note: Phase 2 (LLM Title & Tag Generation) has plan 02-02 still pending — Phase 3 planning/execution proceeded per project workflow while 02-02 remains open; see Pending Todos.
 
-Progress: [██████████] 100% (8/8 phases)
+Открыто помимо фазы 16:
+- Сетка пустеет после 2026-08-27 01:00 UTC — остался один слот. 28 ноябрьских кандидатов не разобраны (`work/2025-11-*/CANDIDATES.md`).
+- 19 записей в `work/_publish/queue.json` висят `scheduled` с прошедшими датами: реально вышли, реконсиляция не гонялась с последней заливки.
+- Коммит `6000ed5` не запушен.
+
+Progress: [█████████▉] 98% (15/16 phases)
 
 ## Performance Metrics
 
