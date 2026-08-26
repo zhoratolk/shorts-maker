@@ -83,3 +83,31 @@ def test_find_pauses_uses_adaptive_threshold_from_loudness(monkeypatch):
     assert result == [{"start": 1.999909, "end": 3.000113, "duration": 1.000204}]
     silencedetect_command = calls[1]
     assert "silencedetect=noise=-33.32dB:d=0.3" in silencedetect_command
+
+
+def test_a_recording_that_ends_in_silence_still_reports_that_pause():
+    """Несколько версий ffmpeg не закрывают silence_start, дошедший до конца файла.
+
+    zip() молча выбрасывал такую пару, а тишина в конце стрима — самый частый случай:
+    последняя пауза записи систематически терялась, и клип, вырезанный с конца, оставался
+    с мёртвым хвостом, о котором никто не предупредил.
+    """
+    stderr = "\n".join([
+        "[silencedetect] silence_start: 10.0",
+        "[silencedetect] silence_end: 12.5 | silence_duration: 2.5",
+        "[silencedetect] silence_start: 58.0",
+        "size=N/A time=00:01:00.00 bitrate=N/A speed=99x",
+    ])
+
+    silences = detect_silences("a.mkv", -30.0, runner=lambda *a, **k: FakeResult(stderr))
+
+    assert silences[-1] == {"start": 58.0, "end": 60.0, "duration": 2.0}
+
+
+def test_an_unclosed_silence_without_a_timestamp_is_reported_not_invented(capsys):
+    stderr = "[silencedetect] silence_start: 58.0"
+
+    silences = detect_silences("a.mkv", -30.0, runner=lambda *a, **k: FakeResult(stderr))
+
+    assert silences == []
+    assert "ends in silence" in capsys.readouterr().err

@@ -53,7 +53,7 @@ DEAD_ZONE_END_SECONDS = 16.0
 DEAD_ZONE_MAX_GAP_SECONDS = 2.5
 
 
-def dead_zone_gap(words: list[dict]) -> float:
+def dead_zone_gap(words: list[dict], clip_length: float | None = None) -> float:
     """Longest wordless stretch overlapping the clip's 8-16s dead zone.
 
     Measured over 112 published clips (2026-08-23): the retention curve is
@@ -75,15 +75,38 @@ def dead_zone_gap(words: list[dict]) -> float:
     if not usable:
         return 0.0
 
+    # The zone stops where the clip does. Measured to a fixed 16 seconds, a clip of
+    # twelve - easy to reach after aggressive jump cuts on a twenty-second moment - was
+    # warned about eight seconds of silence in a stretch that does not exist in it. False
+    # warnings on every short clip are how an operator learns to scroll past the real ones.
+    zone_end = DEAD_ZONE_END_SECONDS if clip_length is None else min(DEAD_ZONE_END_SECONDS, clip_length)
+    if zone_end <= DEAD_ZONE_START_SECONDS:
+        return 0.0
+
     edges = [(DEAD_ZONE_START_SECONDS, usable[0]["start"])]
     edges += [(prev["end"], nxt["start"]) for prev, nxt in zip(usable, usable[1:])]
-    edges.append((usable[-1]["end"], DEAD_ZONE_END_SECONDS))
+    edges.append((usable[-1]["end"], zone_end))
 
     longest = 0.0
     for gap_start, gap_end in edges:
-        overlap = min(gap_end, DEAD_ZONE_END_SECONDS) - max(gap_start, DEAD_ZONE_START_SECONDS)
+        overlap = min(gap_end, zone_end) - max(gap_start, DEAD_ZONE_START_SECONDS)
         longest = max(longest, overlap)
     return round(longest, 3)
+
+
+def _entry_length(entry: dict) -> float | None:
+    """How long the finished clip is, or None when the entry does not say.
+
+    Imported here rather than at module scope: enqueue_batch imports this module back,
+    and the shape logic lives there - duplicating it is what produced a reader that
+    crashed on every compilation while its own tests passed.
+    """
+    from scripts.enqueue_batch import clip_duration
+
+    try:
+        return clip_duration(entry)
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def dead_zone_warnings(entries: list[dict], *, max_gap: float = DEAD_ZONE_MAX_GAP_SECONDS) -> list[str]:
@@ -106,7 +129,7 @@ def dead_zone_warnings(entries: list[dict], *, max_gap: float = DEAD_ZONE_MAX_GA
             words = json.loads(words_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        gap = dead_zone_gap(words)
+        gap = dead_zone_gap(words, clip_length=_entry_length(entry))
         if gap >= max_gap:
             name = entry.get("output_filename", "<unnamed clip>")
             warnings.append(

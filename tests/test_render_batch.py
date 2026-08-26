@@ -562,3 +562,26 @@ def test_classify_loop_junction_falls_back_to_cut_without_a_similarity_score():
     from scripts.render_batch import classify_loop_junction
 
     assert classify_loop_junction(None, 5.0) == "cut"
+
+
+def test_dead_zone_stops_where_the_clip_does():
+    """Клип короче 16 секунд — обычное дело после агрессивных jumpcut'ов.
+
+    Зона считалась до фиксированных 16 с, так что предупреждение приходило про отрезок,
+    которого в клипе нет. Поток ложных предупреждений приучает пролистывать и настоящие.
+    """
+    from scripts.render_batch import dead_zone_gap
+
+    words = [{"start": 5.0, "end": 6.0, "word": "всё"}]
+
+    assert dead_zone_gap(words) == 8.0
+    assert dead_zone_gap(words, clip_length=12.0) == 4.0
+    assert dead_zone_gap(words, clip_length=7.0) == 0.0
+
+
+def test_a_clip_shorter_than_the_zone_has_no_dead_zone_at_all():
+    from scripts.render_batch import dead_zone_gap
+
+    words = [{"start": 1.0, "end": 2.0, "word": "раз"}]
+
+    assert dead_zone_gap(words, clip_length=8.0) == 0.0
