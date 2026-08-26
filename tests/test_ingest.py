@@ -307,3 +307,55 @@ def test_run_ingest_skips_frame_extraction_when_frames_already_exist(tmp_path):
     summary = run_ingest("vid.mkv", config, repo_root, runner=fake_runner)
 
     assert summary["warnings"] == []
+
+
+def test_run_ingest_surfaces_a_repetition_loop_the_subprocess_only_printed(tmp_path):
+    """A Whisper repetition loop is the one transcription failure that looks like success.
+
+    transcribe.py detects it and warns on stderr - which run_ingest captures and, on a
+    zero exit code, never looks at. The loops are also written into the transcript, and
+    that is the copy that survives being run as a subprocess.
+    """
+    output_dir = tmp_path / "out"
+    (output_dir / "transcripts").mkdir(parents=True)
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    def fake_runner(cmd, **kwargs):
+        if "transcribe.py" in cmd[1]:
+            transcript = {
+                "segments": [{"start": 0.0, "end": 5.0, "words": []}],
+                "repetition_loops": [
+                    {"start": 754.0, "end": 900.0, "text": "Вечный файт", "count": 41}
+                ],
+            }
+            (output_dir / "transcripts" / "vid.json").write_text(
+                json.dumps(transcript, ensure_ascii=False), encoding="utf-8"
+            )
+            # Exactly what the real script does: warns on stderr, exits zero.
+            return FakeResult(stdout="", stderr="[warn] transcript repeats")
+        if "chunker.py" in cmd[1]:
+            chunks_dir = repo_root / "work" / "vid" / "chunks"
+            chunks_dir.mkdir(parents=True, exist_ok=True)
+            chunk_path = chunks_dir / "chunk_0000.json"
+            chunk_path.write_text(
+                json.dumps({"index": 0, "start": 0.0, "end": 5.0, "segments": []}), encoding="utf-8"
+            )
+            return FakeResult(stdout=str(chunk_path))
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    config = {
+        "output_dir": str(output_dir),
+        "whisper": {"model": "medium", "device": "auto", "language": "auto"},
+        "jumpcuts": {"enabled": False},
+        "diarization": {"enabled": False},
+        "audio_energy": {"enabled": False},
+        "analysis": {"chunk_minutes": 35},
+        "visual": {"enabled": False},
+    }
+
+    summary = run_ingest("vid.mkv", config, repo_root, runner=fake_runner)
+
+    assert len(summary["warnings"]) == 1
+    assert "Вечный файт" in summary["warnings"][0]
+    assert "41" in summary["warnings"][0]

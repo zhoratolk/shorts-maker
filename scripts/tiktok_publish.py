@@ -27,8 +27,7 @@ import argparse
 import json
 import math
 import os
-import random
-import string
+import secrets
 import sys
 import time
 import urllib.parse
@@ -113,9 +112,20 @@ CHUNK_SIZE_DEFAULT = 10 * 1024 * 1024
 # fetch_post_status's documented terminal states (06-RESEARCH.md Pattern 1).
 TERMINAL_STATUSES = frozenset({"PUBLISH_COMPLETE", "FAILED"})
 
+# TikTok puts no upper bound on its own processing, and the status endpoint is happy to
+# answer PROCESSING_DOWNLOAD indefinitely. Polling it without a deadline hands one stuck
+# publish the power to hang the tick forever, and the tick is what moves every other
+# clip in the queue. Giving up costs nothing: publish_id is already written to the queue
+# file, so the next tick resumes the same poll where this one left off.
+MAX_STATUS_WAIT_SECONDS = 15 * 60
+
 
 class TikTokPublishError(ValueError):
     pass
+
+
+class StatusPollTimeout(TikTokPublishError):
+    """Not a verdict on the clip - the platform simply has not finished with it yet."""
 
 
 # --- Queue lifecycle -----------------------------------------------------
@@ -367,7 +377,10 @@ def run_tiktok_oauth_consent(
     transmits the code anywhere itself.
     """
     client = json.loads(Path(client_key_path).read_text(encoding="utf-8"))
-    state = "".join(random.choices(string.ascii_letters + string.digits, k=16))
+    # secrets, not random: `random` is a Mersenne Twister seeded from the clock, so a
+    # state value it produces is predictable to anyone who can guess when the flow ran -
+    # which is exactly the guess a CSRF attempt against an OAuth callback has to make.
+    state = secrets.token_urlsafe(16)
 
     authorize_url = (
         f"{TIKTOK_AUTHORIZE_URL}?client_key={client['client_key']}"
@@ -526,6 +539,7 @@ def upload_and_publish(
     session=requests,
     queue_path: str = DEFAULT_QUEUE_PATH,
     poll_interval_seconds: float = 2.0,
+    max_status_wait_seconds: float = MAX_STATUS_WAIT_SECONDS,
 ) -> dict[str, Any]:
     """Orchestrates the dry-run gate -> write-ahead uploading -> gate-check
     -> init -> write-ahead publish_id -> chunked upload -> poll -> publish
@@ -581,7 +595,14 @@ def upload_and_publish(
     upload_video_chunks(data["upload_url"], entry["video_path"], chunk_size, session)
 
     status_data = fetch_post_status(access_token, entry["publish_id"], session)
+    deadline = time.monotonic() + max_status_wait_seconds
     while status_data["status"] not in TERMINAL_STATUSES:
+        if time.monotonic() >= deadline:
+            raise StatusPollTimeout(
+                f"TikTok still reports {status_data['status']} for "
+                f"clip_id={entry['clip_id']!r} after {max_status_wait_seconds:.0f}s; "
+                "publish_id is kept, so the next tick picks the poll up again"
+            )
         time.sleep(poll_interval_seconds)
         status_data = fetch_post_status(access_token, entry["publish_id"], session)
 
@@ -635,6 +656,10 @@ def _is_retryable(error: Exception) -> bool:
     Read off the HTTP status, which is what a non-permission error arrives as here, plus
     the codes TikTok uses for its own publishing limits.
     """
+    # A poll that ran out of patience is the clearest "not now" there is: the platform
+    # is still working and the entry is untouched.
+    if isinstance(error, StatusPollTimeout):
+        return True
     status = getattr(getattr(error, "response", None), "status_code", None)
     if status == 429 or (isinstance(status, int) and 500 <= status < 600):
         return True

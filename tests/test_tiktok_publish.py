@@ -1217,3 +1217,61 @@ def test_help_flag_lists_all_six_flags(capsys):
     out = capsys.readouterr().out
     for flag in ["--check", "--now", "--pause", "--kill", "--resume", "--list"]:
         assert flag in out
+
+
+def test_a_status_poll_gives_up_instead_of_spinning_forever(tmp_path):
+    """TikTok can answer PROCESSING_DOWNLOAD for as long as it likes.
+
+    Polled without a deadline, one stuck publish hangs the tick that moves the whole
+    queue. publish_id is already on disk by then, so stopping loses nothing - the next
+    tick resumes the same poll.
+    """
+    from scripts.tiktok_publish import StatusPollTimeout
+
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"0123456789")
+    queue_path = tmp_path / "tiktok_queue.json"
+
+    queue = load_queue(str(queue_path))
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(video_path), metadata_path="c.txt", caption="cap"
+    )
+    save_queue(queue, str(queue_path))
+
+    config = FakeTikTokPublishConfig(tiktok_enabled=True, tiktok_queue_path=str(queue_path))
+    session = FakeSession([
+        FakeResponse({"data": {"privacy_level_options": ["PUBLIC_TO_EVERYONE"]}}),
+        FakeResponse({"data": {"publish_id": "pub-1", "upload_url": "https://upload.example/put"}}),
+        FakeResponse({}),
+        FakeResponse({"data": {"status": "PROCESSING_DOWNLOAD", "fail_reason": ""}}),
+    ])
+
+    with pytest.raises(StatusPollTimeout):
+        upload_and_publish(
+            queue, entry, lambda: "access-token-123", config,
+            session=session, queue_path=str(queue_path),
+            max_status_wait_seconds=0,
+        )
+
+    assert entry["publish_id"] == "pub-1"
+    assert entry["status"] != PUBLISHED
+
+
+def test_giving_up_on_a_poll_does_not_spend_an_attempt():
+    """The clip is fine and the platform is still working - counting this against the
+    three-strike limit would block a queue for a slow afternoon."""
+    from scripts.tiktok_publish import StatusPollTimeout, _is_retryable
+
+    assert _is_retryable(StatusPollTimeout("still PROCESSING_DOWNLOAD")) is True
+
+
+def test_the_oauth_state_is_not_guessable():
+    """A state value from `random` comes out of a clock-seeded Mersenne Twister, which
+    is exactly the guess a CSRF attempt against the callback has to make."""
+    import inspect
+
+    import scripts.tiktok_publish as tiktok_publish
+
+    source = inspect.getsource(tiktok_publish)
+    assert "secrets.token_urlsafe" in source
+    assert "random.choices" not in source

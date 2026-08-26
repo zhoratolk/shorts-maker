@@ -1427,3 +1427,46 @@ def test_a_container_that_keeps_failing_is_eventually_blocked(tmp_path):
 
     assert entry["attempts"] == 3
     assert entry["status"] == "blocked"
+
+
+def test_a_container_poll_gives_up_instead_of_spinning_forever(tmp_path):
+    """Meta's IN_PROGRESS is an answer it can repeat forever.
+
+    Polled without a deadline, one stuck container hangs the tick that moves the whole
+    queue. container_id is already on disk by then, so stopping loses nothing - the next
+    tick resumes the same poll.
+    """
+    from scripts.instagram_publish import ContainerPollTimeout
+
+    video_path = tmp_path / "clip.mp4"
+    video_path.write_bytes(b"0123456789")
+    queue_path = tmp_path / "instagram_queue.json"
+
+    queue = load_queue(str(queue_path))
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(video_path), metadata_path="c.txt", caption="cap"
+    )
+    save_queue(queue, str(queue_path))
+
+    config = FakeInstagramPublishConfig(instagram_enabled=True, instagram_queue_path=str(queue_path))
+    session = FakeSession([
+        FakeResponse({"id": "container-1"}),
+        FakeResponse({}),
+        FakeResponse({"status_code": "IN_PROGRESS"}),
+    ])
+
+    with pytest.raises(ContainerPollTimeout):
+        upload_and_publish(
+            queue, entry, lambda: "access-token-123", config, ig_user_id="ig-user-1",
+            session=session, queue_path=str(queue_path),
+            max_status_wait_seconds=0,
+        )
+
+    assert entry["container_id"] == "container-1"
+    assert entry["status"] != PUBLISHED
+
+
+def test_giving_up_on_a_container_poll_does_not_spend_an_attempt():
+    from scripts.instagram_publish import ContainerPollTimeout, _is_retryable
+
+    assert _is_retryable(ContainerPollTimeout("still IN_PROGRESS")) is True

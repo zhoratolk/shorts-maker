@@ -141,6 +141,22 @@ def run_ingest(video_path: str, config: dict, repo_root: Path, runner=subprocess
     if result.returncode != 0:
         raise RuntimeError(f"transcribe failed: {result.stderr.strip()}")
 
+    # transcribe.py prints its repetition-loop warning to stderr, and capture_output
+    # swallows stderr on a zero exit - so the one failure that looks exactly like
+    # success never reached the operator. The loops are also recorded in the transcript
+    # itself, which is the copy that survives being run as a subprocess.
+    try:
+        transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        transcript = {}
+    for loop in transcript.get("repetition_loops") or []:
+        summary["warnings"].append(
+            f"transcript repeats {loop['text']!r} {loop['count']} times from "
+            f"{loop['start'] / 60:.0f}:{loop['start'] % 60:02.0f} - that stretch did not "
+            f"transcribe. Delete {transcript_path} and run again before searching it for "
+            "moments: a plain re-run returns this same cached transcript"
+        )
+
     jumpcuts_cfg = config.get("jumpcuts", {})
     if jumpcuts_cfg.get("enabled"):
         if not pauses_path.exists():

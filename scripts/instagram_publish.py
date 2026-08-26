@@ -140,6 +140,16 @@ _MENTION_PATTERN = re.compile(r"@\w+")
 # are terminal-but-failed and reset the entry on reconciliation.
 TERMINAL_CONTAINER_STATUSES = frozenset({"FINISHED", "ERROR", "EXPIRED"})
 
+# Meta gives its container processing no stated upper bound, and IN_PROGRESS is an
+# answer it can repeat forever. Polling with no deadline lets one stuck container hang
+# the tick that moves every other clip. Stopping costs nothing: container_id is already
+# written to the queue file, so the next tick resumes this same poll.
+MAX_STATUS_WAIT_SECONDS = 15 * 60
+
+
+class ContainerPollTimeout(ValueError):
+    """Not a verdict on the clip - Meta simply has not finished with it yet."""
+
 # Best-effort heuristic substrings (case-insensitive) that flag a Meta error
 # response as permission/access-tier related. This is documented as
 # best-effort since this project has no verified real 403 response to test
@@ -690,6 +700,7 @@ def upload_and_publish(
     session=requests,
     queue_path: str = DEFAULT_QUEUE_PATH,
     poll_interval_seconds: float = 2.0,
+    max_status_wait_seconds: float = MAX_STATUS_WAIT_SECONDS,
 ) -> dict[str, Any]:
     """Orchestrates the dry-run gate -> write-ahead uploading -> container
     create -> write-ahead container_id -> byte upload -> poll -> publish
@@ -742,7 +753,14 @@ def upload_and_publish(
     upload_local_video(container_id, access_token, entry["video_path"], session)
 
     status_code = poll_container_status(container_id, access_token, session)
+    deadline = time.monotonic() + max_status_wait_seconds
     while status_code not in TERMINAL_CONTAINER_STATUSES:
+        if time.monotonic() >= deadline:
+            raise ContainerPollTimeout(
+                f"Instagram still reports status_code={status_code!r} for "
+                f"clip_id={entry['clip_id']!r} after {max_status_wait_seconds:.0f}s; "
+                "container_id is kept, so the next tick picks the poll up again"
+            )
         time.sleep(poll_interval_seconds)
         status_code = poll_container_status(container_id, access_token, session)
 
@@ -779,6 +797,10 @@ def _is_retryable(error: Exception) -> bool:
     Read off the HTTP status, which is what a non-permission error arrives as here, plus
     the codes Instagram uses for its own publishing limits.
     """
+    # A poll that ran out of patience is the clearest "not now" there is: Meta is still
+    # working and the entry is untouched.
+    if isinstance(error, ContainerPollTimeout):
+        return True
     status = getattr(getattr(error, "response", None), "status_code", None)
     if status == 429 or (isinstance(status, int) and 500 <= status < 600):
         return True
