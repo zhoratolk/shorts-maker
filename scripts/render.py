@@ -12,6 +12,7 @@ from pathlib import Path
 # here so existing `from scripts.render import ...` call sites keep working.
 from scripts.render_common import (
     RenderError,
+    SOCIAL_PLATFORMS,
     TARGET_HEIGHT,
     TARGET_WIDTH,
     VALID_TRANSITIONS,
@@ -2287,10 +2288,11 @@ def main() -> None:
     parser.add_argument("--outro-fps", type=int, default=30)
     args = parser.parse_args()
 
-    # Fixed popup order: twitch (glyph), telegram (text-only until a TG glyph
-    # exists), kick (stub). A platform is active only if it carries a label or
-    # an icon, so unconfigured slots stay silent.
-    social_platforms = ["twitch", "telegram", "kick"]
+    # Fixed popup order, shared with render_batch rather than repeated: it decides which
+    # platform gets the early anchor and which the late one, and the two copies had drifted
+    # apart, so the same plan gave different timings from the two entry points. A platform
+    # is active only if it carries a label or an icon, so unconfigured slots stay silent.
+    social_platforms = list(SOCIAL_PLATFORMS)
     social_icon_paths = {
         "twitch": args.social_twitch_icon,
         "telegram": args.social_telegram_icon,

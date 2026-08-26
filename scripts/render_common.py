@@ -12,6 +12,14 @@ from __future__ import annotations
 
 import sys
 
+
+# The order the social popups are anchored in, and the only copy of it. It decides which
+# platform gets the early slot (0.16 of the clip) and which the late one (0.58), so having
+# it written out twice meant the same plan produced different capsule timings depending on
+# whether it went through render_batch or through render.py by hand - telegram and kick
+# swapped places between the two entry points.
+SOCIAL_PLATFORMS = ("twitch", "kick", "telegram")
+
 # Output frame geometry - every vertical clip and poster targets this.
 TARGET_WIDTH = 1080
 TARGET_HEIGHT = 1920

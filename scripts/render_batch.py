@@ -35,8 +35,7 @@ if __package__ in (None, ""):
 
 from scripts.config import Config, load_config
 from scripts.crop_focus import plan_focus
-
-SOCIAL_PLATFORMS = ("twitch", "kick", "telegram")
+from scripts.render_common import SOCIAL_PLATFORMS
 
 
 class RenderBatchError(RuntimeError):

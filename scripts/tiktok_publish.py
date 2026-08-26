@@ -748,7 +748,14 @@ def reconcile_uploading(
         else:
             append_notification(_success_notification_text(entry), notifications_path)
     elif status == "FAILED":
-        entry["status"] = QUEUED
+        # A refusal that is a property of the clip - too long, a format the platform will
+        # not take - comes back identically every time, and resetting to QUEUED with no
+        # count meant re-initialising the upload and re-sending every byte on every tick,
+        # forever, burning quota and bandwidth on something already decided and pushing
+        # the clips behind it further back each pass.
+        entry["attempts"] = entry.get("attempts", 0) + 1
+        entry["last_error"] = f"publish {status}: {status_data.get('fail_reason', '')}"[:500]
+        entry["status"] = BLOCKED if entry["attempts"] >= MAX_UPLOAD_ATTEMPTS else QUEUED
         entry["publish_id"] = None
         entry["updated_at"] = datetime.now(timezone.utc).isoformat()
     # else: still in-flight (PROCESSING_UPLOAD/PROCESSING_DOWNLOAD) - leave

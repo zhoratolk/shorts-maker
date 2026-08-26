@@ -893,7 +893,17 @@ def reconcile_uploading(
         entry["media_id"] = media_id
         entry["updated_at"] = datetime.now(timezone.utc).isoformat()
     elif status_code in ("ERROR", "EXPIRED"):
-        entry["status"] = QUEUED
+        # A refusal that is a property of the clip - too long, a format the platform will
+        # not take - comes back identically every time, and resetting to QUEUED with no
+        # count meant re-creating the container and re-uploading every byte on every tick,
+        # forever, burning quota and bandwidth on something already decided and pushing
+        # the clips behind it further back each pass.
+        entry["attempts"] = entry.get("attempts", 0) + 1
+        entry["last_error"] = f"container {status_code}"
+        if entry["attempts"] >= MAX_UPLOAD_ATTEMPTS:
+            entry["status"] = BLOCKED
+        else:
+            entry["status"] = QUEUED
         entry["container_id"] = None
         entry["updated_at"] = datetime.now(timezone.utc).isoformat()
     # else: still in-flight - leave untouched, this is legitimately not

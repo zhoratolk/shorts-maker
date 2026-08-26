@@ -1402,3 +1402,28 @@ def test_the_consent_state_is_not_guessable(tmp_path, monkeypatch):
 
     assert states[0] != states[1]
     assert len(states[0]) >= 20
+
+
+def test_a_container_that_keeps_failing_is_eventually_blocked(tmp_path):
+    """Отказ по свойству клипа — слишком длинный, неподдерживаемый формат — приходит
+    одинаковым каждый раз.
+
+    Сброс в QUEUED без счётчика означал пересоздание контейнера и повторную заливку всех
+    байтов на каждом тике, бесконечно: квота и трафик горят на заведомо обречённой
+    загрузке, а живые клипы отодвигаются каждым проходом.
+    """
+    queue = {"entries": []}
+    entry = enqueue(queue, clip_id="clip-1", video_path="c.mp4", metadata_path="c.txt", caption="cap")
+    entry["status"] = "uploading"
+    entry["container_id"] = "cont-1"
+
+    session = FakeSession([FakeResponse({"status_code": "ERROR"})] * 3)
+    for _ in range(3):
+        entry["status"] = "uploading"
+        entry["container_id"] = "cont-1"
+        instagram_publish.reconcile_uploading(
+            queue, entry, lambda: "token", "ig-user-1", session=session
+        )
+
+    assert entry["attempts"] == 3
+    assert entry["status"] == "blocked"

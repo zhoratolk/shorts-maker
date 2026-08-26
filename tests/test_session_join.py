@@ -434,3 +434,45 @@ class TestARebuildCannotDestroyWhatItIsReplacing:
         with open(destination, "rb") as f:
             assert f.read() == b"x" * 2000
         assert not os.path.exists(destination + ".part")
+
+
+class TestOneBadFileDoesNotStopTheRest:
+    def test_an_unreadable_recording_is_skipped(self, monkeypatch):
+        """Нулевой или недокопированный файл рядом с хорошими.
+
+        SessionError из probe_duration всплывал из find_parts и ронял весь проход:
+        манифест не писался вообще, хотя остальные сессии были готовы.
+        """
+        directory = tempfile.mkdtemp()
+        good = os.path.join(directory, "2026-08-25 14-00-00.mkv")
+        bad = os.path.join(directory, "2026-08-25 20-00-00.mkv")
+        for path in (good, bad):
+            with open(path, "wb") as f:
+                f.write(b"x" * 1000)
+
+        def probe(path):
+            if path == bad:
+                raise session.SessionError("moov atom not found")
+            return 900.0
+
+        monkeypatch.setattr(session, "probe_duration", probe)
+        monkeypatch.setattr(session, "settled", lambda path, now, quiet: True)
+
+        parts = session.find_parts(directory, 0.0, 0.0)
+
+        assert [os.path.basename(path) for path, _, _ in parts] == ["2026-08-25 14-00-00.mkv"]
+
+    def test_a_bare_manifest_name_is_written_where_it_was_asked_for(self, monkeypatch, capsys):
+        """`--manifest sessions.txt` из cron с рабочей директорией.
+
+        dirname("") и makedirs("") — FileNotFoundError на самом последнем шаге прохода.
+        """
+        directory = tempfile.mkdtemp()
+        cwd = os.getcwd()
+        os.chdir(directory)
+        try:
+            monkeypatch.setattr(session, "find_parts", lambda *a, **k: [])
+            assert session.main(["/rec", "--into", directory, "--manifest", "sessions.txt"]) == 0
+            assert os.path.exists(os.path.join(directory, "sessions.txt"))
+        finally:
+            os.chdir(cwd)

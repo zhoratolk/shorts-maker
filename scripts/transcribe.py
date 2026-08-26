@@ -184,7 +184,8 @@ def transcribe_video(
             f"[warn] {Path(video_path).name}: transcript repeats "
             f"{loop['text']!r} {loop['count']} times from "
             f"{loop['start'] / 60:.0f}:{loop['start'] % 60:02.0f} - that stretch "
-            "did not transcribe, re-run it before searching it for moments",
+            f"did not transcribe. Delete {cache_path} and run again before searching "
+            "it for moments: a plain re-run returns this same cached transcript",
             file=sys.stderr,
         )
     result = {

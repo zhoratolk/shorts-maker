@@ -235,7 +235,16 @@ def find_parts(directory: str, now: float,
             # of one, and its real start time is unknowable, so it is ordered by when it
             # was last written instead.
             begins = dt.datetime.fromtimestamp(os.path.getmtime(path))
-        parts.append((path, begins, probe_duration(path)))
+        try:
+            duration = probe_duration(path)
+        except SessionError as e:
+            # One unreadable file - a zero-byte leftover, a copy that was interrupted -
+            # used to take the whole pass with it: the error came out of here, main never
+            # reached the manifest, and every other session that was ready went unwritten
+            # too. Skipping it costs that one recording and saves the rest.
+            print(f"[warn] skipping {name}: {e}", file=sys.stderr)
+            continue
+        parts.append((path, begins, duration))
     return parts
 
 
@@ -277,7 +286,12 @@ def main(argv: list[str] | None = None) -> int:
     # inside a container whose base image greets every start with a licence notice, and a
     # caller parsing that would treat the greeting as a recording.
     if args.manifest:
-        os.makedirs(os.path.dirname(args.manifest), exist_ok=True)
+        # dirname of a bare filename is "", and makedirs("") raises - so a perfectly
+        # ordinary `--manifest sessions.txt` from a cron job with a working directory
+        # brought the whole pass down at the last step.
+        manifest_dir = os.path.dirname(args.manifest)
+        if manifest_dir:
+            os.makedirs(manifest_dir, exist_ok=True)
         with open(args.manifest, "w", encoding="utf-8") as f:
             for path in ready:
                 f.write(path + "\n")

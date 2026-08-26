@@ -2741,3 +2741,17 @@ def test_render_clip_leaves_the_hook_banner_alone_without_rotation():
         runner=_overlay_capture_runner(commands),
     )
     assert "enable='between(t,0,3.0)'" in " ".join(commands[0])
+
+
+def test_the_two_entry_points_anchor_the_popups_in_the_same_order():
+    """Порядок платформ решает, кому достанется ранний якорь, а кому поздний.
+
+    Он был выписан дважды и разошёлся, так что один и тот же план через render_batch и
+    через render.py вручную давал разные тайминги капсул — telegram и kick менялись
+    местами.
+    """
+    import scripts.render_batch as render_batch
+    from scripts.render_common import SOCIAL_PLATFORMS
+
+    assert render_batch.SOCIAL_PLATFORMS is SOCIAL_PLATFORMS
+    assert tuple(SOCIAL_PLATFORMS) == ("twitch", "kick", "telegram")
