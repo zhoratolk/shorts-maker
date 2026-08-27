@@ -217,8 +217,12 @@ class TestTheManifest:
     used where it lies and no joined file is ever written for it.
     """
 
-    def _fake_parts(self, monkeypatch, parts):
+    def _fake_parts(self, monkeypatch, parts, *, all_settled=True):
         monkeypatch.setattr(session, "find_parts", lambda directory, now, quiet: parts)
+        # main now asks each part whether it has stopped being written, and these
+        # paths do not exist on disk - settled() would answer False for every one
+        # of them and the manifest would come out empty for the wrong reason.
+        monkeypatch.setattr(session, "settled", lambda path, now, quiet: all_settled)
 
     def test_a_single_part_recording_is_listed_where_it_lies(self, monkeypatch):
         directory = pathlib.Path(tempfile.mkdtemp())
@@ -476,3 +480,71 @@ class TestOneBadFileDoesNotStopTheRest:
             assert os.path.exists(os.path.join(directory, "sessions.txt"))
         finally:
             os.chdir(cwd)
+
+
+class TestASessionStillBeingWritten:
+    """A session is only joined once every one of its parts has stopped growing.
+
+    The wait used to be applied to parts before they were grouped, which reads as
+    the same thing and is not: a recording whose last chunk is still inside the
+    quiet window was joined without it. OBS writes that final chunk when the
+    stream ends and the watcher runs every ten minutes, so a pass landing in
+    between hits this every time. The first real recording came out as a
+    45-minute "-joined-3" of a 59-minute hour, passed its own length check
+    (measured against the three parts it had), and was transcribed; the next
+    pass joined all four under another name and transcribed the hour again.
+    """
+
+    def _run(self, monkeypatch, tmp_path, parts, unsettled):
+        joined: list[list[str]] = []
+        monkeypatch.setattr(session, "find_parts", lambda directory, now, quiet: parts)
+        monkeypatch.setattr(session, "settled",
+                            lambda path, now, quiet: path not in unsettled)
+        monkeypatch.setattr(session, "already_joined", lambda parts, destination: False)
+        monkeypatch.setattr(session, "join",
+                            lambda paths, destination: joined.append(list(paths)) or destination)
+        manifest = tmp_path / "sessions.txt"
+        session.main(["/rec", "--into", "/joined", "--manifest", str(manifest)])
+        # splitlines, not split: a joined name carries the recorder's own space
+        # ("2026-08-27 02-59-25-joined-4.mkv") and would come back as two entries.
+        return joined, manifest.read_text(encoding="utf-8").splitlines()
+
+    def test_a_session_whose_last_part_is_still_growing_is_left_alone(self, monkeypatch, tmp_path):
+        parts = [
+            ("/rec/2026-08-27 02-59-25.mkv", dt.datetime(2026, 8, 27, 2, 59, 25), 900.0),
+            ("/rec/2026-08-27 03-14-27.mkv", dt.datetime(2026, 8, 27, 3, 14, 27), 900.0),
+            ("/rec/2026-08-27 03-29-27.mkv", dt.datetime(2026, 8, 27, 3, 29, 27), 900.0),
+            ("/rec/2026-08-27 03-44-29.mkv", dt.datetime(2026, 8, 27, 3, 44, 29), 864.0),
+        ]
+        joined, listed = self._run(
+            monkeypatch, tmp_path, parts, unsettled={"/rec/2026-08-27 03-44-29.mkv"})
+
+        assert joined == [], "a truncated session was joined instead of being left for later"
+        assert listed == [], "a truncated session reached the manifest"
+
+    def test_the_whole_session_is_joined_once_every_part_has_settled(self, monkeypatch, tmp_path):
+        parts = [
+            ("/rec/2026-08-27 02-59-25.mkv", dt.datetime(2026, 8, 27, 2, 59, 25), 900.0),
+            ("/rec/2026-08-27 03-14-27.mkv", dt.datetime(2026, 8, 27, 3, 14, 27), 900.0),
+            ("/rec/2026-08-27 03-29-27.mkv", dt.datetime(2026, 8, 27, 3, 29, 27), 900.0),
+            ("/rec/2026-08-27 03-44-29.mkv", dt.datetime(2026, 8, 27, 3, 44, 29), 864.0),
+        ]
+        joined, listed = self._run(monkeypatch, tmp_path, parts, unsettled=set())
+
+        assert len(joined) == 1 and len(joined[0]) == 4
+        assert listed and listed[0].endswith("-joined-4.mkv")
+
+    def test_an_unrelated_finished_session_still_goes_through(self, monkeypatch, tmp_path):
+        """One recording waiting on its tail must not hold up a different night."""
+        parts = [
+            ("/rec/2026-08-26 20-00-00.mkv", dt.datetime(2026, 8, 26, 20, 0), 900.0),
+            ("/rec/2026-08-26 20-15-00.mkv", dt.datetime(2026, 8, 26, 20, 15), 900.0),
+            ("/rec/2026-08-27 02-59-25.mkv", dt.datetime(2026, 8, 27, 2, 59, 25), 900.0),
+            ("/rec/2026-08-27 03-14-27.mkv", dt.datetime(2026, 8, 27, 3, 14, 27), 900.0),
+        ]
+        joined, listed = self._run(
+            monkeypatch, tmp_path, parts, unsettled={"/rec/2026-08-27 03-14-27.mkv"})
+
+        assert len(joined) == 1 and len(joined[0]) == 2
+        assert all("2026-08-26" in path for path in joined[0])
+        assert len(listed) == 1

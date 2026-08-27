@@ -260,11 +260,33 @@ def main(argv: list[str] | None = None) -> int:
                         help="write one usable recording path per line here")
     args = parser.parse_args(argv)
 
-    parts = find_parts(args.directory, time.time(), args.quiet_minutes * 60)
+    now = time.time()
+    quiet_seconds = args.quiet_minutes * 60
+
+    # Every readable part is collected, settled or not, and the wait is applied to the
+    # SESSION instead. Filtering parts first looked equivalent and is not: a recording
+    # whose last chunk is still inside the quiet window gets joined without it. That is
+    # not a rare race - OBS writes the final chunk when the stream ends, this runs every
+    # ten minutes, so any pass landing between "second-to-last settled" and "last
+    # settled" hits it. It happened on the first real recording: four chunks of an hour
+    # became a 45-minute "-joined-3", which passed its own check (it was measured against
+    # the three parts it had), was handed on and transcribed, and the next pass then
+    # joined all four under a different name and transcribed the same hour again.
+    parts = find_parts(args.directory, now, 0.0)
     sessions = group_sessions(parts)
     ready = []
 
     for session in sessions:
+        waiting = [path for path in session if not settled(path, now, quiet_seconds)]
+        if waiting:
+            # Said out loud rather than skipped in silence: from the outside this looks
+            # exactly like a recording the pass failed to notice.
+            print(
+                f"session starting {os.path.basename(session[0])}: still being written "
+                f"({len(waiting)} of {len(session)} part(s)), leaving it for the next pass",
+                file=sys.stderr,
+            )
+            continue
         destination = os.path.join(args.into, session_name(session))
         if args.list:
             print(f"{len(session)} part(s) -> {destination}")
