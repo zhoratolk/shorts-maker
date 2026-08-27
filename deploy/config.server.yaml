@@ -10,7 +10,13 @@ input_dir: "/media/recordings"
 output_dir: "/media/clips"
 
 whisper:
-  model: medium        # tiny | base | small | medium | large-v3
+  # Measured on this box 2026-08-27 against a quiet ten-minute stretch of a real
+  # recording, both models warm: medium transcribed 176 characters in 30.1s,
+  # large-v3 538 in 21.1s. Three times the speech and faster with it - medium
+  # spends its time struggling over near-silence that large-v3 either reads or
+  # dismisses. On a mixed game+voice track the difference is most of the quiet
+  # speech in a stream.
+  model: large-v3       # tiny | base | small | medium | large-v3
   device: cuda          # auto | cuda | cpu
   language: auto        # auto, or a fixed language code like "ru"
 
