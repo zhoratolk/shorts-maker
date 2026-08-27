@@ -1,4 +1,8 @@
 import json
+import os
+from pathlib import Path
+
+import pytest
 
 from scripts.ingest import (
     build_audio_energy_command,
@@ -8,6 +12,7 @@ from scripts.ingest import (
     build_silence_command,
     build_transcribe_command,
     run_ingest,
+    speech_source,
     video_stem,
 )
 
@@ -86,6 +91,10 @@ def test_run_ingest_happy_path_all_features_enabled(tmp_path):
     calls = []
 
     def fake_runner(cmd, **kwargs):
+        # ingest probes the recording for a second audio track before it starts, so it
+        # can warn when one is there and nothing was told which to listen to.
+        if cmd[0] == "ffprobe":
+            return FakeResult(stdout="0")
         calls.append(cmd)
         if "transcribe.py" in cmd[1]:
             transcript = {"segments": [{"start": 0.0, "end": 5.0, "words": []}]}
@@ -138,6 +147,10 @@ def test_run_ingest_skips_optional_steps_when_disabled(tmp_path):
     repo_root.mkdir()
 
     def fake_runner(cmd, **kwargs):
+        # ingest probes the recording for a second audio track before it starts, so it
+        # can warn when one is there and nothing was told which to listen to.
+        if cmd[0] == "ffprobe":
+            return FakeResult(stdout="0")
         if "transcribe.py" in cmd[1]:
             transcript = {"segments": [{"start": 0.0, "end": 5.0, "words": []}]}
             (output_dir / "transcripts" / "vid.json").write_text(json.dumps(transcript), encoding="utf-8")
@@ -177,6 +190,10 @@ def test_run_ingest_skips_cached_pauses_and_energy(tmp_path):
     repo_root.mkdir()
 
     def fake_runner(cmd, **kwargs):
+        # ingest probes the recording for a second audio track before it starts, so it
+        # can warn when one is there and nothing was told which to listen to.
+        if cmd[0] == "ffprobe":
+            return FakeResult(stdout="0")
         assert "silence.py" not in cmd[1]
         assert "audio_energy.py" not in cmd[1]
         if "transcribe.py" in cmd[1]:
@@ -216,6 +233,10 @@ def test_run_ingest_fails_open_on_diarize_error(tmp_path):
     repo_root.mkdir()
 
     def fake_runner(cmd, **kwargs):
+        # ingest probes the recording for a second audio track before it starts, so it
+        # can warn when one is there and nothing was told which to listen to.
+        if cmd[0] == "ffprobe":
+            return FakeResult(stdout="0")
         if "transcribe.py" in cmd[1]:
             transcript = {"segments": [{"start": 0.0, "end": 5.0, "words": []}]}
             (output_dir / "transcripts" / "vid.json").write_text(json.dumps(transcript), encoding="utf-8")
@@ -253,6 +274,10 @@ def test_run_ingest_raises_on_transcribe_failure(tmp_path):
     repo_root.mkdir()
 
     def fake_runner(cmd, **kwargs):
+        # ingest probes the recording for a second audio track before it starts, so it
+        # can warn when one is there and nothing was told which to listen to.
+        if cmd[0] == "ffprobe":
+            return FakeResult(stdout="0")
         return FakeResult(returncode=1, stderr="ffmpeg not found")
 
     config = {
@@ -281,6 +306,10 @@ def test_run_ingest_skips_frame_extraction_when_frames_already_exist(tmp_path):
     (frames_dir / "frame_000.jpg").write_bytes(b"")
 
     def fake_runner(cmd, **kwargs):
+        # ingest probes the recording for a second audio track before it starts, so it
+        # can warn when one is there and nothing was told which to listen to.
+        if cmd[0] == "ffprobe":
+            return FakeResult(stdout="0")
         assert "frames.py" not in cmd[1]
         if "transcribe.py" in cmd[1]:
             transcript = {"segments": [{"start": 0.0, "end": 5.0, "words": []}]}
@@ -322,6 +351,10 @@ def test_run_ingest_surfaces_a_repetition_loop_the_subprocess_only_printed(tmp_p
     repo_root.mkdir()
 
     def fake_runner(cmd, **kwargs):
+        # ingest probes the recording for a second audio track before it starts, so it
+        # can warn when one is there and nothing was told which to listen to.
+        if cmd[0] == "ffprobe":
+            return FakeResult(stdout="0")
         if "transcribe.py" in cmd[1]:
             transcript = {
                 "segments": [{"start": 0.0, "end": 5.0, "words": []}],
@@ -359,3 +392,130 @@ def test_run_ingest_surfaces_a_repetition_loop_the_subprocess_only_printed(tmp_p
     assert len(summary["warnings"]) == 1
     assert "Вечный файт" in summary["warnings"][0]
     assert "41" in summary["warnings"][0]
+
+
+class TestWhichTrackTheAnalysisListensTo:
+    """One mixed track is the OBS default and must keep behaving exactly as before.
+    A mic on its own track is the reason this exists: every analysis step should hear
+    the mic alone, while rendering keeps cutting from the recording so clips still
+    carry game audio.
+    """
+
+    def _probe(self, count):
+        def runner(cmd, **kwargs):
+            if cmd[0] == "ffprobe":
+                return FakeResult(stdout="\n".join(str(i) for i in range(count)))
+            return FakeResult()
+        return runner
+
+    def test_unset_leaves_the_recording_alone(self, tmp_path):
+        config = {"audio": {"speech_track": None}}
+        assert speech_source("rec.mkv", config, tmp_path, self._probe(1)) == "rec.mkv"
+
+    def test_no_audio_section_at_all_is_the_same_as_unset(self, tmp_path):
+        assert speech_source("rec.mkv", {}, tmp_path, self._probe(1)) == "rec.mkv"
+
+    def test_a_configured_track_is_extracted_next_to_the_recordings_work(self, tmp_path):
+        calls = []
+
+        def runner(cmd, **kwargs):
+            calls.append(cmd)
+            if cmd[0] == "ffprobe":
+                return FakeResult(stdout="0\n1")
+            open(cmd[-1], "wb").write(b"wav")
+            return FakeResult()
+
+        path = speech_source("rec.mkv", {"audio": {"speech_track": 1}}, tmp_path, runner)
+
+        assert "-map" in calls[1] and "0:a:1" in calls[1]
+        assert os.path.exists(path)
+
+    def test_the_wav_keeps_the_recordings_stem(self, tmp_path):
+        """Not cosmetic. The transcript cache, the pause file and the diarisation output
+        are all named from the stem of the path they are handed, so a wav named anything
+        else would give every recording in the project the same cache path."""
+
+        def runner(cmd, **kwargs):
+            if cmd[0] == "ffprobe":
+                return FakeResult(stdout="0\n1")
+            open(cmd[-1], "wb").write(b"wav")
+            return FakeResult()
+
+        path = speech_source("/rec/2026-08-27 02-59-25.mkv",
+                                    {"audio": {"speech_track": 1}}, tmp_path, runner)
+
+        assert Path(path).stem == video_stem("/rec/2026-08-27 02-59-25.mkv")
+
+    def test_a_track_that_is_not_there_refuses_rather_than_falling_back(self, tmp_path):
+        """Falling back to the mixed track would produce a transcript that looks entirely
+        normal and describes the wrong audio - the failure nobody catches."""
+        with pytest.raises(RuntimeError, match="which has 1"):
+            speech_source("rec.mkv", {"audio": {"speech_track": 1}}, tmp_path, self._probe(1))
+
+    def test_an_extraction_that_fails_leaves_no_half_written_wav(self, tmp_path):
+        def runner(cmd, **kwargs):
+            if cmd[0] == "ffprobe":
+                return FakeResult(stdout="0\n1")
+            open(cmd[-1], "wb").write(b"half")
+            return FakeResult(stderr="boom", returncode=1)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            speech_source("rec.mkv", {"audio": {"speech_track": 1}}, tmp_path, runner)
+
+        assert not (tmp_path / "work" / "rec" / "rec.wav").exists()
+
+    def test_an_already_extracted_wav_is_not_extracted_again(self, tmp_path):
+        calls = []
+
+        def runner(cmd, **kwargs):
+            calls.append(cmd)
+            if cmd[0] == "ffprobe":
+                return FakeResult(stdout="0\n1")
+            open(cmd[-1], "wb").write(b"wav")
+            return FakeResult()
+
+        config = {"audio": {"speech_track": 1}}
+        speech_source("rec.mkv", config, tmp_path, runner)
+        before = len(calls)
+        speech_source("rec.mkv", config, tmp_path, runner)
+
+        assert len(calls) == before + 1  # the probe, and no second extraction
+
+    def test_a_second_track_nobody_configured_is_reported(self, tmp_path):
+        """The quiet version of this going wrong: ffmpeg maps every audio stream,
+        ebur128 measures each one, and audio_energy reads both sets off one stderr as
+        though they were a single timeline. Nothing fails - the spikes are just a blend
+        of game audio and voice."""
+        output_dir = tmp_path / "out"
+
+        def fake_runner(cmd, **kwargs):
+            if cmd[0] == "ffprobe":
+                return FakeResult(stdout="0\n1")
+            if "transcribe.py" in cmd[1]:
+                (output_dir / "transcripts").mkdir(parents=True, exist_ok=True)
+                (output_dir / "transcripts" / "vid.json").write_text(
+                    json.dumps({"segments": []}), encoding="utf-8")
+                return FakeResult(stdout="")
+            if "chunker.py" in cmd[1]:
+                return FakeResult(stdout="")
+            return FakeResult(stdout="")
+
+        summary = run_ingest("vid.mkv", {"output_dir": str(output_dir)}, tmp_path, fake_runner)
+
+        assert any("2 audio tracks" in w and "speech_track" in w for w in summary["warnings"])
+
+    def test_no_such_warning_for_an_ordinary_single_track_recording(self, tmp_path):
+        output_dir = tmp_path / "out"
+
+        def fake_runner(cmd, **kwargs):
+            if cmd[0] == "ffprobe":
+                return FakeResult(stdout="0")
+            if "transcribe.py" in cmd[1]:
+                (output_dir / "transcripts").mkdir(parents=True, exist_ok=True)
+                (output_dir / "transcripts" / "vid.json").write_text(
+                    json.dumps({"segments": []}), encoding="utf-8")
+            return FakeResult(stdout="")
+
+        summary = run_ingest("vid.mkv", {"output_dir": str(output_dir)}, tmp_path, fake_runner)
+
+        assert not any("audio tracks" in w for w in summary["warnings"])

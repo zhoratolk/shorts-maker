@@ -50,6 +50,88 @@ def video_stem(video_path: str) -> str:
     return Path(video_path).stem
 
 
+SPEECH_TRACK_KEY = "speech_track"
+
+
+def audio_track_count(video_path: str, runner=subprocess.run) -> int:
+    """How many audio streams the recording carries."""
+    result = runner(
+        ["ffprobe", "-v", "error", "-select_streams", "a",
+         "-show_entries", "stream=index", "-of", "csv=p=0", video_path],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"could not read the audio streams of {video_path}: {(result.stderr or '').strip()[-300:]}"
+        )
+    return len([line for line in result.stdout.splitlines() if line.strip()])
+
+
+def build_speech_extract_command(video_path: str, track: int, destination: str) -> list[str]:
+    """Pulls one audio stream out to a 16 kHz mono wav.
+
+    16 kHz mono because that is what Whisper and the diarisation pipeline resample to
+    anyway, and doing it once here means four separate steps stop decoding an hour of
+    video each.
+    """
+    return [
+        "ffmpeg", "-v", "error", "-y", "-i", video_path,
+        "-map", f"0:a:{track}", "-vn", "-ac", "1", "-ar", "16000",
+        destination,
+    ]
+
+
+def speech_source(video_path: str, config: dict, repo_root: Path, runner=subprocess.run) -> str:
+    """The file the analysis steps should listen to.
+
+    With one mixed track - the OBS default - this is the recording itself and nothing
+    changes. With the mic on a track of its own, every analysis step should hear the mic
+    alone: game audio in the same stream is what makes Whisper drop quiet speech and what
+    makes a loud explosion read as an energy spike worth clipping.
+
+    The extracted wav is deliberately named after the recording's own stem. Whisper's
+    transcript cache, the pause file and the diarisation output are all named from the
+    stem of whatever path they are handed, so a wav called anything else would scatter
+    this recording's artefacts under a second name - and, worse, give every recording in
+    the project the same cache path.
+
+    Only the analysis side is redirected. Rendering keeps reading the recording, so clips
+    still carry game audio; a clip cut to the mic track alone would be a video of someone
+    talking over silence.
+    """
+    track = (config.get("audio") or {}).get(SPEECH_TRACK_KEY)
+    if track is None:
+        return video_path
+
+    count = audio_track_count(video_path, runner)
+    if track >= count:
+        # Not a fallback to the mixed track. A recording that transcribed off the wrong
+        # stream produces a transcript that looks entirely normal and describes the wrong
+        # audio, which is the failure that survives review; refusing to start is the only
+        # version of this that anyone notices.
+        raise RuntimeError(
+            f"config asks for audio track {track} of {video_path}, which has {count}. "
+            "Either OBS did not record the extra track or audio.speech_track is wrong - "
+            "set it back to null to use the recording as it is"
+        )
+
+    destination = repo_root / "work" / video_stem(video_path) / f"{video_stem(video_path)}.wav"
+    if destination.exists():
+        return str(destination)
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    result = runner(
+        build_speech_extract_command(video_path, track, str(destination)),
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        destination.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"could not extract audio track {track} of {video_path}: {(result.stderr or '').strip()[-300:]}"
+        )
+    return str(destination)
+
+
 def build_transcribe_command(video_path: str, transcripts_dir: str, whisper_cfg: dict) -> list[str]:
     return [
         PYTHON, "scripts/transcribe.py", video_path, transcripts_dir,
@@ -134,8 +216,28 @@ def run_ingest(video_path: str, config: dict, repo_root: Path, runner=subprocess
         "warnings": [],
     }
 
+    listen_to = speech_source(video_path, config, repo_root, runner)
+    summary["speech_source"] = listen_to
+    if listen_to == video_path:
+        # A second track that nothing was told about is the quiet version of this going
+        # wrong: ffmpeg maps every audio stream, ebur128 runs once per stream, and
+        # audio_energy reads both sets of measurements off one stderr as though they were
+        # a single timeline. The spikes that come out are a blend of game audio and voice
+        # and nothing reports a problem.
+        try:
+            tracks = audio_track_count(video_path, runner)
+        except RuntimeError:
+            tracks = 1
+        if tracks > 1:
+            summary["warnings"].append(
+                f"{Path(video_path).name} carries {tracks} audio tracks and "
+                "audio.speech_track is not set, so every analysis step is reading all of "
+                "them at once - loudness spikes and pauses will be a blend of the tracks. "
+                "Set audio.speech_track to the mic track (0 is the first)"
+            )
+
     result = runner(
-        build_transcribe_command(video_path, str(transcripts_dir), config.get("whisper", {})),
+        build_transcribe_command(listen_to, str(transcripts_dir), config.get("whisper", {})),
         capture_output=True, text=True,
     )
     if result.returncode != 0:
@@ -160,7 +262,7 @@ def run_ingest(video_path: str, config: dict, repo_root: Path, runner=subprocess
     jumpcuts_cfg = config.get("jumpcuts", {})
     if jumpcuts_cfg.get("enabled"):
         if not pauses_path.exists():
-            result = runner(build_silence_command(video_path, jumpcuts_cfg), capture_output=True, text=True)
+            result = runner(build_silence_command(listen_to, jumpcuts_cfg), capture_output=True, text=True)
             if result.returncode != 0:
                 raise RuntimeError(f"pause detection failed: {result.stderr.strip()}")
             pauses_path.parent.mkdir(parents=True, exist_ok=True)
@@ -170,7 +272,7 @@ def run_ingest(video_path: str, config: dict, repo_root: Path, runner=subprocess
     diarization_cfg = config.get("diarization", {})
     if diarization_cfg.get("enabled"):
         result = runner(
-            build_diarize_command(video_path, str(transcripts_dir), diarization_cfg),
+            build_diarize_command(listen_to, str(transcripts_dir), diarization_cfg),
             capture_output=True, text=True,
         )
         if result.returncode != 0:
@@ -185,7 +287,7 @@ def run_ingest(video_path: str, config: dict, repo_root: Path, runner=subprocess
         if energy_path.exists():
             summary["energy_path"] = str(energy_path)
         else:
-            result = runner(build_audio_energy_command(video_path, audio_energy_cfg), capture_output=True, text=True)
+            result = runner(build_audio_energy_command(listen_to, audio_energy_cfg), capture_output=True, text=True)
             if result.returncode != 0:
                 summary["warnings"].append(
                     f"audio-energy detection failed, continuing without spikes: {result.stderr.strip()[-300:]}"

@@ -117,6 +117,13 @@ class AudioConfig:
     # denoise entirely if game audio still sounds smeared.
     denoise_strength: float = 6.0
     loudnorm: bool = True
+    # Which audio track the analysis steps listen to, 0-based; None uses the
+    # recording as it is. Set it when OBS records the mic on a track of its own:
+    # transcription, pause detection, diarisation and the loudness-spike search
+    # then read the mic alone, which is what stops game audio from drowning quiet
+    # speech and stops an explosion from reading as a moment worth clipping.
+    # Rendering is unaffected - clips are cut from the recording and keep game audio.
+    speech_track: int | None = None
 
 
 @dataclasses.dataclass

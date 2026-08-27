@@ -112,6 +112,9 @@ subtitles:
   censor_wordlist: data/profanity_wordlist.yaml
 
 audio:
+  # Which audio track the analysis steps listen to (0-based); null = the recording
+  # as it is. Set when OBS puts the mic on its own track. See config.example.yaml.
+  speech_track: null
   # FFmpeg noise-reduction filter (afftdn) applied to every clip's audio.
   denoise: true
   # afftdn nr param in dB - lowered from 6 (было делало голос тоньше/резче

@@ -200,6 +200,19 @@ subtitles:
   censor_wordlist: data/profanity_wordlist.yaml
 
 audio:
+  # Which audio track the analysis steps listen to, 0-based, or null to use the
+  # recording as it is. Leave it null for a single mixed track - the OBS default.
+  #
+  # Set it when OBS records the mic on a track of its own. Transcription, pause
+  # detection, diarisation and the loudness-spike search all read this track alone,
+  # which is what stops game audio from drowning quiet speech and stops an explosion
+  # from reading as a moment worth clipping. Rendering is not affected: clips are cut
+  # from the recording and keep game audio.
+  #
+  # A file with more than one track and this left null is worse than either: ffmpeg
+  # maps every stream, ebur128 measures each one, and the readings arrive interleaved
+  # on one timeline. ingest warns when it sees that.
+  speech_track: null
   # FFmpeg noise-reduction filter (afftdn) applied to every clip's audio -
   # strips hiss/hum/fan noise picked up by the mic.
   denoise: true
