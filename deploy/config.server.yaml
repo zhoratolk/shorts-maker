@@ -163,6 +163,12 @@ hook_banner:
   enabled: true
   mode: persistent
   cta_text: "@zhorekp"
+  # Путь, а не имя: имя резолвит fontconfig, и на Linux оно не падает, а молча
+  # подставляет первый попавшийся шрифт — плашка рисуется не тем начертанием и
+  # ничего об этом не говорит. Субтитрам и обложке путь был прописан сразу,
+  # этим трём секциям — нет.
+  font: /usr/share/fonts/truetype/msfonts/ariblk.ttf
+  cta_font: /usr/share/fonts/truetype/msfonts/arialbd.ttf
 
 emphasis:
   # Мид-клип монтажные акценты (Phase 9) — транзиентные мягкие зумы на
@@ -226,6 +232,7 @@ social_overlay:
   labels:
     twitch: twitch.tv/ZhorikP
     telegram: t.me/zhorekp
+  font: /usr/share/fonts/truetype/msfonts/arialbd.ttf
 
 outro_card:
   # Анимированная концовка: ник + ссылка на самоанимирующемся градиенте.
@@ -233,6 +240,7 @@ outro_card:
   nick: ZhorikP
   tagline: "Заходите на стримы"
   cta_text: t.me/zhorekp
+  font: /usr/share/fonts/truetype/msfonts/ariblk.ttf
 
 thumbnail:
   # Обложка: кадр из готового клипа + короткая подпись поверх. Размер 9:16 -

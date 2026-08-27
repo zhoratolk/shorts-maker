@@ -573,3 +573,37 @@ def test_plan_focus_measures_a_real_file_through_the_rawvideo_pipe(test_video):
     if pct is None:
         pct = result["focus_keyframes"][0][1]
     assert 0.0 <= pct <= 100.0
+
+
+@pytest.mark.parametrize("transition", ["cut", "match_cut", "crossfade", "whip_pan", "mask_wipe"])
+def test_rotated_loop_keeps_its_audio(test_video, tmp_path, transition):
+    """Every junction transition has to come out of the rotate pass with sound.
+
+    This is the one thing a string assertion on the command cannot check, and
+    the failure is silent in both directions: ffmpeg exits 0 and the clip
+    plays, it just has no audio track. The `crossfade`, `whip_pan` and
+    `mask_wipe` junctions take the xfade path, where `acrossfade` has to drain
+    its first input to EOF before emitting - fed from an `asplit`, that leaves
+    the second branch with nothing and the filter produces zero frames. Two
+    published clips lost their audio exactly that way on 2026-08-27, while the
+    ones measured onto `match_cut` were fine because that path concats.
+    """
+    from scripts.loop import build_punch_rotate_command
+
+    output = tmp_path / f"rotated_{transition}.mp4"
+    command = build_punch_rotate_command(
+        str(test_video), str(output), 4.0, SRC_DURATION,
+        transition=transition, transition_duration=0.4, preset="ultrafast",
+    )
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+    streams = probe(output)["streams"]
+    kinds = {stream["codec_type"] for stream in streams}
+    assert "video" in kinds, f"{transition}: no video stream"
+    assert "audio" in kinds, f"{transition}: the rotated clip came out silent"
+
+    audio = next(s for s in streams if s["codec_type"] == "audio")
+    video = next(s for s in streams if s["codec_type"] == "video")
+    drift = abs(float(audio["duration"]) - float(video["duration"]))
+    assert drift < 0.6, f"{transition}: audio and video ended {drift:.2f}s apart"

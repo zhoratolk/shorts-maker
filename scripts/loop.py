@@ -219,12 +219,27 @@ def build_punch_rotate_command(
         "[0:v]split=2[setupbasev][punchbasev]",
         f"[setupbasev]trim=start=0:end={rotate_at},setpts=PTS-STARTPTS[setupv]",
         f"[punchbasev]trim=start={rotate_at},setpts=PTS-STARTPTS[punchv]",
-        "[0:a]asplit=2[setupbasea][punchbasea]",
-        f"[setupbasea]atrim=start=0:end={rotate_at},asetpts=PTS-STARTPTS[setupa]",
-        f"[punchbasea]atrim=start={rotate_at},asetpts=PTS-STARTPTS[puncha]",
     ]
+    inputs = ["-i", base_clip]
 
     if use_xfade:
+        # The audio halves come from two decodes of the same file rather than one
+        # asplit, and only on this path. acrossfade drains its FIRST input to EOF
+        # before it emits a frame, and an asplit branch cannot then hand the second
+        # branch the clip's opening - those frames went past while the punch half was
+        # being read to the end. ffmpeg reports that as one line, "No filtered frames
+        # for output stream", and still exits 0: the rotated clip comes out with no
+        # audio track at all, and the only other sign is the overlay pass that runs
+        # next failing on "Stream map '0:a' matches no streams". Two clips shipped
+        # silent that way on 2026-08-27; the ones whose junction measured `match_cut`
+        # were fine, because that path concats instead.
+        #
+        # Decoding twice costs a decode and nothing else - it is the same file, so the
+        # two halves still cannot drift apart, which is the whole reason the video
+        # split exists.
+        inputs = ["-i", base_clip, "-i", base_clip]
+        graph.append(f"[0:a]atrim=start={rotate_at},asetpts=PTS-STARTPTS[puncha]")
+        graph.append(f"[1:a]atrim=start=0:end={rotate_at},asetpts=PTS-STARTPTS[setupa]")
         # offset is on the combined [punch][setup] timeline: the overlap eats
         # into the tail of the punch half, never before it.
         offset = round(punch_length - trans_duration, 3)
@@ -233,11 +248,14 @@ def build_punch_rotate_command(
         )
         graph.append(f"[puncha][setupa]acrossfade=d={trans_duration}[aout]")
     else:
+        graph.append("[0:a]asplit=2[setupbasea][punchbasea]")
+        graph.append(f"[setupbasea]atrim=start=0:end={rotate_at},asetpts=PTS-STARTPTS[setupa]")
+        graph.append(f"[punchbasea]atrim=start={rotate_at},asetpts=PTS-STARTPTS[puncha]")
         graph.append("[punchv][puncha][setupv][setupa]concat=n=2:v=1:a=1[vout][aout]")
 
     return [
         "ffmpeg", "-y", "-loglevel", "error",
-        "-i", base_clip,
+        *inputs,
         "-filter_complex", ";".join(graph),
         "-map", "[vout]", "-map", "[aout]",
         *encode_flags(video_codec, preset, crf), "-c:a", "aac",

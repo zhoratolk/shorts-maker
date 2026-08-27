@@ -94,6 +94,14 @@ esac
 gpus=(--gpus "device=$GPU")
 [ "$holds_gpu" = "1" ] || gpus=()
 
+# data/ and assets/ are mounted for a different reason than the code: .dockerignore keeps
+# them out of the build context deliberately - they are content, not dependencies - so the
+# image has no copy of them at all to mount over. Without these two lines the profanity
+# wordlist, the censor sound and the twitch glyph do not exist inside the container, and
+# every one of those is fail-open: the run exits 0 and writes clips with no masking, no
+# social capsule and no outro card, saying so only in a warning line. Six clips were
+# rendered exactly that way on 2026-08-27 before the log was read.
+#
 # The code is mounted over the copy baked into the image on purpose: the image carries the
 # dependencies, this checkout carries the code. Without it every one-line fix needs a
 # rebuild - and worse, an edit made here runs as the old version with no sign anything is
@@ -113,6 +121,8 @@ docker run --rm \
     -v "$ROOT/config.server.yaml:/app/config.yaml:ro" \
     -v "$ROOT/scripts:/app/scripts:ro" \
     -v "$ROOT/deploy:/app/deploy:ro" \
+    -v "$ROOT/data:/app/data:ro" \
+    -v "$ROOT/assets:/app/assets:ro" \
     -v "$ROOT/work:/app/work" \
     -v "$MEDIA/recordings:/media/recordings$recordings_mode" \
     -v "$MEDIA/clips:/media/clips" \
