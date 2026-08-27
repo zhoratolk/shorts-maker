@@ -11,6 +11,15 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 
+# Created on the server by the run wrapper, not by the repository: cache/ is where the
+# whisper and diarisation weights land, and it reaches three gigabytes on a machine that
+# has run the pipeline once. Undeclared, it was sent to the daemon on every build and
+# then baked into the image by `COPY . .` - the run wrapper mounts a host directory over
+# that path anyway, so the copied weights were never even the ones being used.
+cache/
+.pytest-tmp/
+.pytest_tmp/
+
 # Credentials. These are per-machine and are mounted at run time through the env file,
 # never baked into an image that could then be copied somewhere else.
 *token*.json
