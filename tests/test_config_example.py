@@ -8,7 +8,7 @@ EXAMPLE_CONFIG_PATH = str(Path(__file__).resolve().parent.parent / "config.examp
 def test_example_config_loads_without_error():
     config = load_config(EXAMPLE_CONFIG_PATH)
 
-    assert config.whisper.model == "medium"
+    assert config.whisper.model == "large-v3"
     assert config.analysis.chunk_minutes == 35
     assert config.analysis.use_subagents is True
     assert config.analysis.require_approval is True
