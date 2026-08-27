@@ -175,7 +175,14 @@ def join(paths: list[str], destination: str) -> str:
     # briefly unreadable (a backup holding it open, an antivirus scan) turned yesterday's
     # good joined file into a stub, and the "kept for inspection" copy this raises about
     # was overwritten by the next run before anybody could look at it.
-    partial = destination + ".part"
+    # The working name keeps the destination's own extension and hides the file with a
+    # leading dot instead. Appending ".part" cost ffmpeg the only clue it has about which
+    # container to write - "Unable to choose an output format for '...mkv.part'" - so the
+    # join failed outright on every recording. Same shape fetch.py uses for a download in
+    # flight, and for the same two reasons: the extension has to survive, and a file being
+    # built must not be picked up by anything globbing this directory.
+    head, name = os.path.split(destination)
+    partial = os.path.join(head, f".joining-{name}")
     list_path = destination + ".txt"
     write_concat_list(paths, list_path)
     try:

@@ -429,15 +429,29 @@ class TestARebuildCannotDestroyWhatItIsReplacing:
                 f.write(b"x" * 2000)
             return types.SimpleNamespace(returncode=0, stderr="")
 
-        monkeypatch.setattr(session.subprocess, "run", ffmpeg_writes_the_whole_thing)
+        written: list[str] = []
+
+        def recording_ffmpeg(command, **kwargs):
+            written.append(command[-1])
+            return ffmpeg_writes_the_whole_thing(command, **kwargs)
+
+        monkeypatch.setattr(session.subprocess, "run", recording_ffmpeg)
         monkeypatch.setattr(
-            session, "probe_duration", lambda path: 20.0 if path.endswith(".part") else 10.0
+            session, "probe_duration",
+            lambda path: 20.0 if os.path.basename(path).startswith(".joining-") else 10.0,
         )
 
         assert session.join(parts, destination) == destination
         with open(destination, "rb") as f:
             assert f.read() == b"x" * 2000
-        assert not os.path.exists(destination + ".part")
+
+        # The working name has to keep the container extension. Appending ".part" left
+        # ffmpeg with nothing to infer the format from and the join failed on every
+        # recording with "Unable to choose an output format for '...mkv.part'".
+        assert written and written[0].endswith(".mkv"), written
+        assert os.path.basename(written[0]).startswith("."), "the file being built was listable"
+        leftovers = [n for n in os.listdir(directory) if n.startswith(".joining-")]
+        assert leftovers == [], leftovers
 
 
 class TestOneBadFileDoesNotStopTheRest:
