@@ -40,11 +40,6 @@ WORKDIR /app
 # gigabytes of torch and CUDA wheels. The extras are named explicitly rather than
 # installed through `.[all]` because that form needs the project itself present, which
 # would drag the code into this layer and defeat the split.
-# yt-dlp from pip rather than apt: sites change their players every few weeks and the
-# apt package is months behind, which shows up as a download that worked last month and
-# refuses today. Deliberately unpinned - a rebuild is how it gets current.
-RUN pip install --no-cache-dir yt-dlp
-
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir \
@@ -54,6 +49,13 @@ RUN pip install --no-cache-dir -r requirements.txt \
         "google-api-python-client>=2.100" \
         "google-auth-oauthlib>=1.2" \
         "google-auth-httplib2>=0.2"
+
+# yt-dlp last, after the heavy wheels, and in a layer of its own. It is unpinned on
+# purpose - a rebuild is how it learns about the player change that broke yesterday's
+# download - so it is the line most likely to be invalidated, and every layer after an
+# invalidated one is rebuilt too. Ahead of the torch install it would have made
+# refreshing a two-megabyte downloader cost a re-fetch of several gigabytes of CUDA.
+RUN pip install --no-cache-dir yt-dlp
 
 COPY . .
 RUN pip install --no-cache-dir --no-deps -e .
