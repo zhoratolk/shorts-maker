@@ -65,9 +65,15 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# -it only when there is a terminal to attach to: the same script is meant to be callable
-# from a watcher or a timer, where -i on a closed stdin makes docker fail outright.
-interactive=()
+# -t only when there is a terminal to attach to: the same script is meant to be callable
+# from a watcher or a timer, and docker refuses a TTY-enabled container when stdin is not
+# one ("cannot attach stdin to a TTY-enabled container because stdin is not a terminal").
+#
+# -i is always passed, which -t used to be bundled with. Without it docker gives the
+# container no stdin at all, so `shorts python3 - <script` over ssh or from a timer read
+# EOF, did nothing, and exited 0 - a script that silently does not run is worse than one
+# that fails. -i on its own is fine with a closed stdin; only -t needs the terminal.
+interactive=(-i)
 [ -t 0 ] && interactive=(-it)
 
 env_file=()
