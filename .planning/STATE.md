@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 16
-current_phase_name: vod-fetch
+current_phase: 17
+current_phase_name: november-remainder-on-server
 status: complete
-stopped_at: Phases 14-16 shipped (server migration, publish hardening, VOD fetch); publish grid runs dry after 2026-08-27 01:00 UTC and 28 November candidates are unsorted
-last_updated: "2026-08-27T03:00:00.000Z"
+stopped_at: Phase 17 shipped eight November clips rendered on the server; grid scheduled through 2026-08-28 09:00 UTC, 20 November candidates left unsorted
+last_updated: "2026-08-27T04:00:00.000Z"
 last_activity: 2026-08-27
-last_activity_desc: Phase 16 shipped `shorts fetch`; Phases 14-15 recorded retroactively and the skill taught where each half of the pipeline runs
+last_activity_desc: Phase 17 — first full render on the server, which surfaced three fail-open defects (unmounted data/assets, silent rotated loops, fonts by name)
 progress:
-  total_phases: 16
-  completed_phases: 16
-  total_plans: 44
-  completed_plans: 44
+  total_phases: 17
+  completed_phases: 17
+  total_plans: 45
+  completed_plans: 45
   percent: 100
 ---
 
@@ -28,19 +28,20 @@ See: .planning/PROJECT.md (updated 2026-07-07)
 
 ## Current Position
 
-Phase: 16 (vod-fetch) — COMPLETE (`aa01bf9`, 16 тестов)
+Phase: 17 (november-remainder-on-server) — COMPLETE (8 клипов в отложке, 1192 теста)
 Plan: 1 of 1
-Status: Phases 1-16 complete. Пайплайн живёт на сервере: VOD забирается по ссылке, таймер сам джойнит, транскрибирует и чанкует; отбор моментов и публикация остаются в сессии на десктопе.
+Status: Phases 1-17 complete. Пайплайн живёт на сервере: VOD забирается по ссылке, таймер сам джойнит, транскрибирует и чанкует; отбор моментов и публикация остаются в сессии на десктопе.
 Last activity: 2026-08-27 — Phase 16 (`shorts fetch`); Phases 14-15 записаны задним числом, SKILL.md научен различать десктоп и сервер
 
 Note: Phase 2 (LLM Title & Tag Generation) has plan 02-02 still pending — Phase 3 planning/execution proceeded per project workflow while 02-02 remains open; see Pending Todos.
 
 Открыто:
-- Сетка пустеет после 2026-08-27 01:00 UTC — остался один слот. 28 ноябрьских кандидатов не разобраны (`work/2025-11-*/CANDIDATES.md`).
+- Сетка занята до 2026-08-28 09:00 UTC. Из 40 ноябрьских кандидатов разобрано 20, остальные лежат в `work/2025-11-*/CANDIDATES.md`.
 - 19 записей в `work/_publish/queue.json` висят `scheduled` с прошедшими датами: реально вышли, реконсиляция не гонялась с последней заливки.
-- Коммиты `6000ed5` и `aa01bf9` не запушены.
+- Не запушено: `6000ed5`, `aa01bf9`, `9db31b6`, `de9f7ae` и всё, что раньше.
+- Рендер на сервере идёт на CPU (`libx264`), обе карты простаивают, заявка на GPU при этом держится.
 
-Progress: [██████████] 100% (16/16 phases)
+Progress: [██████████] 100% (17/17 phases)
 
 ## Performance Metrics
 
