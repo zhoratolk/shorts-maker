@@ -12,7 +12,18 @@ whisper:
   #   small      ~2 GB   decent quality
   #   medium     ~5 GB   good default on 6+ GB VRAM or a strong CPU
   #   large-v3   ~10 GB  best quality, needs 8+ GB VRAM to be practical
-  model: medium        # tiny | base | small | medium | large-v3
+  # Measured on the server's RTX 3060 on 2026-08-27, both models warm, against a
+  # quiet ten-minute stretch of a real recording: medium transcribed 176 characters
+  # in 30.1s, large-v3 538 in 21.1s. Three times the speech and faster with it -
+  # medium spends its time struggling over near-silence that large-v3 either reads
+  # or dismisses. Over a full hour of that recording the gap was 1.4x (3407 vs 4814
+  # characters), concentrated in the quiet stretches: the loud moments medium was
+  # already getting. On a mixed game+voice track that quiet speech is most of what
+  # the moment search never saw.
+  #
+  # On CPU the comparison does not hold - large-v3 is several times slower there.
+  # Drop to medium if device resolves to cpu.
+  model: large-v3      # tiny | base | small | medium | large-v3
   device: auto          # auto | cuda | cpu
   language: auto        # auto, or a fixed language code like "ru"
 
