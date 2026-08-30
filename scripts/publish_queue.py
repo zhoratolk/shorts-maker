@@ -18,6 +18,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts.metadata import strip_mature_disclaimer
+
 # Status enum - the full lifecycle a queue entry can move through.
 QUEUED = "queued"
 UPLOADING = "uploading"
@@ -378,11 +381,15 @@ def build_insert_body(
             f"({tags_total_length} chars)"
         )
 
-    full_description = description
+    # Последний рубеж перед публикацией: дисклеймер про мат канал не публикует
+    # (2026-07-18), а описание сюда может прийти из руками собранной очереди,
+    # мимо рендера метадаты. Проверка длины выше сделана до среза намеренно —
+    # ловить надо то описание, которое написали, а не то, что от него осталось.
+    full_description = strip_mature_disclaimer(description)
 
     return {
         "snippet": {
-            "title": title,
+            "title": strip_mature_disclaimer(title),
             "description": full_description,
             "tags": tags,
             "categoryId": GAMING_CATEGORY_ID,

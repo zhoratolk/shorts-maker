@@ -2202,3 +2202,14 @@ class TestTheManifestSurvivesACrashMidWrite:
         save_queue({"entries": []}, path)
 
         assert not (tmp_path / "queue.json.tmp").exists()
+
+
+def test_build_insert_body_strips_mature_disclaimer_from_description():
+    body = build_insert_body(
+        title="Заголовок",
+        description="Панчлайн.\nСодержит ненормативную лексику (замаскирована).\n\n#тег",
+        tags=["тег"],
+        publish_at="2026-09-01T09:00:00Z",
+        seq=7,
+    )
+    assert body["snippet"]["description"] == "Панчлайн.\n\n#тег"

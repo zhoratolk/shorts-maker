@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -13,6 +14,38 @@ from scripts.config import METADATA_PLATFORMS
 TWITCH_URL = "https://www.twitch.tv/zhorikp"
 TELEGRAM_URL = "https://t.me/zhorekp"
 CONTACT_FOOTER = f"Твич: {TWITCH_URL}\nТГ: {TELEGRAM_URL}"
+
+
+# Дисклеймер про мат владелец канала попросил убрать (2026-07-18), но он всё
+# равно продолжал попадать в описания: правило жило только в инструкции, а
+# инструкцию можно не выполнить. Здесь оно становится кодом — строка-дисклеймер
+# срезается на выходе, что бы ни принесли на вход.
+DISCLAIMER_LINE = re.compile(
+    r"""^\s*(?:⚠️\s*)?(?:
+          18\s*\+.*
+        | содержит\s+(?:ненормативн|нецензурн|мат\b).*
+        | .*ненормативн(?:ая|ой|ую)\s+лексик.*
+        | .*нецензурн(?:ая|ой|ую)\s+лексик.*
+        )\s*$""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def strip_mature_disclaimer(text: str) -> str:
+    """Убирает строки-дисклеймеры про мат/18+ из готового текста метадаты.
+
+    Режет только строку целиком: описание может законно упоминать что угодно
+    внутри предложения, а вычеркнутая половина фразы хуже, чем оставленная
+    целиком. Пустые строки на месте вырезанного схлопываются, чтобы между
+    текстом и хэштегами не зияла дыра.
+    """
+    kept = [line for line in text.split("\n") if not DISCLAIMER_LINE.match(line)]
+    collapsed: list[str] = []
+    for line in kept:
+        if not line.strip() and collapsed and not collapsed[-1].strip():
+            continue
+        collapsed.append(line)
+    return "\n".join(collapsed).strip("\n")
 
 
 def render_risk_subblock(risk: dict) -> str:
@@ -46,12 +79,13 @@ def render_metadata_text(platforms_data: dict) -> str:
                 f"Title (EN): {fields['title_en']}\n" if fields.get("title_en") else ""
             )
             body = (
-                f"Title: {fields['title']}\n{title_en}\n"
-                f"Description:\n{fields['description']}\n\n{CONTACT_FOOTER}\n\n"
+                f"Title: {strip_mature_disclaimer(fields['title'])}\n{title_en}\n"
+                f"Description:\n{strip_mature_disclaimer(fields['description'])}\n\n"
+                f"{CONTACT_FOOTER}\n\n"
                 f"Tags: {', '.join(fields['tags'])}"
             )
         else:
-            body = fields["caption"]
+            body = strip_mature_disclaimer(fields["caption"])
         if "risk" in fields:
             body = f"{body}\n\n{render_risk_subblock(fields['risk'])}"
         sections.append(f"{header}\n{body}")

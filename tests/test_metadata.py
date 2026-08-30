@@ -1,6 +1,6 @@
 import pytest
 
-from scripts.metadata import CONTACT_FOOTER, TELEGRAM_URL, TWITCH_URL, render_metadata_text, write_metadata_file
+from scripts.metadata import CONTACT_FOOTER, TELEGRAM_URL, TWITCH_URL, render_metadata_text, strip_mature_disclaimer, write_metadata_file
 
 
 def test_render_metadata_text_youtube_block():
@@ -141,3 +141,44 @@ def test_render_metadata_text_risk_subblock_none_level_still_renders():
 
     assert "Monetization risk (advisory)" in text
     assert "none" in text
+
+
+# --- дисклеймер про мат: срезается кодом, а не памятью того, кто пишет метадату
+
+
+def test_strip_mature_disclaimer_removes_whole_line_and_gap():
+    text = (
+        "Товарищ вытащил себе ноги и умер от болевого шока.\n"
+        "Содержит ненормативную лексику (замаскирована).\n"
+        "\n"
+        "#barotrauma #стрим"
+    )
+    assert strip_mature_disclaimer(text) == (
+        "Товарищ вытащил себе ноги и умер от болевого шока.\n\n#barotrauma #стрим"
+    )
+
+
+def test_strip_mature_disclaimer_removes_age_warning_prefix_line():
+    assert strip_mature_disclaimer("⚠️ 18+ жёсткий момент\nОписание.") == "Описание."
+
+
+def test_strip_mature_disclaimer_keeps_line_that_only_mentions_it_mid_sentence():
+    text = "Спор о том, кто тут ругается матом, закончился ничем."
+    assert strip_mature_disclaimer(text) == text
+
+
+def test_render_metadata_text_drops_disclaimer_from_description_and_caption():
+    rendered = render_metadata_text(
+        {
+            "youtube": {
+                "title": "Заголовок",
+                "description": "Первая строка.\nСодержит ненормативную лексику (замаскирована).",
+                "tags": ["тег"],
+            },
+            "tiktok": {"caption": "Капшн 💀\n18+ осторожно"},
+        }
+    )
+    assert "ненормативную" not in rendered
+    assert "18+" not in rendered
+    assert "Первая строка." in rendered
+    assert "Капшн 💀" in rendered
