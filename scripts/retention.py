@@ -335,6 +335,27 @@ def _load_tag_map(publish_queue_path: str) -> dict[str, dict]:
     return tag_map
 
 
+def _window_start(start_date: str, published_at: str | None) -> str:
+    """Clamps the query window to the day the video was published.
+
+    A video has no retention data from before it existed, so a wider window
+    returns the identical curve - but YouTube charges for the span anyway:
+    measured 2026-09-04 on one video, the same 100-point curve took 38.5s from
+    2005-04-23, 14.3s from 2015, 8.6s from 2023 and 0.4s from 90 days back. At
+    292 videos that default turned a few minutes of work into two hours.
+
+    Falls back to start_date when the publish date is missing or malformed -
+    slow beats wrong, and a caller that deliberately asked for a narrower
+    window than the video's lifetime still gets it.
+    """
+    if not published_at:
+        return start_date
+    day = published_at[:10]
+    if len(day) != 10 or day[4] != "-" or day[7] != "-":
+        return start_date
+    return max(start_date, day)
+
+
 def build_records(
     analytics_service,
     channel_id: str,
@@ -350,7 +371,10 @@ def build_records(
     records = []
     for video in videos:
         video_id = video["video_id"]
-        curve = fetch_retention_curve(analytics_service, channel_id, video_id, start_date, end_date)
+        curve = fetch_retention_curve(
+            analytics_service, channel_id, video_id,
+            _window_start(start_date, video.get("published_at")), end_date,
+        )
         extra = tag_map.get(video_id, {})
         records.append(
             {

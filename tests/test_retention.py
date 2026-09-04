@@ -10,6 +10,7 @@ from scripts.retention import (
     summarize_retention,
     write_retention_insights,
     _load_tag_map,
+    _window_start,
 )
 
 
@@ -218,3 +219,19 @@ def test_build_records_attaches_tag_and_analysis():
     records = build_records(service, "chan", videos, "2024-01-01", "2024-02-01", tag_map)
     assert records[0]["tag"] == "clutch"
     assert records[0]["analysis"]["length_signal"] == "could_be_longer"
+
+
+# --- окно запроса: ширина стоит времени, а данных не добавляет
+
+
+def test_window_start_clamps_to_publish_date():
+    assert _window_start("2005-04-23", "2026-08-29T02:15:31Z") == "2026-08-29"
+
+
+def test_window_start_keeps_narrower_caller_window():
+    assert _window_start("2026-06-01", "2017-05-06T10:00:00Z") == "2026-06-01"
+
+
+def test_window_start_falls_back_when_publish_date_missing_or_broken():
+    assert _window_start("2005-04-23", None) == "2005-04-23"
+    assert _window_start("2005-04-23", "не дата") == "2005-04-23"
