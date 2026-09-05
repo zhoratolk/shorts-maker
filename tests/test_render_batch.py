@@ -585,3 +585,59 @@ def test_a_clip_shorter_than_the_zone_has_no_dead_zone_at_all():
     words = [{"start": 1.0, "end": 2.0, "word": "раз"}]
 
     assert dead_zone_gap(words, clip_length=8.0) == 0.0
+
+
+# --- two-key features: config switch on, plan field missing -----------------
+# The silent-no-op class of bug the 2026-08-27..09-04 batches ran into: the
+# flag reaches render.py, the per-entry gate finds nothing, and 40 clips ship
+# without a cold open, a punch zoom or a loop while every log line looks fine.
+
+
+def test_unused_feature_warnings_flags_a_batch_with_no_cold_open():
+    from scripts.render_batch import unused_feature_warnings
+
+    config = make_config(cold_open={"enabled": True})
+    warnings = unused_feature_warnings(config, [{"output_filename": "clip.mp4"}])
+    assert len(warnings) == 1
+    assert "cold_open" in warnings[0]
+
+
+def test_unused_feature_warnings_quiet_when_one_entry_has_the_field():
+    from scripts.render_batch import unused_feature_warnings
+
+    config = make_config(cold_open={"enabled": True})
+    entries = [{"output_filename": "a.mp4"}, {"cold_open": {"at": 1.0, "duration": 2.0}}]
+    assert unused_feature_warnings(config, entries) == []
+
+
+def test_unused_feature_warnings_quiet_when_the_feature_is_off():
+    from scripts.render_batch import unused_feature_warnings
+
+    config = make_config(cold_open={"enabled": False}, loop={"enabled": False},
+                         emphasis={"enabled": False})
+    assert unused_feature_warnings(config, [{"output_filename": "clip.mp4"}]) == []
+
+
+def test_unused_feature_warnings_covers_loop_and_emphasis():
+    from scripts.render_batch import unused_feature_warnings
+
+    config = make_config(cold_open={"enabled": False}, loop={"enabled": True},
+                         emphasis={"enabled": True})
+    warnings = unused_feature_warnings(config, [{"output_filename": "clip.mp4"}])
+    assert len(warnings) == 2
+    assert any("loop" in w for w in warnings)
+    assert any("emphasis_moves" in w for w in warnings)
+
+
+def test_unused_feature_warnings_punch_zoom_needs_a_zoom_clip():
+    from scripts.render_batch import unused_feature_warnings
+
+    config = make_config(cold_open={"enabled": False}, loop={"enabled": False},
+                         emphasis={"enabled": False})
+    padded = [{"output_filename": "clip.mp4", "crop_style": "pad"}]
+    assert unused_feature_warnings(config, padded) == []
+
+    zoomed = [{"output_filename": "clip.mp4", "crop_style": "zoom"}]
+    warnings = unused_feature_warnings(config, zoomed)
+    assert len(warnings) == 1
+    assert "punch_zoom_at" in warnings[0]

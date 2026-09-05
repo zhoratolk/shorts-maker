@@ -313,6 +313,52 @@ def autoframe_entries(
     return changed, warnings
 
 
+def unused_feature_warnings(config: Config, entries: list[dict]) -> list[str]:
+    """One warning per feature switched on in config but absent from every plan entry.
+
+    These features are gated by two keys that have to agree: the config switch,
+    and a per-clip field SKILL.md step 5 is supposed to write. With the switch
+    on and the field missing, render.py's per-entry gate renders nothing at
+    all - no error, no log line, no visible difference except the effect the
+    clip never got. That is how cold_open, punch_zoom_at and loop disappeared
+    from four batches in a row (2026-08-27..2026-09-04, 40 clips, none of them
+    carrying any of the three): a hand-written plan emitter simply never wrote
+    the keys, and nothing downstream had a reason to complain.
+
+    Warns on absence across the WHOLE plan, not per clip. A clip without a cold
+    open is a judgment call - step 5 is meant to say no to most clips. Every
+    clip of a batch without one means the judgment was never made.
+    """
+    def missing(field: str) -> bool:
+        return not any(entry.get(field) for entry in entries)
+
+    warnings: list[str] = []
+    if config.cold_open.enabled and missing("cold_open"):
+        warnings.append(
+            "[warn] cold_open.enabled is on, but no plan entry carries a cold_open field - "
+            "every clip renders without a teaser. Step 5 picks the punch moment per clip."
+        )
+    if config.emphasis.enabled and missing("emphasis_moves"):
+        warnings.append(
+            "[warn] emphasis.enabled is on, but no plan entry carries emphasis_moves - "
+            "every clip renders without mid-clip punch-ins."
+        )
+    if config.loop.enabled and missing("loop"):
+        warnings.append(
+            "[warn] loop.enabled is on, but no plan entry carries a loop field - nothing in "
+            "this batch was judged loop-worthy. Expected sometimes, wrong if step 5 skipped it."
+        )
+    # punch_zoom has no config switch of its own: it is legal only on a zoom
+    # crop (render.py rejects it on pad/original-16:9), so the zoom clips are
+    # what stands in for one here.
+    if any(entry.get("crop_style") == "zoom" for entry in entries) and missing("punch_zoom_at"):
+        warnings.append(
+            "[warn] the plan has zoom-crop clips but no punch_zoom_at anywhere - no clip "
+            "snaps in on its punchline."
+        )
+    return warnings
+
+
 def split_plan(entries: list[dict]) -> tuple[list[dict], list[dict]]:
     """Splits plan entries into (regular, loop), preserving order within each
     group."""
@@ -710,6 +756,8 @@ def main() -> None:
     if not entries:
         parser.error(f"{args.plan_json} has no plan entries")
     for warning in dead_zone_warnings(entries):
+        print(warning, file=sys.stderr)
+    for warning in unused_feature_warnings(config, entries):
         print(warning, file=sys.stderr)
 
     # Imported here rather than at module scope: render.py pulls in the whole
