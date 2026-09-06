@@ -1,0 +1,16 @@
+[Unit]
+Description=Prunes superseded join files every three days
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=3d
+# A day's slack on a three day period costs nothing and lets systemd run this whenever the
+# machine is otherwise quiet.
+AccuracySec=1h
+# The joins pile up while the machine is on, so a period that was missed because it was
+# off should still run rather than wait another three days.
+Persistent=true
+Unit=shorts-prune.service
+
+[Install]
+WantedBy=timers.target

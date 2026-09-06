@@ -1,0 +1,9 @@
+[Unit]
+Description=Deletes the join files the watcher has already superseded
+# Not After=docker.service: this is plain file removal on the host, no container and no
+# GPU, so it has nothing to wait for and never touches the card the watcher borrows.
+
+[Service]
+Type=oneshot
+User=zhora
+ExecStart=/usr/bin/python3 /srv/shorts-maker/deploy/prune.py --apply
