@@ -528,6 +528,22 @@ There is no scheduled task driving this and there must not be one (removed 2026-
 
 Whenever you are asked why a clip is not in YouTube's scheduled list, check its queue status first: `queued` means it was never uploaded (`video_id` is `null`), and no amount of waiting will change that. Clips in `scheduled` status are the opposite case — already on YouTube, released by YouTube itself at their `publish_at`, with or without anything running locally. A `scheduled` entry whose `publish_at` is in the past has usually already gone live; only `--check` (or the enqueue commands, which run the same reconcile) flips it to `published` locally.
 
+### 8. Archive the recording off the server
+
+```bash
+python deploy/archive.py pull --apply
+```
+
+**Run this on the desktop, after the batch is uploaded** — it is the last step of a session, not a chore for later. The server fills at 20-50 GB per stream, and once the clips exist the recording is an archive, not working data. This copies each finished session's joined file to `F:\Запись\Архив`, checks the copy where it landed (size, and duration to within two seconds), and only then asks the server to delete the 15-minute parts it was built from.
+
+Run it without `--apply` first if you want to see what it would move; `plan` (the server half it calls) lists what it is skipping and why.
+
+It only touches a session whose join verifies against its parts *and* which already has a rendered clip carrying its stem. A single-part recording is never touched: there is no join to check it against, so `recordings/` is the only copy.
+
+The joined file stays on the server too, so re-clipping the same session needs no round trip. What goes away is the duplication — the parts and the join are the same footage, and holding both is holding the recording twice.
+
+Not to be confused with `deploy/prune.py`, which runs on a timer every three days and deletes the *superseded* joins (`-joined-3`, `-5`, `-7` … all but the newest of each session). That one never touches `recordings/` at all.
+
 ## Library-wide search
 
 Because every transcript is cached under `<config.output_dir>/transcripts/`, steps 2-5 can be re-run against any subset of already-transcribed videos to search for moments across the whole archive, not just the video just processed — skip step 1 for videos that are already cached.
