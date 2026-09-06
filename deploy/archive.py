@@ -16,6 +16,9 @@ Two halves, because the two disks are on different machines:
     python3 deploy/archive.py plan            # on the server: what is safe to move
     python deploy/archive.py pull --apply     # on the desktop: copy, verify, drop
 
+A recording the recorder wrote in one piece has no parts and no join; it moves
+as itself, and the same copy-verify-then-delete order applies.
+
 `plan` names a session only when its join verifies against its parts AND at
 least one rendered clip carries its stem - "after we made the clip" is the whole
 trigger. Everything else is left alone and said out loud.
@@ -87,16 +90,20 @@ def build_plan(media: str, quiet_seconds: float = 600.0) -> dict:
     for paths in group_sessions(parts):
         name = session_name(paths)
         stem = os.path.splitext(name)[0]
-        joined = os.path.join(sources, name)
 
+        # A recording that came out of the recorder in one piece was never
+        # joined, so the file in recordings/ IS the recording and it is what
+        # moves. This used to be skipped as "no join to verify", which had the
+        # check backwards: what is being verified is the copy that lands on F:,
+        # against the file it was copied from - and that file exists either way.
+        # The join case only differs in which file is the source.
         if len(paths) == 1:
-            # Never joined, so there is no second copy and nothing to check
-            # against - the file in recordings/ IS the recording.
-            skipped.append({"stem": stem, "why": "single-part recording, no join to verify"})
-            continue
-        if not os.path.exists(joined):
-            skipped.append({"stem": stem, "why": "no joined file in clips/sources"})
-            continue
+            joined = paths[0]
+        else:
+            joined = os.path.join(sources, name)
+            if not os.path.exists(joined):
+                skipped.append({"stem": stem, "why": "no joined file in clips/sources"})
+                continue
         if not is_clipped(stem, clips):
             skipped.append({"stem": stem, "why": "no rendered clip carries this stem yet"})
             continue
@@ -158,8 +165,11 @@ def pull(archive_dir: str, root: str, apply: bool) -> int:
         destination = os.path.join(archive_dir, name)
         gigabytes = session["size"] / 1024 ** 3
         parts_gigabytes = session["parts_size"] / 1024 ** 3
-        print(f"{session['stem']}: {gigabytes:.1f} ГБ на F:, "
-              f"{len(session['parts'])} кусков ({parts_gigabytes:.1f} ГБ) с сервера")
+        if session["parts"] == [session["joined"]]:
+            print(f"{session['stem']}: {gigabytes:.1f} ГБ на F: — запись переезжает целиком")
+        else:
+            print(f"{session['stem']}: {gigabytes:.1f} ГБ на F:, "
+                  f"{len(session['parts'])} кусков ({parts_gigabytes:.1f} ГБ) с сервера")
         if not apply:
             continue
 
