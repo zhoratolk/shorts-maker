@@ -26,6 +26,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.config import Config, load_config
+from scripts.moment_tags import canonical_tag
 from scripts.publish_queue import enqueue, interleave_loops, load_queue, save_queue
 from scripts.render_batch import is_loop_entry
 
@@ -138,7 +139,10 @@ def enqueue_batch(
             title=youtube["title"],
             description=youtube["description"],
             tags=youtube.get("tags", []),
-            moment_tag=entry.get("moment_tag"),
+            # Canonicalised on the way in, not on the way out: the queue is what
+            # retention.py reads months later, and normalising at read time would
+            # mean every future reader had to remember to do it too.
+            moment_tag=canonical_tag(entry.get("moment_tag")) or entry.get("moment_tag"),
             source_duration=clip_duration(entry),
         )
         if stem not in known:

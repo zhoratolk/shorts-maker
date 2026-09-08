@@ -359,6 +359,38 @@ def unused_feature_warnings(config: Config, entries: list[dict]) -> list[str]:
     return warnings
 
 
+def unknown_moment_tag_warnings(entries: list[dict]) -> list[str]:
+    """One warning per plan entry whose moment_tag is not in the vocabulary.
+
+    A tag outside the closed list is not a render problem - the clip comes out
+    identical - which is exactly why it needs saying here, before the render
+    spends the GPU. It is a statistics problem that only shows up months later:
+    the clip publishes, retention.py buckets it under a name nothing else uses,
+    and the moment kind it belongs to is short one data point forever. That is
+    how 234 clips produced 168 tags, 152 of them used once.
+
+    Not a gate. A batch that ships with a wrong tag is better than a batch that
+    does not ship, and the fix is a one-word edit in the plan.
+    """
+    from scripts.moment_tags import MOMENT_TAGS, canonical_tag
+
+    warnings: list[str] = []
+    for entry in entries:
+        raw = entry.get("moment_tag")
+        name = entry.get("output_filename", "<без имени>")
+        if not raw:
+            warnings.append(
+                f"[warn] {name}: no moment_tag - this clip stays out of the retention "
+                f"learning loop. Pick one of: {', '.join(MOMENT_TAGS)}"
+            )
+        elif canonical_tag(raw) is None:
+            warnings.append(
+                f"[warn] {name}: moment_tag {raw!r} is not in the vocabulary - it will "
+                f"bucket alone. Pick one of: {', '.join(MOMENT_TAGS)}"
+            )
+    return warnings
+
+
 def split_plan(entries: list[dict]) -> tuple[list[dict], list[dict]]:
     """Splits plan entries into (regular, loop), preserving order within each
     group."""
@@ -758,6 +790,8 @@ def main() -> None:
     for warning in dead_zone_warnings(entries):
         print(warning, file=sys.stderr)
     for warning in unused_feature_warnings(config, entries):
+        print(warning, file=sys.stderr)
+    for warning in unknown_moment_tag_warnings(entries):
         print(warning, file=sys.stderr)
 
     # Imported here rather than at module scope: render.py pulls in the whole

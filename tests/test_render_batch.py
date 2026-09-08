@@ -641,3 +641,42 @@ def test_unused_feature_warnings_punch_zoom_needs_a_zoom_clip():
     warnings = unused_feature_warnings(config, zoomed)
     assert len(warnings) == 1
     assert "punch_zoom_at" in warnings[0]
+
+
+# --- moment_tag vocabulary ---------------------------------------------------
+# A tag outside the closed list renders an identical clip and costs nothing now;
+# it costs a data point months later, when retention.py buckets that clip under
+# a name nothing else uses.
+
+def test_unknown_moment_tag_warnings_flags_a_tag_outside_the_vocabulary():
+    from scripts.render_batch import unknown_moment_tag_warnings
+
+    warnings = unknown_moment_tag_warnings(
+        [{"output_filename": "clip.mp4", "moment_tag": "шутка про кота"}]
+    )
+    assert len(warnings) == 1
+    assert "шутка про кота" in warnings[0]
+
+
+def test_unknown_moment_tag_warnings_accepts_an_alias():
+    from scripts.render_batch import unknown_moment_tag_warnings
+
+    assert unknown_moment_tag_warnings(
+        [{"output_filename": "clip.mp4", "moment_tag": "самоирония"}]
+    ) == []
+
+
+def test_unknown_moment_tag_warnings_flags_a_missing_tag():
+    from scripts.render_batch import unknown_moment_tag_warnings
+
+    warnings = unknown_moment_tag_warnings([{"output_filename": "clip.mp4"}])
+    assert len(warnings) == 1
+    assert "no moment_tag" in warnings[0]
+
+
+def test_unknown_moment_tag_warnings_quiet_on_a_vocabulary_tag():
+    from scripts.render_batch import unknown_moment_tag_warnings
+
+    assert unknown_moment_tag_warnings(
+        [{"output_filename": "clip.mp4", "moment_tag": "aphorism"}]
+    ) == []
