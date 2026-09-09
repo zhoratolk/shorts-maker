@@ -47,3 +47,6 @@ comments_token.json
 .coverage
 .coverage.*
 htmlcov/
+
+# Ночные замеры: содержат дословные куски транскриптов реальных записей.
+experiments/data/
