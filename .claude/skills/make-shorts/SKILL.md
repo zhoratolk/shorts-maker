@@ -105,6 +105,45 @@ On the server this is `shorts ingest "<video>"`, and the ten-minute timer has us
 
 If `ingest.py` itself exits non-zero (transcription or chunking failed — the two non-optional steps), that's a hard stop: read the printed error and fix the underlying issue (ffmpeg/model/disk) before retrying, same as any other hard failure in this pipeline.
 
+### 2b. Order the chunks by liveness (cheap, transcript-only)
+
+```bash
+python scripts/dead_zones.py "<config.output_dir>/transcripts/<video_stem>.json"
+```
+
+A four-hour session is not uniformly interesting, and its dull parts arrive in
+blocks: on 2026-09-05, ninety-six of two hundred and sixty-two minutes were two
+solid stretches of shopping, crafting and inventory sorting, and every one of
+those minutes still had to be read to find nothing in it. This prints those
+stretches from the transcript alone, in milliseconds.
+
+Read the chunks that fall OUTSIDE the printed spans first, and the ones inside
+them last. Nothing is skipped and nothing is deleted: this only changes the
+order, so a run that gets interrupted or rationed has spent its attention on
+the live part of the recording. When the output is `мёртвых зон не найдено`,
+read the chunks in their normal order — that is the common case (of three
+recordings checked, one had ninety-six minutes flagged, one twenty-four, one
+none at all).
+
+**Do not treat a flagged span as a cut.** Detection needs eighteen minutes of
+smoothing to be reliable, and that same smoothing blurs each edge by five to
+nine minutes, so the first and last few minutes of a span are ordinary play
+sitting next to the shopping. The span's core is dead; its edges are not.
+
+Only Barotrauma has a vocabulary today (`VOCABULARIES` in the script). For any
+other game the command raises `нет словаря для игры` — skip this step, read the
+chunks in order, and add a vocabulary later if that game turns out to have dead
+zones worth naming.
+
+Why this is text and not frames: it was measured both ways on 2026-09-09.
+Asking a vision model what is on screen separates dead from live at AUC 0.59,
+because in this game the crew keeps an inventory panel open during combat as
+readily as during shopping (47% of frames in the LIVE part of the recording
+show an interface). The same eighteen minutes of smoothing over shopping
+vocabulary in the transcript separates them at AUC 0.97. A dead zone in a co-op
+game is a conversational state, not a visual one — see
+[docs/video-understanding-findings.md](docs/video-understanding-findings.md).
+
 ### 3. Find candidates (pass 1)
 
 For each `chunk_NNNN.json` file, produce a `work/<video_stem>/candidates/candidates_chunk_NNNN.json` file containing a JSON list of objects `{"start": <seconds>, "end": <seconds>, "reason": "<short reason>", "coherence": <1-5, optional>, "category": "<kind of signal>"}` for every strong moment found in that chunk's segments (jokes, reactions, stories — judged from the text itself, not audio energy).

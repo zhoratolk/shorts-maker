@@ -49,4 +49,3 @@ comments_token.json
 htmlcov/
 
 # Ночные замеры: содержат дословные куски транскриптов реальных записей.
-experiments/data/
