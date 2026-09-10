@@ -147,6 +147,7 @@ def enqueue(
     moment_tag: str | None = None,
     source_duration: float | None = None,
     thumbnail_path: str | None = None,
+    opening: str | None = None,
 ) -> dict[str, Any]:
     """Appends a new entry to queue["entries"] with a sequential seq number
     (max existing seq + 1, starting at 1) and status=QUEUED. Idempotent on
@@ -164,6 +165,14 @@ def enqueue(
     attribute a published video's audience-retention curve back to the KIND
     and LENGTH of moment it was (the auto-select learning loop). Both default
     to None and never affect scheduling or upload.
+
+    opening records whether the clip's first spoken line stands on its own or
+    leans on context the viewer has not seen ("standalone"/"context"). It is
+    carried for one reason: the share of viewers who keep watching past the
+    first seconds is what decides how far a Short travels, and the standalone
+    rule is so far a hypothesis - it can only be confirmed by comparing the two
+    groups once enough labelled clips have published. Like moment_tag it never
+    affects scheduling or upload.
 
     thumbnail_path is the poster image to set as the video's custom thumbnail
     after upload. Left as None it is DERIVED from video_path - the sibling
@@ -191,6 +200,7 @@ def enqueue(
         "description": description,
         "tags": tags,
         "moment_tag": moment_tag,
+        "opening": opening,
         "source_duration": source_duration,
         "thumbnail_path": thumbnail_path,
         "status": QUEUED,

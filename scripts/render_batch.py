@@ -391,6 +391,54 @@ def unknown_moment_tag_warnings(entries: list[dict]) -> list[str]:
     return warnings
 
 
+# The two answers to "could someone who has seen nothing else follow the first
+# thing said in this clip?". Deliberately a pair rather than a score: the call is
+# made by whoever writes the plan, and a scale would invite splitting hairs over
+# a distinction that only matters at the extremes.
+OPENINGS = ("standalone", "context")
+
+
+def opening_warnings(entries: list[dict]) -> list[str]:
+    """One warning per plan entry that does not say what kind of opening it has.
+
+    Measured 2026-09-10 on 228 published clips: the share of viewers who keep
+    watching past the first seconds (YouTube's engagedViews/views, the "Реакция
+    зрителей" bar in Studio) is what decides how far a Short travels - it
+    correlates +0.35 with views, and clips that stalled at 100-250 views ran
+    17-24% while clips that reached 900+ ran 42-53%, inside the same batch on
+    the same day. Publish slot, clip length, opening brightness, opening
+    loudness and time-to-first-word explained none of the spread.
+
+    Reading the fourteen best and fourteen worst openings did: the weak ones
+    open on a reply or a reference to something the viewer has not seen ("кто
+    это врач", "тебя защитил своим кубиком", "нет дали лучший отряд"), the
+    strong ones open on a statement that stands by itself ("Лучшая зенитка в
+    игре - Дерево", "Мы сильно тонем - Мы не тонем"). A first-word regex does
+    NOT reproduce the split (42.6% vs 44.6%), so the difference is in meaning,
+    not in vocabulary - which is why this is a field someone fills in rather
+    than a check the code performs.
+
+    Recording it is the whole point: the rule is a hypothesis with a good
+    illustration, not a measured fact, and it stays that way until a few
+    batches carry the label and the two groups can be compared. Not a gate.
+    """
+    warnings: list[str] = []
+    for entry in entries:
+        value = entry.get("opening")
+        name = entry.get("output_filename", "<без имени>")
+        if value is None:
+            warnings.append(
+                f"[warn] {name}: no opening - this clip stays out of the "
+                f"standalone-opening experiment. Set one of: {', '.join(OPENINGS)}"
+            )
+        elif value not in OPENINGS:
+            warnings.append(
+                f"[warn] {name}: opening {value!r} is not one of "
+                f"{', '.join(OPENINGS)}"
+            )
+    return warnings
+
+
 def split_plan(entries: list[dict]) -> tuple[list[dict], list[dict]]:
     """Splits plan entries into (regular, loop), preserving order within each
     group."""
@@ -792,6 +840,8 @@ def main() -> None:
     for warning in unused_feature_warnings(config, entries):
         print(warning, file=sys.stderr)
     for warning in unknown_moment_tag_warnings(entries):
+        print(warning, file=sys.stderr)
+    for warning in opening_warnings(entries):
         print(warning, file=sys.stderr)
 
     # Imported here rather than at module scope: render.py pulls in the whole

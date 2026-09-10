@@ -2213,3 +2213,32 @@ def test_build_insert_body_strips_mature_disclaimer_from_description():
         seq=7,
     )
     assert body["snippet"]["description"] == "Панчлайн.\n\n#тег"
+
+
+def test_enqueue_carries_the_opening_label(tmp_path):
+    # Carried for the same reason moment_tag is: the queue is what the retention
+    # analysis reads months later, and a label recorded nowhere else is a
+    # comparison that can never be made.
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"")
+    queue = {"entries": []}
+
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(clip), metadata_path="clip.txt",
+        title="T", description="D", tags=[], opening="standalone",
+    )
+
+    assert entry["opening"] == "standalone"
+
+
+def test_enqueue_leaves_the_opening_label_empty_when_not_given(tmp_path):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"")
+    queue = {"entries": []}
+
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(clip), metadata_path="clip.txt",
+        title="T", description="D", tags=[],
+    )
+
+    assert entry["opening"] is None

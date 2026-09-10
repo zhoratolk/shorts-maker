@@ -143,6 +143,7 @@ def enqueue_batch(
             # retention.py reads months later, and normalising at read time would
             # mean every future reader had to remember to do it too.
             moment_tag=canonical_tag(entry.get("moment_tag")) or entry.get("moment_tag"),
+            opening=entry.get("opening"),
             source_duration=clip_duration(entry),
         )
         if stem not in known:

@@ -680,3 +680,36 @@ def test_unknown_moment_tag_warnings_quiet_on_a_vocabulary_tag():
     assert unknown_moment_tag_warnings(
         [{"output_filename": "clip.mp4", "moment_tag": "aphorism"}]
     ) == []
+
+
+# --- standalone openings -----------------------------------------------------
+# Measured 2026-09-10: the share of viewers who keep watching past the first
+# seconds decides how far a Short travels, and nothing the renderer controls
+# explained the spread. The label records a human judgement so the rule can be
+# checked against published clips later.
+
+def test_opening_warnings_flags_a_missing_label():
+    from scripts.render_batch import opening_warnings
+
+    warnings = opening_warnings([{"output_filename": "clip.mp4"}])
+    assert len(warnings) == 1
+    assert "no opening" in warnings[0]
+
+
+def test_opening_warnings_flags_a_value_outside_the_pair():
+    from scripts.render_batch import opening_warnings
+
+    warnings = opening_warnings(
+        [{"output_filename": "clip.mp4", "opening": "почти самостоятельное"}]
+    )
+    assert len(warnings) == 1
+    assert "почти самостоятельное" in warnings[0]
+
+
+def test_opening_warnings_quiet_on_either_label():
+    from scripts.render_batch import opening_warnings
+
+    assert opening_warnings([
+        {"output_filename": "a.mp4", "opening": "standalone"},
+        {"output_filename": "b.mp4", "opening": "context"},
+    ]) == []
