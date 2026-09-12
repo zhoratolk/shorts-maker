@@ -801,6 +801,54 @@ def _first_float(text: str) -> float | None:
     return None
 
 
+# A clip whose audio dies partway through is a total loss, and it ships without
+# a single error: five Barotrauma clips published in September played their
+# two-second teaser and then nothing, and the only reason anyone found out was
+# the channel owner watching his own feed. So the render checks the file it just
+# wrote, rather than trusting that the filtergraph did what it was told.
+SILENCE_NOISE_FLOOR_DB = -50.0
+
+# Long enough that an ordinary pause, a beat before a punchline or a quiet
+# stretch of gameplay never trips it - and short enough to catch a clip that
+# went silent for its whole second half.
+SILENCE_MAX_SPAN_SECONDS = 5.0
+
+
+def longest_silence(clip_path: str, runner=subprocess.run) -> float:
+    """Longest continuous silence in a rendered clip, in seconds."""
+    result = runner(
+        ["ffmpeg", "-hide_banner", "-nostats", "-i", clip_path,
+         "-af", f"silencedetect=noise={SILENCE_NOISE_FLOOR_DB}dB:d=1.0", "-f", "null", "-"],
+        capture_output=True, text=True, errors="replace",
+    )
+    longest = 0.0
+    for line in (getattr(result, "stderr", "") or "").splitlines():
+        if "silence_duration:" in line:
+            value = _first_float(line.split("silence_duration:")[1])
+            if value is not None:
+                longest = max(longest, value)
+    return longest
+
+
+def silence_warnings(entries: list[dict], output_dir: str, runner=subprocess.run) -> list[str]:
+    """One warning per rendered clip that goes silent for a long stretch."""
+    warnings: list[str] = []
+    for entry in entries:
+        clip_path = Path(output_dir) / entry.get("output_filename", "")
+        if not clip_path.exists():
+            continue
+        try:
+            silence = longest_silence(str(clip_path), runner)
+        except Exception:  # noqa: BLE001 - a check that cannot run is not a failure
+            continue
+        if silence >= SILENCE_MAX_SPAN_SECONDS:
+            warnings.append(
+                f"[warn] {clip_path.name}: {silence:.1f}s of silence in the finished clip - "
+                f"listen to it before publishing"
+            )
+    return warnings
+
+
 def normalize_loudness(entries: list[dict], output_dir: str, runner=subprocess.run) -> list[str]:
     """Brings every rendered clip onto the loudness target, in place.
 
@@ -1005,6 +1053,8 @@ def main() -> None:
     if config.audio.loudnorm:
         for message in normalize_loudness(rendered, output_dir):
             print(message, file=sys.stderr)
+    for message in silence_warnings(rendered, output_dir):
+        print(message, file=sys.stderr)
     if config.thumbnail.enabled:
         generate_thumbnails(config, rendered, output_dir, args.input_video)
     print(f"{len(rendered)} clips rendered into {output_dir}")

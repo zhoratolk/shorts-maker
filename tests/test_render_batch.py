@@ -782,3 +782,48 @@ def test_measure_loudness_survives_a_broken_read():
         stderr = "clip.mp4: Invalid data found when processing input"
 
     assert measure_loudness("clip.mp4", lambda *a, **k: Result()) == (None, None)
+
+
+def test_longest_silence_reads_the_silencedetect_lines():
+    from scripts.render_batch import longest_silence
+
+    class Result:
+        returncode = 0
+        stderr = (
+            "[silencedetect @ 0000] silence_start: 2.1\n"
+            "[silencedetect @ 0000] silence_end: 4.3 | silence_duration: 2.2\n"
+            "[silencedetect @ 0000] silence_end: 25.4 | silence_duration: 21.06\n"
+        )
+
+    assert longest_silence("clip.mp4", lambda *a, **k: Result()) == 21.06
+
+
+def test_silence_warnings_flags_a_clip_that_went_quiet(tmp_path):
+    # The shape five published clips shipped with: a teaser, then nothing.
+    from scripts.render_batch import silence_warnings
+
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"")
+
+    class Result:
+        returncode = 0
+        stderr = "silence_end: 25.4 | silence_duration: 21.06\n"
+
+    warnings = silence_warnings([{"output_filename": "clip.mp4"}], str(tmp_path),
+                                lambda *a, **k: Result())
+    assert len(warnings) == 1
+    assert "21.1s of silence" in warnings[0]
+
+
+def test_silence_warnings_quiet_on_an_ordinary_pause(tmp_path):
+    from scripts.render_batch import silence_warnings
+
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"")
+
+    class Result:
+        returncode = 0
+        stderr = "silence_end: 4.3 | silence_duration: 1.4\n"
+
+    assert silence_warnings([{"output_filename": "clip.mp4"}], str(tmp_path),
+                            lambda *a, **k: Result()) == []
