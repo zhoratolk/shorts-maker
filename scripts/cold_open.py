@@ -141,9 +141,9 @@ def build_cold_open_command(
 ) -> list[str]:
     """Builds the command that prepends a [at, at+duration) slice of
     `base_clip` to its own front, joined by `transition`. Both video and
-    audio are split from the SAME single input (a teaser branch trimmed off
-    the top, plus the untouched full clip), so the two streams can never
-    drift out of sync with each other.
+    audio of the teaser come from the SAME file as the clip itself - a second,
+    seeked decode of it - so the two streams can never drift out of sync with
+    each other.
 
     transition_duration is clamped to at most `duration` (a transition can't
     overlap more than the teaser itself is long) rather than raising - a
@@ -165,11 +165,25 @@ def build_cold_open_command(
     trans_duration = round(min(max(transition_duration, 0.0), duration), 3)
     use_xfade = transition != "cut" and trans_duration > 0
 
+    # The teaser comes from a SECOND decode of the same file, seeked with -ss,
+    # rather than from a split of the first. A split cannot serve this shape: the
+    # teaser sits at the end of the clip, so that branch has to be read to EOF
+    # before it yields anything, and every frame the main branch needs meanwhile
+    # has to be held in the split's buffer. On a 1080x1920 clip that is gigabytes,
+    # ffmpeg gives up on the main branch, and xfade then emits only the teaser -
+    # exit code 0, a clip 1.7 seconds long where the overlay pass pads the picture
+    # back out and the audio after the teaser is digital silence. Five published
+    # Barotrauma clips shipped exactly that way (2026-09-05 and 09-06 batches);
+    # the ones whose teaser sat earlier in the clip survived, which is why it
+    # looked random. loop.py hit the same wall on 2026-08-27 and fixed it the same
+    # way - see its comment for the audio-only half of the story.
+    #
+    # Decoding twice costs a decode and nothing else: it is the same file, so the
+    # two streams still cannot drift apart, which was the whole point of the split.
+    inputs = ["-i", base_clip, "-ss", str(at), "-t", str(duration), "-i", base_clip]
     graph = [
-        "[0:v]split=2[mainv][teaserbasev]",
-        f"[teaserbasev]trim=start={at}:end={round(at + duration, 3)},setpts=PTS-STARTPTS[teaserv]",
-        "[0:a]asplit=2[maina][teaserbasea]",
-        f"[teaserbasea]atrim=start={at}:end={round(at + duration, 3)},asetpts=PTS-STARTPTS[teasera]",
+        "[1:v]setpts=PTS-STARTPTS[teaserv]",
+        "[1:a]asetpts=PTS-STARTPTS[teasera]",
     ]
 
     if use_xfade:
@@ -179,15 +193,15 @@ def build_cold_open_command(
         offset = round(duration - trans_duration, 3)
         xfade_name = _XFADE_NAMES[transition]
         graph.append(
-            f"[teaserv][mainv]xfade=transition={xfade_name}:duration={trans_duration}:offset={offset}[vout]"
+            f"[teaserv][0:v]xfade=transition={xfade_name}:duration={trans_duration}:offset={offset}[vout]"
         )
-        graph.append(f"[teasera][maina]acrossfade=d={trans_duration}[aout]")
+        graph.append(f"[teasera][0:a]acrossfade=d={trans_duration}[aout]")
     else:
-        graph.append("[teaserv][teasera][mainv][maina]concat=n=2:v=1:a=1[vout][aout]")
+        graph.append("[teaserv][teasera][0:v][0:a]concat=n=2:v=1:a=1[vout][aout]")
 
     return [
         "ffmpeg", "-y", "-loglevel", "error",
-        "-i", base_clip,
+        *inputs,
         "-filter_complex", ";".join(graph),
         "-map", "[vout]", "-map", "[aout]",
         *encode_flags(video_codec, preset, crf), "-c:a", "aac",

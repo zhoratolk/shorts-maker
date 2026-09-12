@@ -38,11 +38,27 @@ def test_build_cold_open_command_cut_uses_plain_concat_no_xfade():
     assert "concat=n=2:v=1:a=1[vout][aout]" in graph
 
 
-def test_build_cold_open_command_teaser_trim_matches_at_and_duration():
+def test_build_cold_open_command_seeks_the_teaser_on_a_second_decode():
+    # Not a split of the first input: the teaser sits at the end of the clip, so
+    # that branch is read to EOF before it yields anything and the main branch's
+    # frames pile up in the split's buffer until ffmpeg abandons them. Five
+    # published clips came out as a 1.7-second teaser with silence after it.
     command = build_cold_open_command("base.mp4", "out.mp4", at=8.2, duration=2.5, transition="cut")
+    assert command.count("base.mp4") == 2
+    assert command[command.index("-ss") + 1] == "8.2"
+    assert command[command.index("-t") + 1] == "2.5"
     graph = _command_str(command)
-    assert "trim=start=8.2:end=10.7" in graph
-    assert "atrim=start=8.2:end=10.7" in graph
+    assert "split" not in graph
+    assert "[1:v]setpts=PTS-STARTPTS[teaserv]" in graph
+    assert "[1:a]asetpts=PTS-STARTPTS[teasera]" in graph
+
+
+def test_build_cold_open_command_joins_the_teaser_onto_the_whole_clip():
+    command = build_cold_open_command("base.mp4", "out.mp4", at=8.2, duration=2.5,
+                                      transition="whip_pan", transition_duration=0.25)
+    graph = _command_str(command)
+    assert "[teaserv][0:v]xfade=" in graph
+    assert "[teasera][0:a]acrossfade=d=0.25[aout]" in graph
 
 
 def test_build_cold_open_command_transition_duration_clamped_to_teaser_duration():
