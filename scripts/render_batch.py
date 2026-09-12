@@ -729,6 +729,112 @@ def _poster_focus(entry: dict) -> float:
     return float(entry.get("crop_focus_x", 50.0))
 
 
+# What every clip should measure after the render. render.py asks ffmpeg for
+# exactly this with a single-pass loudnorm, which rides the gain as it goes and
+# lands where it lands: measured over 59 published clips, the results spread from
+# -14.7 to -20.3 LUFS. Four LU below target is the difference between a clip that
+# plays and a clip the viewer thinks is broken, and YouTube does not make it up -
+# it turns loud uploads down and leaves quiet ones alone.
+LOUDNESS_TARGET_LUFS = -16.0
+
+# Anything inside this band is left alone. A correction under a decibel is not
+# audible and is not worth re-encoding the audio for.
+LOUDNESS_TOLERANCE_LU = 1.0
+
+# True-peak ceiling the correction must not push the clip past.
+LOUDNESS_CEILING_DBTP = -1.0
+
+
+def loudness_gain_db(measured_i: float | None, measured_tp: float | None,
+                     target: float = LOUDNESS_TARGET_LUFS,
+                     ceiling: float = LOUDNESS_CEILING_DBTP,
+                     tolerance: float = LOUDNESS_TOLERANCE_LU) -> float | None:
+    """How much to lift this clip, or None when it needs nothing.
+
+    A silent clip (ffmpeg reports -inf, or a number far below anything real)
+    gets None rather than a gigantic gain: there is nothing to amplify but the
+    noise floor, and the problem is upstream of this pass.
+    """
+    if measured_i is None or measured_i < -60.0:
+        return None
+    gain = target - measured_i
+    if abs(gain) < tolerance:
+        return None
+    if gain > 0 and measured_tp is not None:
+        # Never push the peak past the ceiling, even if that leaves the clip
+        # short of target - a clipped clip is worse than a quiet one.
+        gain = min(gain, ceiling - measured_tp)
+        if gain < tolerance:
+            return None
+    return round(gain, 1)
+
+
+def measure_loudness(clip_path: str, runner=subprocess.run) -> tuple[float | None, float | None]:
+    """(integrated LUFS, true peak dBTP) of a rendered clip, or (None, None).
+
+    Measured on the finished file rather than on the source window, which is
+    what makes this independent of everything the render does in between -
+    jump cuts, the profanity mask, a cold open, a rotated loop.
+    """
+    result = runner(
+        ["ffmpeg", "-hide_banner", "-nostats", "-i", clip_path,
+         "-af", "ebur128=peak=true", "-f", "null", "-"],
+        capture_output=True, text=True, errors="replace",
+    )
+    text = (getattr(result, "stderr", "") or "")
+    integrated = peak = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("I:") and "LUFS" in stripped:
+            integrated = _first_float(stripped)
+        elif stripped.startswith("Peak:") and "dBFS" in stripped:
+            peak = _first_float(stripped)
+    return integrated, peak
+
+
+def _first_float(text: str) -> float | None:
+    for token in text.replace(":", " ").split():
+        try:
+            return float(token)
+        except ValueError:
+            continue
+    return None
+
+
+def normalize_loudness(entries: list[dict], output_dir: str, runner=subprocess.run) -> list[str]:
+    """Brings every rendered clip onto the loudness target, in place.
+
+    Audio-only: the video stream is copied, so this costs a second or two per
+    clip and cannot change a single frame. Fail-open per clip - a measurement
+    or re-encode that errors leaves that clip exactly as it was rendered.
+    """
+    messages: list[str] = []
+    for entry in entries:
+        clip_path = Path(output_dir) / entry.get("output_filename", "")
+        if not clip_path.exists():
+            continue
+        try:
+            integrated, peak = measure_loudness(str(clip_path), runner)
+            gain = loudness_gain_db(integrated, peak)
+            if gain is None:
+                continue
+            patched = clip_path.with_suffix(".loudness.mp4")
+            result = runner(
+                ["ffmpeg", "-y", "-loglevel", "error", "-i", str(clip_path),
+                 "-c:v", "copy", "-af", f"volume={gain}dB", "-c:a", "aac", str(patched)],
+                capture_output=True, text=True, errors="replace",
+            )
+            if result.returncode != 0 or not patched.exists():
+                messages.append(f"[warn] {clip_path.name}: loudness fix failed, clip left as rendered")
+                patched.unlink(missing_ok=True)
+                continue
+            patched.replace(clip_path)
+            messages.append(f"[loudness] {clip_path.name}: {integrated:+.1f} LUFS -> {gain:+.1f} dB")
+        except Exception as error:  # noqa: BLE001 - never undo a rendered clip
+            messages.append(f"[warn] {clip_path.name}: loudness fix skipped ({error})")
+    return messages
+
+
 def generate_thumbnails(
     config: Config, entries: list[dict], output_dir: str, video_path: str
 ) -> list[str]:
@@ -896,6 +1002,9 @@ def main() -> None:
 
     if args.dry_run:
         return
+    if config.audio.loudnorm:
+        for message in normalize_loudness(rendered, output_dir):
+            print(message, file=sys.stderr)
     if config.thumbnail.enabled:
         generate_thumbnails(config, rendered, output_dir, args.input_video)
     print(f"{len(rendered)} clips rendered into {output_dir}")

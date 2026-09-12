@@ -713,3 +713,72 @@ def test_opening_warnings_quiet_on_either_label():
         {"output_filename": "a.mp4", "opening": "standalone"},
         {"output_filename": "b.mp4", "opening": "context"},
     ]) == []
+
+
+# --- loudness finalize pass -------------------------------------------------
+# Single-pass loudnorm rides the gain as it goes and lands where it lands: over
+# 59 published clips the spread was -14.7 to -20.3 LUFS against a -16 target.
+# This pass measures the finished file and lifts it, so the miss is corrected
+# where it can actually be seen rather than predicted.
+
+def test_loudness_gain_lifts_a_quiet_clip():
+    from scripts.render_batch import loudness_gain_db
+
+    assert loudness_gain_db(-20.3, -5.5) == 4.3
+
+
+def test_loudness_gain_leaves_a_clip_inside_the_band_alone():
+    from scripts.render_batch import loudness_gain_db
+
+    assert loudness_gain_db(-16.4, -1.8) is None
+
+
+def test_loudness_gain_never_pushes_the_peak_past_the_ceiling():
+    # A clip already peaking at -1.2 dBTP has 0.2 dB of headroom, which is less
+    # than the tolerance - so it is left alone rather than clipped into target.
+    from scripts.render_batch import loudness_gain_db
+
+    assert loudness_gain_db(-20.0, -1.2) is None
+
+
+def test_loudness_gain_lifts_only_as_far_as_the_headroom_allows():
+    from scripts.render_batch import loudness_gain_db
+
+    assert loudness_gain_db(-22.0, -8.0) == 6.0
+
+
+def test_loudness_gain_ignores_a_silent_clip():
+    # Nothing to amplify but the noise floor, and the real problem is upstream.
+    from scripts.render_batch import loudness_gain_db
+
+    assert loudness_gain_db(-91.0, -90.0) is None
+    assert loudness_gain_db(None, None) is None
+
+
+def test_measure_loudness_reads_the_ebur128_summary():
+    from scripts.render_batch import measure_loudness
+
+    class Result:
+        returncode = 0
+        stderr = (
+            "[Parsed_ebur128_0 @ 0000] Summary:\n"
+            "\n"
+            "  Integrated loudness:\n"
+            "    I:         -20.3 LUFS\n"
+            "    Threshold: -30.6 LUFS\n"
+            "\n"
+            "  True peak:\n"
+            "    Peak:       -5.5 dBFS\n"
+        )
+
+    assert measure_loudness("clip.mp4", lambda *a, **k: Result()) == (-20.3, -5.5)
+
+
+def test_measure_loudness_survives_a_broken_read():
+    from scripts.render_batch import measure_loudness
+
+    class Result:
+        returncode = 1
+        stderr = "clip.mp4: Invalid data found when processing input"
+
+    assert measure_loudness("clip.mp4", lambda *a, **k: Result()) == (None, None)
