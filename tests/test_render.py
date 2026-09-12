@@ -1537,11 +1537,11 @@ def test_render_clip_runs_cold_open_finalize_pass_when_enabled():
         cold_open_enabled=True, cold_open_transition="whip_pan", cold_open_transition_duration=0.25,
         runner=_overlay_capture_runner(commands),
     )
-    finalize = [c for c in commands if "-filter_complex" in c and "teaserbasev" in
+    finalize = [c for c in commands if "-filter_complex" in c and "teaserv" in
                 c[c.index("-filter_complex") + 1]]
     assert len(finalize) == 1
+    assert finalize[0][finalize[0].index("-ss") + 1] == "8.2"
     graph = finalize[0][finalize[0].index("-filter_complex") + 1]
-    assert "trim=start=8.2:end=10.7" in graph
     assert "xfade=transition=hblur:duration=0.25:offset=2.25" in graph
 
 
@@ -1591,7 +1591,7 @@ def test_render_clip_cold_open_clamps_a_window_that_overshoots_the_clip(capsys):
         cold_open_enabled=True,
         runner=_overlay_capture_runner(commands),
     )
-    assert any("teaserbasev" in " ".join(c) for c in commands)
+    assert any("teaserv" in " ".join(c) for c in commands)
     assert "clamped to" in capsys.readouterr().err
 
 
