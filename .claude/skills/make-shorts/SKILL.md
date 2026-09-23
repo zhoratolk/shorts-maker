@@ -13,7 +13,7 @@ Every command below is relative to this repo (`scripts/*.py`, `config.yaml`, `wo
 
 Two machines, and which one you are on changes the first half of this document.
 
-**The desktop** (`D:\shorts-maker`) records the stream and owns the credentials. `config.yaml`, `client_secret.json` and `upload_token.json` live here, and so does everything in step 7 — nothing on the server can publish.
+**The desktop** (`D:\shorts-maker`) records the stream and owns the credentials. `config.yaml`, `client_secret.json` and `youtube_token.json` live here, and so does everything in step 7 — nothing on the server can publish.
 
 **The server** (`/srv/shorts-maker`, two cards) does the slow half. Whisper, diarization and the render run there, in a container, reading recordings off `/srv/media` — the Samba share the desktop writes to — and putting finished clips back on it.
 
@@ -49,7 +49,7 @@ A systemd timer (`shorts-watch.timer`, every ten minutes) runs `deploy/watch.sh`
 
 ### Publishing runs on the desktop
 
-Step 7 needs `client_secret.json` and `upload_token.json`, and neither is mounted into the container, deliberately. Render on the server, then enqueue from the desktop against the clips on the share. Nothing schedules this: **enqueueing is uploading**, and it happens when you run it (see step 7).
+Step 7 needs `client_secret.json` and `youtube_token.json`, and neither is mounted into the container, deliberately. Render on the server, then enqueue from the desktop against the clips on the share. Nothing schedules this: **enqueueing is uploading**, and it happens when you run it (see step 7).
 
 ## Prerequisites
 

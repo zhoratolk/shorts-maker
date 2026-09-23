@@ -589,7 +589,11 @@ publish:
   queue_path: "work/_publish/queue.json"
   notifications_path: "work/_publish/notifications.log"
   client_secret_path: "client_secret.json"
-  upload_token_path: "upload_token.json"
+  # One token for every YouTube call this repo makes (upload, kill, analytics).
+  # Separate per-scope tokens meant separate consents against the same OAuth
+  # client, and Google evicts refresh tokens per account+client pair - that is
+  # how the upload token came back revoked on 2026-09-22.
+  upload_token_path: "youtube_token.json"
   # TikTok and Instagram each carry their own independent enabled flag, so
   # taking one platform live can never accidentally flip another.
   tiktok_enabled: false

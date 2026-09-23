@@ -50,8 +50,7 @@ DEFAULT_QUEUE_PATH = "work/_publish/queue.json"
 DEFAULT_NOTIFICATIONS_PATH = "work/_publish/notifications.log"
 
 # D-08/D-09 originally picked the narrower `youtube.upload` scope for smaller
-# blast radius if this token leaks (separate from the read-only token.json
-# used by youtube_analytics.py). A live kill-path test (2026-07-08) proved
+# blast radius if this token leaks. A live kill-path test (2026-07-08) proved
 # that scope insufficient: videos.update (used by cancel_scheduled_release/
 # kill_item) returns 403 insufficientPermissions under `youtube.upload` alone.
 # Without videos.update, the pause/kill safety mechanism cannot function, so
@@ -1114,6 +1113,8 @@ def _upload_one(
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
+    from scripts.youtube_auth import DEFAULT_TOKEN_PATH
+
     parser = argparse.ArgumentParser(
         description="Local publish-queue CLI: periodic --check, manual --now override, "
         "--pause/--kill/--resume, and --list - both --check and --now route through the "
@@ -1130,7 +1131,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Attach the poster (<clip>.thumb.png) to every not-yet-uploaded entry that lacks one",
     )
     parser.add_argument("--client-secret", default="client_secret.json", help="OAuth client secret JSON path")
-    parser.add_argument("--token", default="upload_token.json", help="Cached upload-scoped OAuth token JSON path")
+    parser.add_argument("--token", default=DEFAULT_TOKEN_PATH, help="Cached OAuth token JSON path - one file for every YouTube call")
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml")
     return parser
 

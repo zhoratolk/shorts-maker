@@ -227,7 +227,11 @@ class PublishConfig:
     queue_path: str = "work/_publish/queue.json"
     notifications_path: str = "work/_publish/notifications.log"
     client_secret_path: str = "client_secret.json"
-    upload_token_path: str = "upload_token.json"
+    # One cached token for every YouTube call (upload, kill, analytics) -
+    # see scripts/youtube_auth.py for why separate per-scope tokens cost a
+    # published batch on 2026-09-22. The name stays `upload_token_path` so
+    # an existing config.yaml keeps working.
+    upload_token_path: str = "youtube_token.json"
     # TikTok (PUB-06) and Instagram (PUB-07) per-platform fields - each with
     # its own independent enabled flag (D-01), never a shared/repurposed
     # `enabled`, so toggling one platform live can never accidentally flip
