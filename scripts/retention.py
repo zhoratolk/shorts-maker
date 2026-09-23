@@ -389,7 +389,7 @@ def build_records(
 
 
 def main() -> None:
-    from scripts import youtube_analytics
+    from scripts import youtube_analytics, youtube_auth
 
     parser = argparse.ArgumentParser(
         description="Fetch per-video audience-retention curves, analyze where viewers drop off, and "
@@ -399,7 +399,7 @@ def main() -> None:
     parser.add_argument("--markdown", default=None, help="Optional path to also write the human-readable digest")
     parser.add_argument("--publish-queue", default=None, help="Publish queue JSON to attribute retention to moment tags")
     parser.add_argument("--client-secret", default="client_secret.json", help="OAuth client secret JSON path")
-    parser.add_argument("--token", default="token.json", help="Cached OAuth token JSON path")
+    parser.add_argument("--token", default=youtube_auth.DEFAULT_TOKEN_PATH, help="Cached OAuth token JSON path")
     parser.add_argument("--start-date", default=youtube_analytics.EPOCH_START_DATE, help="YYYY-MM-DD")
     parser.add_argument("--end-date", default=None, help="YYYY-MM-DD (default: today)")
     args = parser.parse_args()

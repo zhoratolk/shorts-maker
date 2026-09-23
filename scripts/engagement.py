@@ -107,10 +107,12 @@ def render(rows: list[dict]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from scripts.youtube_auth import DEFAULT_TOKEN_PATH
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--publish-queue", default="work/_publish/queue.json")
     parser.add_argument("--client-secret", default="client_secret.json")
-    parser.add_argument("--token", default="token.json")
+    parser.add_argument("--token", default=DEFAULT_TOKEN_PATH)
     parser.add_argument("--start-date", default="2026-07-01")
     parser.add_argument("--end-date", default=None)
     parser.add_argument("--cache", default="work/_analytics/engagement.json",
