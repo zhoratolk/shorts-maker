@@ -38,6 +38,11 @@ recordings_mode=":ro"
 # claim exists to prevent.
 holds_gpu=1
 [ "${1}" = "fetch" ] && holds_gpu=0
+# Same reasoning for anything the caller knows is CPU-only - shorts-watch's session scan,
+# which only lists recordings and joins parts with a stream copy. It runs every ten
+# minutes, and a claim on the card, however short, makes Zapoy's warden unload its model
+# from that card: before this, the assistant lost its LLM every ten minutes for nothing.
+[ "${SHORTS_NO_GPU:-0}" = "1" ] && holds_gpu=0
 
 # The model cache is a mount rather than something baked into the image: the container is
 # --rm, and without it every single run would re-download several gigabytes of whisper

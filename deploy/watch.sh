@@ -38,7 +38,9 @@ log "looking for finished recordings"
 # which is most recordings.
 manifest="$STATE/sessions.txt"
 : > "$manifest"
-shorts python3 deploy/session.py /media/recordings \
+# No GPU for the scan: it lists and stream-copies, and a claim here would unload Zapoy's
+# model every ten minutes even on passes that find nothing to do.
+SHORTS_NO_GPU=1 shorts python3 deploy/session.py /media/recordings \
     --into /media/clips/sources \
     --manifest /app/work/_auto/sessions.txt
 
