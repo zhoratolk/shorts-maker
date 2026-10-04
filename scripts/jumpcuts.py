@@ -75,6 +75,70 @@ def clamp_cuts_to_words(
     return trimmed
 
 
+def load_words(data) -> list[dict]:
+    """A flat {word, start, end} list, sorted, from any of the shapes the pipeline keeps.
+
+    That is a flat word list (a clip's `_words_absolute.json`), a list of segments that
+    carry `words`, or the cached transcript itself (`{"segments": [...]}`). Accepting the
+    transcript is what lets SKILL.md hand keep-segments a file that already exists at that
+    point: the clip's own word file is only written later, at the subtitles step, which
+    is why `--words-json` went unused from the day it was added.
+    """
+    if isinstance(data, dict):
+        data = data.get("segments") or []
+    words: list[dict] = []
+    for item in data or []:
+        if "words" in item:
+            words.extend(item.get("words") or [])
+        elif "start" in item and "end" in item:
+            words.append(item)
+    usable = [w for w in words if w.get("start") is not None and w.get("end") is not None]
+    return sorted(usable, key=lambda w: float(w["start"]))
+
+
+# How far a clip edge may travel to get out of a word. A word whisper stretched across
+# the pause after it can run well past where the voice stops; following it all the way
+# would trade a clipped word for a second of dead air.
+EDGE_SNAP_MAX_SECONDS = 1.0
+
+
+def snap_edges_to_words(
+    clip_start: float,
+    clip_end: float,
+    words: list[dict],
+    guard_seconds: float = 0.1,
+    max_shift: float = EDGE_SNAP_MAX_SECONDS,
+) -> tuple[float, float]:
+    """Moves a clip edge that falls inside a word out to that word's edge.
+
+    Trim points are read off segment timestamps, and a segment can end before its own
+    last word does: on 2026-09-05 a clip ended at 7098.0 while «плавал.» ran from
+    7097.97 to 7098.39, so the last word of the clip was all but gone. Since the cap went
+    to 26 seconds, 11 of 40 clips ended inside a word, against 4 of 28 before.
+
+    The start moves back to the word's start, the end forward to the word's end, each
+    with guard_seconds of breath around it, never into the neighbouring word and never
+    further than max_shift. An edge already in a gap between words stays exactly where
+    it was put.
+    """
+    spans = sorted((float(w["start"]), float(w["end"])) for w in words)
+    start, end = clip_start, clip_end
+
+    for i, (word_start, word_end) in enumerate(spans):
+        if word_start + 0.01 < clip_start < word_end - 0.01:
+            previous_end = spans[i - 1][1] if i > 0 else float("-inf")
+            start = min(clip_start, max(word_start - guard_seconds, previous_end, clip_start - max_shift))
+            break
+
+    for i, (word_start, word_end) in enumerate(spans):
+        if word_start + 0.01 < clip_end < word_end - 0.01:
+            next_start = spans[i + 1][0] if i + 1 < len(spans) else float("inf")
+            end = max(clip_end, min(word_end + guard_seconds, next_start, clip_end + max_shift))
+            break
+
+    return round(start, 3), round(end, 3)
+
+
 def compute_keep_segments(
     clip_start: float,
     clip_end: float,
@@ -90,12 +154,16 @@ def compute_keep_segments(
     out as a jump cut. Short, natural breathing pauses at or under that
     length are left in place untouched.
 
-    Pass `words` (the clip's absolute-seconds word list) to keep cuts off real
-    speech; see clamp_cuts_to_words for why that matters. A cut shortened below
-    max_pause_seconds by that clamp is no longer worth making and is dropped.
+    Pass `words` (absolute-seconds words; the whole transcript is fine) to keep cuts off
+    real speech; see clamp_cuts_to_words for why that matters. A cut shortened below
+    max_pause_seconds by that clamp is no longer worth making and is dropped. The clip's
+    own edges are moved out of any word they fall inside first (snap_edges_to_words), so
+    the first and last segment are the clip's real start and end.
     """
     if clip_end <= clip_start:
         raise ValueError("clip_end must be greater than clip_start")
+    if words:
+        clip_start, clip_end = snap_edges_to_words(clip_start, clip_end, words, guard_seconds)
 
     cuts = sorted(
         (max(pause["start"], clip_start), min(pause["end"], clip_end))
@@ -215,7 +283,10 @@ def remap_words(words: list[dict], keep_segments: list[tuple[float, float]]) -> 
 
 def _cmd_keep_segments(args: argparse.Namespace) -> None:
     pauses = json.loads(Path(args.pauses_json).read_text(encoding="utf-8"))
-    words = json.loads(Path(args.words_json).read_text(encoding="utf-8")) if args.words_json else None
+    words = (
+        load_words(json.loads(Path(args.words_json).read_text(encoding="utf-8")))
+        if args.words_json else None
+    )
     segments = compute_keep_segments(
         args.clip_start,
         args.clip_end,
@@ -226,6 +297,13 @@ def _cmd_keep_segments(args: argparse.Namespace) -> None:
     )
     Path(args.output_json).write_text(json.dumps(segments, indent=2), encoding="utf-8")
     print(f"{len(segments)} segment(s) written to {args.output_json}")
+    if words:
+        # Once words are given, these are the clip's real start and end, and the plan
+        # entry has to carry them rather than the trim points that went in.
+        start, end = snap_edges_to_words(args.clip_start, args.clip_end, words, args.guard_seconds)
+        if abs(start - args.clip_start) > 0.001 or abs(end - args.clip_end) > 0.001:
+            print(f"clip edges moved out of a word: start {args.clip_start} -> {start}, "
+                  f"end {args.clip_end} -> {end} - use these as the entry's start/end")
 
 
 def _cmd_boundary_windows(args: argparse.Namespace) -> None:
@@ -271,7 +349,8 @@ def main() -> None:
     )
     keep_segments_parser.add_argument(
         "--words-json", default=None,
-        help="Clip's absolute-seconds {word,start,end} list; keeps cuts off real speech",
+        help="Absolute-seconds words: a {word,start,end} list or the cached transcript JSON. "
+             "Keeps cuts off real speech and moves a clip edge out of a word it falls inside",
     )
     keep_segments_parser.add_argument(
         "--guard-seconds", type=float, default=0.1,
