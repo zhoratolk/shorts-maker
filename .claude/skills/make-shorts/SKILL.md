@@ -578,6 +578,8 @@ This reads what the pipeline already wrote — title/description/tags from `meta
 
 Safe to re-run: `enqueue` is idempotent on `clip_id`, so a second pass over the same plan adds nothing and renumbers nothing. A plan entry whose clip didn't render is skipped with a warning (`--strict` makes it an error instead); missing metadata is always a hard error rather than a blank title.
 
+**Audio language and category (2026-10-21).** Without an explicit language YouTube guesses the audio language from the sound — on the sibling manga channels it marked Russian narration as `en-US` and English narration as Russian/Dutch, and the misfiled English clips got zero Shorts-feed impressions. `config.yaml` → `publish.language` (e.g. `"ru"`) makes the uploader set `defaultLanguage`/`defaultAudioLanguage`; `publish.category_id` overrides the category (empty keeps Gaming, which is right for this channel). Set `language` for this channel too; check uploaded clips' `snippet.defaultAudioLanguage` if a batch underperforms.
+
 The upload half is `publish_queue.py`, and it is worth knowing directly — the enqueue commands above just call it for you:
 
 ```bash

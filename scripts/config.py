@@ -232,6 +232,11 @@ class PublishConfig:
     # published batch on 2026-09-22. The name stays `upload_token_path` so
     # an existing config.yaml keeps working.
     upload_token_path: str = "youtube_token.json"
+    # Optional per-channel snippet fields. Empty keeps the old upload exactly (no language, Gaming category).
+    # The manga channels set them: YouTube guessed Russian/Dutch audio on the English channel's clips and
+    # showed them to nobody in the Shorts feed (2026-10-21), and Gaming is the wrong shelf for manhwa.
+    language: str = ""
+    category_id: str = ""
     # TikTok (PUB-06) and Instagram (PUB-07) per-platform fields - each with
     # its own independent enabled flag (D-01), never a shared/repurposed
     # `enabled`, so toggling one platform live can never accidentally flip

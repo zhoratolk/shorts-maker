@@ -359,7 +359,8 @@ def next_free_slot(
 
 
 def build_insert_body(
-    title: str, description: str, tags: list[str], publish_at: str, seq: int
+    title: str, description: str, tags: list[str], publish_at: str, seq: int,
+    language: str = "", category_id: str = "",
 ) -> dict[str, Any]:
     """Builds the exact videos.insert request body: snippet{title,
     description, tags} + status{privacyStatus:"private", publishAt,
@@ -396,13 +397,17 @@ def build_insert_body(
     # ловить надо то описание, которое написали, а не то, что от него осталось.
     full_description = strip_mature_disclaimer(description)
 
+    snippet = {
+        "title": strip_mature_disclaimer(title),
+        "description": full_description,
+        "tags": tags,
+        "categoryId": category_id or GAMING_CATEGORY_ID,
+    }
+    if language:   # otherwise YouTube guesses the audio language itself
+        snippet["defaultLanguage"] = language
+        snippet["defaultAudioLanguage"] = language
     return {
-        "snippet": {
-            "title": strip_mature_disclaimer(title),
-            "description": full_description,
-            "tags": tags,
-            "categoryId": GAMING_CATEGORY_ID,
-        },
+        "snippet": snippet,
         "status": {
             "privacyStatus": "private",
             "publishAt": publish_at,
@@ -473,6 +478,8 @@ def upload_and_schedule(
         tags=entry["tags"],
         publish_at=publish_at,
         seq=entry["seq"],
+        language=getattr(config, "language", ""),
+        category_id=getattr(config, "category_id", ""),
     )
 
     service = service_factory()
