@@ -844,7 +844,8 @@ def test_load_config_publish_defaults_when_section_missing(tmp_path):
     assert config.publish.queue_path == "work/_publish/queue.json"
     assert config.publish.notifications_path == "work/_publish/notifications.log"
     assert config.publish.client_secret_path == "client_secret.json"
-    assert config.publish.upload_token_path == "upload_token.json"
+    # One cached token for upload, kill and analytics alike (2026-09-23).
+    assert config.publish.upload_token_path == "youtube_token.json"
 
 
 def test_load_config_publish_custom_values_round_trip(tmp_path):

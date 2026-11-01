@@ -1,6 +1,7 @@
 """The swipe-away ratio: joining it to clips, and reading it by group."""
 
-from scripts.engagement import MIN_VIEWS, group_medians, ratio_rows, render
+from scripts.engagement import (MIN_PER_VARIANT, MIN_VIEWS, experiment_medians,
+                                group_medians, ratio_rows, render)
 
 
 def entry(video_id, **fields):
@@ -47,3 +48,34 @@ def test_render_reports_the_channel_median():
 
 def test_render_survives_an_empty_channel():
     assert "0" in render([])
+
+
+def test_ratio_rows_carries_the_experiment_label():
+    rows = ratio_rows({"a": {"views": 500, "engaged": 250}},
+                      [entry("a", experiment="title-form:question")])
+    assert rows[0]["experiment"] == "title-form:question"
+
+
+def test_experiment_medians_keeps_variants_side_by_side_even_when_small():
+    rows = [
+        {"ratio": 50.0, "views": 800, "experiment": "title-form:question"},
+        {"ratio": 60.0, "views": 1000, "experiment": "title-form:question"},
+        {"ratio": 40.0, "views": 600, "experiment": "title-form:statement"},
+        {"ratio": 30.0, "views": 500, "experiment": None},
+    ]
+    assert experiment_medians(rows) == [
+        ("title-form:question", 2, 55.0, 900),
+        ("title-form:statement", 1, 40.0, 600),
+    ]
+
+
+def test_render_flags_an_experiment_that_is_still_filling_up():
+    rows = [{"ratio": 50.0, "views": 800, "experiment": "title-form:question",
+             "opening": None, "game": None, "moment_tag": None}]
+    assert f"рано: нужно {MIN_PER_VARIANT}+" in render(rows)
+
+
+def test_render_drops_the_warning_once_a_variant_is_full():
+    rows = [{"ratio": 50.0, "views": 800, "experiment": "title-form:question",
+             "opening": None, "game": None, "moment_tag": None}] * MIN_PER_VARIANT
+    assert "рано" not in render(rows)

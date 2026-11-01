@@ -144,6 +144,7 @@ def enqueue_batch(
             # mean every future reader had to remember to do it too.
             moment_tag=canonical_tag(entry.get("moment_tag")) or entry.get("moment_tag"),
             opening=entry.get("opening"),
+            experiment=entry.get("experiment"),
             source_duration=clip_duration(entry),
         )
         if stem not in known:

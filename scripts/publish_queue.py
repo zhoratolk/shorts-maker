@@ -50,8 +50,7 @@ DEFAULT_QUEUE_PATH = "work/_publish/queue.json"
 DEFAULT_NOTIFICATIONS_PATH = "work/_publish/notifications.log"
 
 # D-08/D-09 originally picked the narrower `youtube.upload` scope for smaller
-# blast radius if this token leaks (separate from the read-only token.json
-# used by youtube_analytics.py). A live kill-path test (2026-07-08) proved
+# blast radius if this token leaks. A live kill-path test (2026-07-08) proved
 # that scope insufficient: videos.update (used by cancel_scheduled_release/
 # kill_item) returns 403 insufficientPermissions under `youtube.upload` alone.
 # Without videos.update, the pause/kill safety mechanism cannot function, so
@@ -148,6 +147,7 @@ def enqueue(
     source_duration: float | None = None,
     thumbnail_path: str | None = None,
     opening: str | None = None,
+    experiment: str | None = None,
 ) -> dict[str, Any]:
     """Appends a new entry to queue["entries"] with a sequential seq number
     (max existing seq + 1, starting at 1) and status=QUEUED. Idempotent on
@@ -173,6 +173,11 @@ def enqueue(
     rule is so far a hypothesis - it can only be confirmed by comparing the two
     groups once enough labelled clips have published. Like moment_tag it never
     affects scheduling or upload.
+
+    experiment is "<name>:<variant>" (e.g. "title-form:question") for a clip that
+    belongs to a one-variable test - see docs/experiments.md. Same footing as
+    opening: a label carried so engagement.py can compare the variants once
+    enough clips have published, never read by scheduling or upload.
 
     thumbnail_path is the poster image to set as the video's custom thumbnail
     after upload. Left as None it is DERIVED from video_path - the sibling
@@ -201,6 +206,7 @@ def enqueue(
         "tags": tags,
         "moment_tag": moment_tag,
         "opening": opening,
+        "experiment": experiment,
         "source_duration": source_duration,
         "thumbnail_path": thumbnail_path,
         "status": QUEUED,
@@ -360,7 +366,8 @@ def next_free_slot(
 
 
 def build_insert_body(
-    title: str, description: str, tags: list[str], publish_at: str, seq: int
+    title: str, description: str, tags: list[str], publish_at: str, seq: int,
+    language: str = "", category_id: str = "",
 ) -> dict[str, Any]:
     """Builds the exact videos.insert request body: snippet{title,
     description, tags} + status{privacyStatus:"private", publishAt,
@@ -397,13 +404,17 @@ def build_insert_body(
     # ловить надо то описание, которое написали, а не то, что от него осталось.
     full_description = strip_mature_disclaimer(description)
 
+    snippet = {
+        "title": strip_mature_disclaimer(title),
+        "description": full_description,
+        "tags": tags,
+        "categoryId": category_id or GAMING_CATEGORY_ID,
+    }
+    if language:   # otherwise YouTube guesses the audio language itself
+        snippet["defaultLanguage"] = language
+        snippet["defaultAudioLanguage"] = language
     return {
-        "snippet": {
-            "title": strip_mature_disclaimer(title),
-            "description": full_description,
-            "tags": tags,
-            "categoryId": GAMING_CATEGORY_ID,
-        },
+        "snippet": snippet,
         "status": {
             "privacyStatus": "private",
             "publishAt": publish_at,
@@ -474,6 +485,8 @@ def upload_and_schedule(
         tags=entry["tags"],
         publish_at=publish_at,
         seq=entry["seq"],
+        language=getattr(config, "language", ""),
+        category_id=getattr(config, "category_id", ""),
     )
 
     service = service_factory()
@@ -1114,6 +1127,8 @@ def _upload_one(
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
+    from scripts.youtube_auth import DEFAULT_TOKEN_PATH
+
     parser = argparse.ArgumentParser(
         description="Local publish-queue CLI: periodic --check, manual --now override, "
         "--pause/--kill/--resume, and --list - both --check and --now route through the "
@@ -1130,7 +1145,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Attach the poster (<clip>.thumb.png) to every not-yet-uploaded entry that lacks one",
     )
     parser.add_argument("--client-secret", default="client_secret.json", help="OAuth client secret JSON path")
-    parser.add_argument("--token", default="upload_token.json", help="Cached upload-scoped OAuth token JSON path")
+    parser.add_argument("--token", default=DEFAULT_TOKEN_PATH, help="Cached OAuth token JSON path - one file for every YouTube call")
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml")
     return parser
 

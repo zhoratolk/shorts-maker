@@ -827,3 +827,47 @@ def test_silence_warnings_quiet_on_an_ordinary_pause(tmp_path):
 
     assert silence_warnings([{"output_filename": "clip.mp4"}], str(tmp_path),
                             lambda *a, **k: Result()) == []
+
+
+# ---------- filler opener ----------
+
+def _entry_with_words(tmp_path, words, name="clip.mp4"):
+    srt = tmp_path / "clip.srt"
+    srt.write_text("", encoding="utf-8")
+    (tmp_path / "clip_words.json").write_text(json.dumps(words, ensure_ascii=False), encoding="utf-8")
+    return {"output_filename": name, "subtitles_path": str(srt)}
+
+
+def test_filler_opener_is_flagged(tmp_path):
+    from scripts.render_batch import filler_opener_warnings
+
+    entry = _entry_with_words(tmp_path, [{"word": " Ну,", "start": 0.0, "end": 0.2},
+                                         {"word": " поехали", "start": 0.2, "end": 0.7}])
+    warnings = filler_opener_warnings([entry])
+
+    assert len(warnings) == 1
+    assert "clip.mp4" in warnings[0] and "'ну'" in warnings[0]
+
+
+def test_a_clip_opening_on_a_claim_is_not_flagged(tmp_path):
+    from scripts.render_batch import filler_opener_warnings
+
+    entry = _entry_with_words(tmp_path, [{"word": " Лучшая", "start": 0.0, "end": 0.4},
+                                         {"word": " зенитка", "start": 0.4, "end": 0.9}])
+    assert filler_opener_warnings([entry]) == []
+
+
+def test_filler_check_skips_entries_without_a_words_file(tmp_path):
+    from scripts.render_batch import filler_opener_warnings
+
+    assert filler_opener_warnings([{"output_filename": "a.mp4"},
+                                   {"output_filename": "b.mp4",
+                                    "subtitles_path": str(tmp_path / "missing.srt")}]) == []
+
+
+def test_filler_check_ignores_leading_punctuation_only_tokens(tmp_path):
+    from scripts.render_batch import filler_opener_warnings
+
+    entry = _entry_with_words(tmp_path, [{"word": " ...", "start": 0.0, "end": 0.1},
+                                         {"word": " Короче", "start": 0.1, "end": 0.5}])
+    assert len(filler_opener_warnings([entry])) == 1

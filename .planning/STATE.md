@@ -197,6 +197,7 @@ None yet.
 |---|-------------|------|--------|-----------|
 | 260708-4h4 | Add -loglevel error to ffmpeg commands in render.py to suppress noisy failure output | 2026-07-08 | e0739cf | [260708-4h4-add-loglevel-error-to-ffmpeg-commands-in](./quick/260708-4h4-add-loglevel-error-to-ffmpeg-commands-in/) |
 | 260711-id0 | Profanity onset delay + custom sound-censor mode (mask_mode=sound, mask_onset_seconds) | 2026-07-11 | 025771d | [260711-id0-garble-onset](./quick/260711-id0-garble-onset/) |
+| 261004-wya | Word-safe jump cuts and clip edges (--words-json wired in), ending may pass the 26s cap up to 35s | 2026-10-04 | 2a6c8ff | [261004-wya-word-safe-clip-edges-and-endings-over-th](./quick/261004-wya-word-safe-clip-edges-and-endings-over-th/) |
 
 ## Deferred Items
 

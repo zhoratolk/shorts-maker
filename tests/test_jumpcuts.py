@@ -11,9 +11,11 @@ from scripts.jumpcuts import (
     compute_boundary_windows,
     compute_keep_segments,
     drop_boundary,
+    load_words,
     pauses_from_word_gaps,
     remap_timestamp,
     remap_words,
+    snap_edges_to_words,
     total_kept_duration,
 )
 
@@ -345,3 +347,79 @@ def test_cli_remap_words_writes_json_file(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert json.loads(output_path.read_text(encoding="utf-8")) == [{"word": "hi", "start": 2.0, "end": 2.5}]
+
+
+# --- word-safe clip edges (2026-10-04) -------------------------------------------------
+# The 2026-09-05 clip that lost its last word: the end was taken off a segment timestamp,
+# 7098.0, while «плавал.» ran on to 7098.39.
+PLAVAL = [
+    {"word": "ещё", "start": 7097.79, "end": 7097.97},
+    {"word": "плавал.", "start": 7097.97, "end": 7098.39},
+    {"word": "А", "start": 7098.85, "end": 7099.33},
+]
+
+
+def test_load_words_reads_a_flat_list_segments_and_the_cached_transcript():
+    flat = [{"word": "б", "start": 2.0, "end": 2.5}, {"word": "а", "start": 1.0, "end": 1.5}]
+    segments = [{"start": 1.0, "end": 2.5, "text": "а б", "words": flat}]
+
+    assert [w["word"] for w in load_words(flat)] == ["а", "б"]
+    assert [w["word"] for w in load_words(segments)] == ["а", "б"]
+    assert [w["word"] for w in load_words({"segments": segments})] == ["а", "б"]
+    assert load_words({"segments": []}) == []
+
+
+def test_an_end_inside_the_last_word_moves_past_it():
+    start, end = snap_edges_to_words(7073.55, 7098.0, PLAVAL)
+
+    assert start == 7073.55
+    assert end == 7098.49                    # the word's end plus the 0.1s guard
+
+
+def test_a_start_inside_a_word_moves_back_to_its_beginning():
+    words = [{"word": "Блядь,", "start": 9.6, "end": 10.2}, {"word": "я", "start": 10.25, "end": 10.4}]
+
+    assert snap_edges_to_words(9.9, 30.0, words)[0] == 9.5
+
+
+def test_an_edge_between_words_is_left_exactly_where_it_was_put():
+    assert snap_edges_to_words(7097.0, 7098.6, PLAVAL) == (7097.0, 7098.6)
+
+
+def test_the_end_never_runs_into_the_next_word():
+    words = [{"word": "раз", "start": 5.0, "end": 5.5}, {"word": "два", "start": 5.52, "end": 6.0}]
+
+    assert snap_edges_to_words(0.0, 5.3, words)[1] == 5.52
+
+
+def test_a_word_stretched_across_a_pause_is_followed_one_second_at_most():
+    # whisper hangs the pause after a word onto the word itself
+    words = [{"word": "кушать", "start": 7373.74, "end": 7376.2}]
+
+    assert snap_edges_to_words(7300.0, 7374.0, words)[1] == 7375.0
+
+
+def test_keep_segments_carry_the_snapped_edges():
+    segments = compute_keep_segments(7073.55, 7098.0, [], 1.0, words=PLAVAL)
+
+    assert segments == [(7073.55, 7098.49)]
+
+
+def test_cli_keep_segments_takes_the_cached_transcript_and_reports_moved_edges(tmp_path):
+    pauses_path = tmp_path / "pauses.json"
+    pauses_path.write_text("[]", encoding="utf-8")
+    transcript_path = tmp_path / "transcript.json"
+    transcript_path.write_text(json.dumps({
+        "video_path": "x.mp4",
+        "segments": [{"start": 7097.0, "end": 7098.0, "text": "ещё плавал. А", "words": PLAVAL}],
+    }, ensure_ascii=False), encoding="utf-8")
+    output_path = tmp_path / "keep.json"
+
+    result = _run_cli(tmp_path, [
+        "keep-segments", str(pauses_path), "7073.55", "7098.0", str(output_path),
+        "--max-pause-seconds", "1.0", "--words-json", str(transcript_path),
+    ])
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(output_path.read_text(encoding="utf-8")) == [[7073.55, 7098.49]]
+    assert "7098.0 -> 7098.49" in result.stdout

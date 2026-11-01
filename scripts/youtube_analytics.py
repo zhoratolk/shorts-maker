@@ -10,13 +10,23 @@ from pathlib import Path
 
 import requests
 
-# Read-only scopes - this script never uploads/edits/deletes anything.
-# yt-analytics.readonly covers both the interactive Analytics API (below)
-# and the bulk Reporting API used for thumbnail-impressions data - no
-# separate scope/consent needed for that.
-DATA_API_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
-ANALYTICS_API_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly"
-SCOPES = [DATA_API_SCOPE, ANALYTICS_API_SCOPE]
+# Scopes, token paths and the consent flow live in youtube_auth.py (one
+# consent for the whole repo); re-exported here so existing callers and
+# `from scripts.youtube_analytics import load_credentials` keep working.
+from scripts.youtube_auth import (  # noqa: F401
+    ALL_SCOPES,
+    ANALYTICS_API_SCOPE,
+    DATA_API_SCOPE,
+    DEFAULT_TOKEN_PATH,
+    LEGACY_TOKEN_PATHS,
+    MANAGE_API_SCOPE,
+    SCOPES,
+    load_credentials,
+    resolve_token_path,
+    revoked_token_message,
+    scopes_satisfied,
+    token_scopes,
+)
 
 # videos.list's id filter accepts at most 50 ids per request.
 MAX_VIDEO_IDS_PER_REQUEST = 50
@@ -41,42 +51,6 @@ def chunk_video_ids(video_ids: list[str], chunk_size: int = MAX_VIDEO_IDS_PER_RE
     return [video_ids[i : i + chunk_size] for i in range(0, len(video_ids), chunk_size)]
 
 
-def load_credentials(client_secret_path: str, token_path: str, scopes: list[str] = SCOPES):
-    """Loads cached OAuth credentials from token_path, refreshing an expired
-    token or running the local-server consent flow (opens a browser, using
-    client_secret_path's app credentials) when there's no usable token yet.
-    Writes the resulting token back to token_path either way, so this is
-    only interactive on the very first run (or after a revoke/expiry the
-    refresh token itself can't recover from).
-    """
-    from google.auth.exceptions import RefreshError
-    from google.auth.transport.requests import Request
-    from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
-
-    credentials = None
-    token_file = Path(token_path)
-    if token_file.exists():
-        credentials = Credentials.from_authorized_user_file(str(token_file), scopes)
-
-    if not credentials or not credentials.valid:
-        refreshed = False
-        if credentials and credentials.expired and credentials.refresh_token:
-            try:
-                credentials.refresh(Request())
-                refreshed = True
-            except RefreshError:
-                # A revoked refresh token ("invalid_grant") used to dead-end
-                # the whole publish run with a traceback; a cached token that
-                # can't be recovered is exactly the case a fresh consent
-                # handles, so fall through to it instead of raising.
-                credentials = None
-        if not refreshed:
-            flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, scopes)
-            credentials = flow.run_local_server(port=0)
-        token_file.write_text(credentials.to_json(), encoding="utf-8")
-
-    return credentials
 
 
 def build_services(credentials):
@@ -388,7 +362,7 @@ def main() -> None:
     )
     parser.add_argument("output_path", help="Path to write the performance JSON cache to")
     parser.add_argument("--client-secret", default="client_secret.json", help="OAuth client secret JSON path")
-    parser.add_argument("--token", default="token.json", help="Cached OAuth token JSON path")
+    parser.add_argument("--token", default=DEFAULT_TOKEN_PATH, help="Cached OAuth token JSON path")
     parser.add_argument("--start-date", default=EPOCH_START_DATE, help="YYYY-MM-DD (default: since YouTube existed)")
     parser.add_argument("--end-date", default=None, help="YYYY-MM-DD (default: today)")
     args = parser.parse_args()

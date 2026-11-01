@@ -49,6 +49,7 @@ from scripts.render import (
     probe_video,
     render_clip,
     resolve_banner_font,
+    resolve_subtitle_style,
     SUBTITLE_MARGIN_V,
 )
 
@@ -2755,3 +2756,72 @@ def test_the_two_entry_points_anchor_the_popups_in_the_same_order():
 
     assert render_batch.SOCIAL_PLATFORMS is SOCIAL_PLATFORMS
     assert tuple(SOCIAL_PLATFORMS) == ("twitch", "kick", "telegram")
+
+
+# ---------- per-clip subtitle style ----------
+
+_BASE_SUBS = {
+    "font": "Arial Black", "size": 92, "color": "white", "outline_color": "black",
+    "highlight_color": "yellow", "position": "bottom", "words_per_cue": 4,
+    "censor_profanity": True,
+}
+
+
+def test_subtitle_override_changes_only_what_it_names():
+    merged = resolve_subtitle_style(_BASE_SUBS, {"words_per_cue": 1, "position": "center", "size": 120})
+
+    assert merged["words_per_cue"] == 1 and merged["position"] == "center" and merged["size"] == 120
+    assert merged["font"] == "Arial Black" and merged["censor_profanity"] is True
+    assert _BASE_SUBS["words_per_cue"] == 4  # the batch-wide dict is not mutated
+
+
+def test_subtitle_override_absent_returns_the_base_untouched():
+    assert resolve_subtitle_style(_BASE_SUBS, None) is _BASE_SUBS
+    assert resolve_subtitle_style(_BASE_SUBS, {}) is _BASE_SUBS
+
+
+def test_subtitle_override_cannot_switch_subtitles_on():
+    assert resolve_subtitle_style(None, {"words_per_cue": 1}) is None
+
+
+def test_subtitle_override_rejects_unknown_keys():
+    with pytest.raises(RenderError, match="unknown keys"):
+        resolve_subtitle_style(_BASE_SUBS, {"words_per_cues": 1})
+
+
+def test_subtitle_override_does_not_let_a_clip_turn_off_censoring():
+    with pytest.raises(RenderError, match="unknown keys"):
+        resolve_subtitle_style(_BASE_SUBS, {"censor_profanity": False})
+
+
+@pytest.mark.parametrize("override", [
+    {"position": "middle"}, {"words_per_cue": 0}, {"size": -5}, {"size": "big"}, {"words_per_cue": True},
+])
+def test_subtitle_override_rejects_values_that_cannot_render(override):
+    with pytest.raises(RenderError):
+        resolve_subtitle_style(_BASE_SUBS, override)
+
+
+def test_subtitle_override_must_be_an_object():
+    with pytest.raises(RenderError, match="must be an object"):
+        resolve_subtitle_style(_BASE_SUBS, ["center"])
+
+
+def test_render_clip_applies_the_clips_own_subtitle_position(tmp_path):
+    # The batch-wide look is "bottom"; the clip asks for "top", which collides with a top banner.
+    # Only the per-clip value can trigger that, so the override reached render_clip's checks.
+    srt = tmp_path / "subs.srt"
+    srt.write_text("1" + chr(10) + "00:00:00,000 --> 00:00:01,000" + chr(10) + "hi" + chr(10), encoding="utf-8")
+    plan_entry = {
+        "start": 10.0, "end": 40.0, "crop_style": "zoom",
+        "subtitles_path": str(srt), "banner_text": "ХУК",
+        "subtitle_style": {"position": "top"},
+    }
+
+    with pytest.raises(RenderError, match="collides with subtitles position"):
+        render_clip(
+            "in.mp4", "out.mp4", plan_entry,
+            video_duration=100.0, src_width=1920, src_height=1080,
+            subtitle_style=dict(_BASE_SUBS), banner_position="top",
+            runner=_banner_fake_runner({}),
+        )

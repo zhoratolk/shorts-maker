@@ -115,23 +115,33 @@ publish:
   queue_path: "work/_publish/queue.json"
   notifications_path: "work/_publish/notifications.log"
   client_secret_path: "client_secret.json"
-  upload_token_path: "upload_token.json"
+  upload_token_path: "youtube_token.json"
 ```
 
 ### First live run: one-time OAuth consent (D-08)
 
 The very first time `--check` or `--now` runs with `publish.enabled: true`,
-`upload_token.json` does not exist yet — `load_credentials()` will open a
+`youtube_token.json` does not exist yet — `load_credentials()` will open a
 browser for an interactive consent flow, scoped to
-`https://www.googleapis.com/auth/youtube` (D-08/D-09, amended 2026-07-08 —
-see "Kill-path verification" below for why the originally-planned narrower
-`youtube.upload`-only scope was widened after a live test). This is a
-separate token from `youtube_analytics.py`'s read-only `token.json`.
-`upload_token.json` is gitignored, same as `client_secret.json`/`token.json`
-— never commit it. **If you already have an `upload_token.json` minted under
-the old narrow scope, delete it before the next run** — `load_credentials()`
-reuses a cached token as-is and will not silently re-request the broader
-scope on its own.
+`https://www.googleapis.com/auth/youtube` plus
+`https://www.googleapis.com/auth/yt-analytics.readonly` (D-08/D-09, amended
+2026-07-08 — see "Kill-path verification" below for why the originally-planned
+narrower `youtube.upload`-only scope was widened after a live test).
+
+**One token, not one per scope (2026-09-23).** Uploading, killing a scheduled
+video and reading analytics used to take three separate consents against the
+same OAuth client, cached as `upload_token.json`, `token.json` and a
+`comments_token.json` left over from a one-off script. Google evicts refresh
+tokens per (account, client) pair, so each extra consent is one more token that
+can push an older one out — on 2026-09-22 the upload token came back
+`invalid_grant: Token has been expired or revoked` ten days after it was
+issued, with four rendered clips stuck behind it. Consent now asks for the
+union once and every caller reads the same file.
+
+The old files are still read while they cover what a call needs, so the switch
+costs exactly one consent whenever the next call needs a scope they lack; the
+result is always written to `youtube_token.json`. All of them are gitignored,
+same as `client_secret.json` — never commit any of them.
 
 Because the Task Scheduler task runs detached (no visible browser window in
 some configurations), it's recommended to perform this first-consent run

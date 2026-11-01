@@ -49,6 +49,7 @@ def ratio_rows(engagement: dict[str, dict], entries: list[dict],
             "views": views,
             "ratio": 100.0 * (metrics.get("engaged") or 0) / views,
             "opening": entry.get("opening"),
+            "experiment": entry.get("experiment"),
             "moment_tag": entry.get("moment_tag"),
             "game": (entry.get("tags") or [""])[0].lower().strip() or None,
         })
@@ -65,6 +66,27 @@ def group_medians(rows: list[dict], field: str, min_group: int = 5) -> list[tupl
     out = [(value, len(values), statistics.median(values))
            for value, values in groups.items() if len(values) >= min_group]
     return sorted(out, key=lambda item: -item[2])
+
+
+# A variant needs this many clips before its median means anything. Below it the
+# report still prints the line - an experiment in progress should be visible -
+# but says it is too early to call.
+MIN_PER_VARIANT = 8
+
+
+def experiment_medians(rows: list[dict]) -> list[tuple]:
+    """(label, count, median ratio, median views) per "<name>:<variant>" label,
+    sorted by label so the variants of one experiment sit next to each other.
+    Unlike group_medians nothing is dropped for being small: the point is to
+    watch a test fill up."""
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for row in rows:
+        if row.get("experiment"):
+            groups[row["experiment"]].append(row)
+    return [(label, len(group),
+             statistics.median(row["ratio"] for row in group),
+             statistics.median(row["views"] for row in group))
+            for label, group in sorted(groups.items())]
 
 
 def fetch_engagement(analytics_service, channel_id: str, video_ids: list[str],
@@ -103,14 +125,22 @@ def render(rows: list[dict]) -> str:
         lines.append(f"\n{title}:")
         for value, count, median in groups:
             lines.append(f"  {value:18} n={count:3d} {median:5.1f}%")
+    experiments = experiment_medians(rows)
+    if experiments:
+        lines.append("\nэксперименты (один вариант против другого, медианы):")
+        for label, count, ratio, views in experiments:
+            note = "" if count >= MIN_PER_VARIANT else f"  рано: нужно {MIN_PER_VARIANT}+"
+            lines.append(f"  {label:28} n={count:3d} {ratio:5.1f}%  {views:6.0f} просм.{note}")
     return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
+    from scripts.youtube_auth import DEFAULT_TOKEN_PATH
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--publish-queue", default="work/_publish/queue.json")
     parser.add_argument("--client-secret", default="client_secret.json")
-    parser.add_argument("--token", default="token.json")
+    parser.add_argument("--token", default=DEFAULT_TOKEN_PATH)
     parser.add_argument("--start-date", default="2026-07-01")
     parser.add_argument("--end-date", default=None)
     parser.add_argument("--cache", default="work/_analytics/engagement.json",

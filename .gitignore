@@ -20,6 +20,7 @@ config.yaml
 client_secret.json
 token.json
 upload_token.json
+youtube_token.json
 tiktok_client_key.json
 tiktok_token.json
 instagram_client_secret.json

@@ -117,7 +117,7 @@ Claude Code will transcribe (cached — only happens once per video ever), searc
    ```bash
    python scripts/youtube_analytics.py "<config.output_dir>/analytics/channel_performance.json"
    ```
-   The first run opens a browser for you to sign in and consent, then caches the token as `token.json` (also gitignored) — later runs are silent until that token needs refreshing. `--start-date`/`--end-date` (YYYY-MM-DD) narrow the window if you don't want full channel history.
+   The first run opens a browser for you to sign in and consent, then caches the token as `youtube_token.json` (also gitignored, and the same file the publish queue uses — one consent covers both) — later runs are silent until that token needs refreshing. `--start-date`/`--end-date` (YYYY-MM-DD) narrow the window if you don't want full channel history.
 7. Point Claude Code at the resulting JSON when you want candidate-finding/hook choices grounded in real numbers instead of (or alongside) `docs/viral-clips-ru.md`'s general research.
 
 ## Running the tests

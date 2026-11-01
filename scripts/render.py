@@ -271,6 +271,43 @@ def compute_crop_filter(
     )
 
 
+SUBTITLE_OVERRIDE_KEYS = (
+    "font", "size", "color", "outline_color", "highlight_color", "position", "words_per_cue",
+)
+
+
+def resolve_subtitle_style(base: dict | None, override: dict | None) -> dict | None:
+    """The batch-wide subtitle look with one clip's own choices laid over it.
+
+    The look used to be one setting for the whole render, which made it
+    impossible to compare two looks on live clips - and a comparison on live
+    clips is the only kind that counts (docs/experiments.md). A plan entry may
+    carry a `subtitle_style` object naming any of SUBTITLE_OVERRIDE_KEYS; what it
+    leaves out stays as configured. Censoring, punctuation stripping and the
+    wordlist are deliberately not overridable: those are policy, not look.
+
+    Fails loud on a key it does not know or a value that cannot render - a typo
+    that silently fell back to the default would mislabel an experiment.
+    """
+    if base is None or not override:
+        return base
+    if not isinstance(override, dict):
+        raise RenderError(f"plan entry subtitle_style must be an object, got {type(override).__name__}")
+    unknown = sorted(set(override) - set(SUBTITLE_OVERRIDE_KEYS))
+    if unknown:
+        raise RenderError(
+            f"plan entry subtitle_style has unknown keys {unknown}; allowed: {list(SUBTITLE_OVERRIDE_KEYS)}"
+        )
+    merged = {**base, **override}
+    if merged["position"] not in SUBTITLE_ALIGNMENT:
+        raise RenderError(f"subtitle position must be one of {sorted(SUBTITLE_ALIGNMENT)}, got {merged['position']!r}")
+    for key in ("size", "words_per_cue"):
+        value = merged[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise RenderError(f"subtitle_style {key} must be a positive integer, got {value!r}")
+    return merged
+
+
 def compute_subtitle_margin_v(position: str, crop_style: str, src_width: int, src_height: int) -> int:
     if position != "bottom":
         return SUBTITLE_MARGIN_V[position]
@@ -1591,6 +1628,7 @@ def render_clip(
     if outro_enabled and (outro_nick or outro_tagline or outro_cta or outro_icon_path):
         fade_seconds = 0.0
 
+    subtitle_style = resolve_subtitle_style(subtitle_style, plan_entry.get("subtitle_style"))
     crop_style = plan_entry["crop_style"]
     crop_focus_x = plan_entry.get("crop_focus_x", 50.0)
     crop_focus_keyframes_raw = plan_entry.get("crop_focus_keyframes")
