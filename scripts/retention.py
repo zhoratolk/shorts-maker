@@ -23,6 +23,8 @@ import statistics
 import time
 from pathlib import Path
 
+from scripts.drop_phrases import annotate_drop_phrases, clip_stem
+
 # The retention curve is a single Analytics query per video: the
 # elapsedVideoTimeRatio dimension buckets the clip into ~100 equal slices
 # (0.00..1.00) and audienceWatchRatio is the fraction of viewers still
@@ -296,6 +298,9 @@ def render_retention_markdown(records: list[dict], summary: dict) -> str:
         title = record.get("title") or record["video_id"]
         drop = analysis["biggest_drop"]
         drop_text = f"biggest drop {_pct(drop['delta'])} at {_pct(drop['at'])}" if drop else "no notable drop"
+        said = record.get("drop")
+        if drop and said and said["phrase"]:
+            drop_text += f" (~{said['second']}s, while saying: «{said['phrase']}»)"
         lines.append(
             f"- **{title}** — hook {_pct(analysis['intro_retention'])}, "
             f"avg {_pct(analysis['average_watch'])}, end {_pct(analysis['end_retention'])}, "
@@ -331,7 +336,11 @@ def _load_tag_map(publish_queue_path: str) -> dict[str, dict]:
         video_id = entry.get("video_id")
         if not video_id:
             continue
-        tag_map[video_id] = {"tag": entry.get("moment_tag"), "duration": entry.get("source_duration")}
+        extra = {"tag": entry.get("moment_tag"), "duration": entry.get("source_duration")}
+        stem = clip_stem(entry.get("video_path"))
+        if stem:
+            extra["clip_stem"] = stem
+        tag_map[video_id] = extra
     return tag_map
 
 
@@ -382,6 +391,7 @@ def build_records(
                 "title": video.get("title"),
                 "tag": extra.get("tag"),
                 "duration": extra.get("duration"),
+                "clip_stem": extra.get("clip_stem"),
                 "analysis": analyze_curve(curve),
             }
         )
@@ -414,6 +424,9 @@ def main() -> None:
     records = build_records(
         analytics_service, channel["channel_id"], videos, args.start_date, end_date, tag_map
     )
+    placed = annotate_drop_phrases(records)
+    if placed:
+        print(f"{placed} drops placed on a word timeline")
     summary = summarize_retention(records)
     write_retention_insights(summary, args.insights_path)
     print(f"{summary['clips_analyzed']} clips analyzed, insights written to {args.insights_path}")

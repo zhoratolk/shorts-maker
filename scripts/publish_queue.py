@@ -147,6 +147,7 @@ def enqueue(
     source_duration: float | None = None,
     thumbnail_path: str | None = None,
     opening: str | None = None,
+    experiment: str | None = None,
 ) -> dict[str, Any]:
     """Appends a new entry to queue["entries"] with a sequential seq number
     (max existing seq + 1, starting at 1) and status=QUEUED. Idempotent on
@@ -172,6 +173,11 @@ def enqueue(
     rule is so far a hypothesis - it can only be confirmed by comparing the two
     groups once enough labelled clips have published. Like moment_tag it never
     affects scheduling or upload.
+
+    experiment is "<name>:<variant>" (e.g. "title-form:question") for a clip that
+    belongs to a one-variable test - see docs/experiments.md. Same footing as
+    opening: a label carried so engagement.py can compare the variants once
+    enough clips have published, never read by scheduling or upload.
 
     thumbnail_path is the poster image to set as the video's custom thumbnail
     after upload. Left as None it is DERIVED from video_path - the sibling
@@ -200,6 +206,7 @@ def enqueue(
         "tags": tags,
         "moment_tag": moment_tag,
         "opening": opening,
+        "experiment": experiment,
         "source_duration": source_duration,
         "thumbnail_path": thumbnail_path,
         "status": QUEUED,

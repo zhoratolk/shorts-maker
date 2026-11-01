@@ -109,6 +109,59 @@ def _entry_length(entry: dict) -> float | None:
         return None
 
 
+# Interjections and connectives that assert nothing. A clip whose first spoken
+# word is one of these asks the viewer to wait for the point.
+FILLER_OPENERS = frozenset({
+    "ну", "короче", "э", "ээ", "эээ", "а", "так", "вот", "типа", "блин",
+    "слушай", "ладно", "и", "эм", "ммм", "мм",
+})
+
+
+def _first_word(entry: dict) -> str | None:
+    """The clip's first spoken word, lower-cased and stripped of punctuation, or
+    None when the entry has no readable words file."""
+    subtitles_path = entry.get("subtitles_path")
+    if not subtitles_path:
+        return None
+    words_path = Path(subtitles_path).with_name(Path(subtitles_path).stem + "_words.json")
+    try:
+        words = json.loads(words_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    for word in words:
+        token = "".join(ch for ch in str(word.get("word", "")).lower().replace("ё", "е")
+                        if ch.isalnum())
+        if token:
+            return token
+    return None
+
+
+def filler_opener_warnings(entries: list[dict]) -> list[str]:
+    """One warning per plan entry whose first spoken word is a filler.
+
+    The mechanical half of the "no filler-particle opener" rule in SKILL.md
+    step 5, which otherwise depends on whoever writes the plan remembering to
+    read the first second. Checked 2026-11-01 against the 175 published clips
+    with word timelines: the 19 that opened on a filler kept 45.5% of viewers
+    past the first seconds against 53.0% for the rest, with the same median
+    views. Small and not significant by itself - which is why it warns and
+    never blocks - but it points the way the rule already does.
+
+    Borrowed from the script linter in manga-shorts (`mshorts/script_lint.py`),
+    whose equivalent catches template openers before the voice is recorded.
+    """
+    warnings = []
+    for entry in entries:
+        first = _first_word(entry)
+        if first in FILLER_OPENERS:
+            name = entry.get("output_filename", "<unnamed clip>")
+            warnings.append(
+                f"[warn] {name}: opens on the filler word '{first}' - start on the first "
+                f"phrase that states the situation (SKILL.md step 5)"
+            )
+    return warnings
+
+
 def dead_zone_warnings(entries: list[dict], *, max_gap: float = DEAD_ZONE_MAX_GAP_SECONDS) -> list[str]:
     """One warning line per plan entry that goes quiet inside the dead zone.
 
@@ -996,6 +1049,8 @@ def main() -> None:
     for warning in unknown_moment_tag_warnings(entries):
         print(warning, file=sys.stderr)
     for warning in opening_warnings(entries):
+        print(warning, file=sys.stderr)
+    for warning in filler_opener_warnings(entries):
         print(warning, file=sys.stderr)
 
     # Imported here rather than at module scope: render.py pulls in the whole

@@ -2231,6 +2231,29 @@ def test_enqueue_carries_the_opening_label(tmp_path):
     assert entry["opening"] == "standalone"
 
 
+def test_enqueue_carries_the_experiment_label(tmp_path):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"")
+    queue = {"entries": []}
+
+    entry = enqueue(
+        queue, clip_id="clip-1", video_path=str(clip), metadata_path="clip.txt",
+        title="T", description="D", tags=[], experiment="title-form:question",
+    )
+
+    assert entry["experiment"] == "title-form:question"
+
+
+def test_enqueue_leaves_the_experiment_label_empty_when_not_given(tmp_path):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"")
+    entry = enqueue(
+        {"entries": []}, clip_id="clip-1", video_path=str(clip), metadata_path="clip.txt",
+        title="T", description="D", tags=[],
+    )
+    assert entry["experiment"] is None
+
+
 def test_enqueue_leaves_the_opening_label_empty_when_not_given(tmp_path):
     clip = tmp_path / "clip.mp4"
     clip.write_bytes(b"")
